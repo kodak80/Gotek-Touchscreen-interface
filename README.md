@@ -228,6 +228,46 @@ If you have a Waveshare 2.8", the files are in [`Gotek_Waveshare28/`](Gotek_Wave
 
 ---
 
+## Feature matrix (per device)
+
+_Read from firmware source (13 Sep 2026). ✓ = yes · — = no · ~ = partial. The current dongle firmware is **Webby (HD)**; the classic DD-only SuperMini build is retired._
+
+### Touchscreens (standalone, wired to a Gotek)
+
+| Feature | JC3248 3.5″ | JC4827 4.3″ | Waveshare 7″/7B | ESP32-P4 (beta) |
+|---|:--:|:--:|:--:|:--:|
+| A–Z list · type-to-search · favourites/most/random | ✓ | ✓ | ✓ | ✓ |
+| Cover reel / carousel | ✓ | ✓ | grid | ✓ |
+| Categories + nesting · multi-disk · `.rtfm` reader | ✓ | ✓ | ✓ | ✓ |
+| Modes ADF / DSK / GEN | ✓ | ✓ | ✓ | ✓ |
+| Save write-back (OFF/COPY/OVERWRITE) | ✓ | ✓ | ✓ | ✓ |
+| HD (1.76 MB) disks | ✓ | ✓ | — | ✓ |
+| 7 themes · cracktros | ✓ | ✓ | ✓ | ✓ |
+| 6 languages | ✓ | ✓ | ~¹ | ✓ |
+| Screensaver | ✓ | ✓ | — | ✓ |
+| SD Access (USB) · firmware update from SD | ✓ | ✓ | ✓ | ✓ |
+| WiFi web panel (dashboard / OTA) | ✓ | ✓ | — | — |
+| WiFi SD file access (browser) | ✓ | —² | — | — |
+| WebDAV client (experimental) | ✓ | ✓ | — | — |
+| FLING to dongles | ✓ | ✓ | ✓ | ✓ |
+| ESP-NOW + home-WiFi (3-way) · Hivemind | ✓ | ✓ | ~³ | ✓ |
+
+¹ 7-inch build carries the languages; 7B omits them. &nbsp; ² JC4827 has the web panel but not the file browser (`GTI_WEB_SD_FILES`, JC3248 only). &nbsp; ³ 7″ flings over ESP-NOW but has no home-WiFi mode / Hivemind. P4 WiFi runs through an on-board ESP32-C6 co-processor. The P4 is in beta and not on the public flasher.
+
+### Dongles (wireless feeders — plug into a remote Gotek)
+
+| Feature | SuperMini · Zero (Webby, HD) | XIAO classic | XIAO Webby |
+|---|:--:|:--:|:--:|
+| Presents a disk to a remote Gotek (USB-MSC) | ✓ | ✓ | ✓ |
+| DD + HD disks | ✓ | ✓ | ✓ |
+| Receive FLING · save write-back · remote eject | ✓ | ✓ | ✓ |
+| Owner-lock / pairing · status LED | ✓ | ✓ | ✓ |
+| Settable name · WiFi web + SD upload · fleet | ✓ | — | ✓ |
+
+The **ESP32-S3-Zero** runs the SuperMini Webby image (single WS2812 RGB LED on GPIO21). Classic DD-only SuperMini firmware is retired.
+
+**Legacy** (kept working, not for new builds): CYD (v3.9.0) · Waveshare 2.8″ (v3.4.7).
+
 ## Features (JC3248)
 
 - **Index + game caches** on the SD card — first boot of a large collection is slow (it reads every

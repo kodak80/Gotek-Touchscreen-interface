@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTi Feature Matrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#e9edf4; --surface:#fff; --surface-2:#f4f6fb; --ink:#12151c; --ink-2:#3d4453;
+  --muted:#6a7284; --faint:#8b93a5; --line:#d7dde8; --line-2:#e6eaf2;
+  --accent:#d94e26; --accent-soft:#fbe9e1; --indigo:#34468f; --indigo-soft:#e6e9f6;
+  --good:#1f8f5b; --warn:#b87914; --crit:#c8382f;
+  --term-bg:#0d1322; --term-ink:#d5def2; --term-key:#ff8a5c; --term-cmt:#5c6b8a;
+  --shadow-sm:0 1px 2px rgba(18,21,28,.06); --radius:14px; --radius-sm:9px; --maxw:1080px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0a0f1a; --surface:#111a2c; --surface-2:#0e1626; --ink:#e9edf7; --ink-2:#b3bcd0;
+  --muted:#828ca3; --faint:#697390; --line:#233052; --line-2:#1a2438;
+  --accent:#ff6a3d; --accent-soft:#33201a; --indigo:#7f97e6; --indigo-soft:#1b2338;
+  --good:#43c489; --warn:#e0a63e; --crit:#f2665c;
+  --term-bg:#070c17; --shadow-sm:0 1px 2px rgba(0,0,0,.35);
+}}
+:root[data-theme="dark"]{
+  --bg:#0a0f1a; --surface:#111a2c; --surface-2:#0e1626; --ink:#e9edf7; --ink-2:#b3bcd0;
+  --muted:#828ca3; --faint:#697390; --line:#233052; --line-2:#1a2438;
+  --accent:#ff6a3d; --accent-soft:#33201a; --indigo:#7f97e6; --indigo-soft:#1b2338;
+  --good:#43c489; --warn:#e0a63e; --crit:#f2665c; --term-bg:#070c17;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.disp{font-family:"Chakra Petch","IBM Plex Sans",sans-serif}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+a{color:var(--accent)}
+.wrap{max-width:var(--maxw);margin:0 auto;padding-inline:20px}
+.topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.topbar .row{display:flex;align-items:center;gap:12px;padding-block:11px}
+.brandmark{display:flex;align-items:center;gap:10px;font-family:"Chakra Petch";font-weight:700;color:var(--ink)}
+.brandmark .glyph{display:inline-grid;place-items:center;width:29px;height:29px;border-radius:8px;background:var(--accent);color:#fff;font-weight:700}
+.brandmark small{font-family:"IBM Plex Sans";font-weight:500;color:var(--muted)}
+.spacer{flex:1}
+.ghostbtn{font:inherit;font-size:13px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);padding:7px 12px;border-radius:99px;cursor:pointer}
+.ghostbtn:hover{border-color:var(--accent);color:var(--accent)}
+.hero{padding-block:44px 30px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:"Chakra Petch";font-weight:600;text-transform:uppercase;letter-spacing:.18em;font-size:12px;color:var(--accent)}
+.hero h1{font-size:clamp(2rem,5.4vw,3rem);line-height:1.03;margin:.3em 0 .1em;letter-spacing:-.01em}
+.hero p{color:var(--ink-2);max-width:60ch;margin:.4em 0 0}
+.stamp{font-family:"IBM Plex Mono";font-size:12px;color:var(--muted);margin-top:14px}
+main{padding-block:30px 80px}
+section{padding-block:22px}
+section+section{border-top:1px solid var(--line-2)}
+.sec-eyebrow{font-family:"Chakra Petch";text-transform:uppercase;letter-spacing:.14em;font-size:11.5px;color:var(--accent)}
+h2{font-size:clamp(1.35rem,3vw,1.8rem);margin:.25em 0 .5em}
+p.lead{color:var(--ink-2);max-width:68ch}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin:6px 0 4px;font-size:13.5px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.tablewrap{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:var(--radius-sm);box-shadow:var(--shadow-sm)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line-2);text-align:center}
+thead th{position:sticky;top:0;background:var(--surface-2);font-family:"Chakra Petch";font-weight:600;font-size:12px;
+  text-transform:uppercase;letter-spacing:.03em;color:var(--ink-2);border-bottom:1px solid var(--line);vertical-align:bottom}
+thead th .dev{display:block;color:var(--ink);font-size:13px}
+thead th .ver{display:block;font-family:"IBM Plex Mono";font-size:10.5px;color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0;margin-top:2px}
+tbody th{text-align:left;font-weight:500;font-family:"IBM Plex Sans";color:var(--ink);white-space:nowrap;background:var(--surface)}
+tbody tr:hover td,tbody tr:hover th{background:var(--surface-2)}
+.grouprow th{background:var(--indigo-soft);color:var(--indigo);font-family:"Chakra Petch";text-transform:uppercase;
+  letter-spacing:.08em;font-size:11px;font-weight:600;text-align:left;border-bottom:1px solid var(--line)}
+.y{color:var(--good);font-weight:600}
+.n{color:var(--faint)}
+.p{color:var(--warn);font-weight:600}
+.val{font-family:"IBM Plex Mono";font-size:12px;color:var(--indigo)}
+sup{color:var(--accent);font-family:"IBM Plex Mono";font-size:10px;padding-left:1px}
+.notes{font-size:13px;color:var(--muted);margin:10px 2px 0;max-width:74ch}
+.notes b{color:var(--ink-2);font-family:"IBM Plex Mono";font-size:11px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin:18px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 17px;box-shadow:var(--shadow-sm)}
+.card .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.card h3{margin:0;font-size:1.05rem}
+.card .ver{font-family:"IBM Plex Mono";font-size:11.5px;color:var(--accent)}
+.card .chip{font-family:"IBM Plex Mono";font-size:11px;color:var(--muted);margin:3px 0 8px}
+.card p{margin:.3em 0;font-size:13.5px;color:var(--ink-2)}
+.tag{display:inline-block;font-family:"IBM Plex Mono";font-size:10.5px;padding:2px 7px;border-radius:5px;background:var(--accent-soft);color:var(--accent);margin:2px 3px 0 0}
+.tag.mut{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.note{border:1px solid var(--line);border-left:3px solid var(--indigo);background:var(--surface);border-radius:0 var(--radius-sm) var(--radius-sm) 0;padding:13px 15px;margin:16px 0;box-shadow:var(--shadow-sm)}
+.note .h{font-family:"Chakra Petch";font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--indigo);margin-bottom:3px}
+.note p{margin:.25em 0;font-size:14px;color:var(--ink-2)}
+.foot{border-top:1px solid var(--line);background:var(--surface-2)}
+.foot .wrap{padding-block:26px 40px}
+.foot p{color:var(--muted);font-size:13px;max-width:74ch}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="wrap row">
+  <span class="brandmark"><span class="glyph">Ω</span> GTi <small>· Feature Matrix</small></span>
+  <span class="spacer"></span>
+  <a class="ghostbtn" href="index.html">← Flasher</a>
+  <button class="ghostbtn" id="themeToggle">◑ Theme</button>
+</div></header>
+
+<div class="wrap hero">
+  <div class="eyebrow">Every current firmware · feature by feature</div>
+  <h1>Device Feature Matrix</h1>
+  <p>What each GTi board can actually do, read straight from the <code>.ino</code> source — touchscreens, wireless dongles, and the legacy boards. Where two firmwares exist for one device, both are shown.</p>
+  <p class="stamp">Verified from firmware source · 13 Sep 2026</p>
+</div>
+
+<div class="wrap"><main>
+
+  <section>
+    <div class="sec-eyebrow">Touchscreens</div>
+    <h2>Standalone touchscreens</h2>
+    <p class="lead">Wired directly to a Gotek over USB; hold the library on their own SD card. The JC3248 is the full-feature reference; the others trade a feature or two for a different screen.</p>
+    <div class="legend">
+      <span><b class="y">✓</b> yes</span><span><b class="n">—</b> no</span><span><b class="p">~</b> partial (see notes)</span>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th style="text-align:left">Feature</th>
+        <th><span class="dev">JC3248</span><span class="ver">3.5″ · 5.9.23</span></th>
+        <th><span class="dev">JC4827</span><span class="ver">4.3″ · 5.9.8</span></th>
+        <th><span class="dev">Waveshare 7″ / 7B</span><span class="ver">v5.0.1-GRID</span></th>
+        <th><span class="dev">ESP32-P4</span><span class="ver">JC4880 · 5.9.7 · beta</span></th>
+      </tr></thead>
+      <tbody>
+        <tr class="grouprow"><th colspan="5">Library &amp; browsing</th></tr>
+        <tr><th>A–Z list</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Cover reel / carousel</th><td class="y">✓</td><td class="y">✓</td><td class="val">grid<sup>1</sup></td><td class="y">✓</td></tr>
+        <tr><th>Type-to-search</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Favourites / Most / Random</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Categories + nesting</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Multi-disk grouping + picker</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Manual reader (.rtfm)</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Cover art (JPG / PNG)</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr class="grouprow"><th colspan="5">Disks</th></tr>
+        <tr><th>Modes: ADF / DSK / GEN</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Save write-back (OFF/COPY/OVERWRITE)</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>HD (1.76 MB) disks</th><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td></tr>
+        <tr class="grouprow"><th colspan="5">Look &amp; feel</th></tr>
+        <tr><th>7 themes</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>6 languages</th><td class="y">✓</td><td class="y">✓</td><td class="p">~<sup>2</sup></td><td class="y">✓</td></tr>
+        <tr><th>Cracktro boot intros</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Screensaver</th><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td></tr>
+        <tr class="grouprow"><th colspan="5">Maintenance</th></tr>
+        <tr><th>SD Access (mount to PC over USB)</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Firmware update from SD card</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>WiFi web panel (dashboard / OTA)</th><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td></tr>
+        <tr><th>WiFi SD file access (browser)</th><td class="y">✓</td><td class="n">—<sup>3</sup></td><td class="n">—</td><td class="n">—</td></tr>
+        <tr><th>WebDAV client (experimental)</th><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td></tr>
+        <tr class="grouprow"><th colspan="5">Wireless</th></tr>
+        <tr><th>FLING to dongles</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>ESP-NOW + home-WiFi (3-way mode)</th><td class="y">✓</td><td class="y">✓</td><td class="p">~<sup>4</sup></td><td class="y">✓<sup>5</sup></td></tr>
+        <tr><th>Hivemind (fan-out to all)</th><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td></tr>
+      </tbody>
+    </table></div>
+    <p class="notes">
+      <b>1</b> The 7″ uses a grid view rather than the cover-flow reel (hence the “GRID” build name). &nbsp;
+      <b>2</b> The 7-inch build carries the six languages; the 7B build omits them. &nbsp;
+      <b>3</b> JC4827 serves the web panel but not the file browser — that’s gated on <code>GTI_WEB_SD_FILES</code>, defined only on the JC3248. &nbsp;
+      <b>4</b> The 7″ can FLING over ESP-NOW but has no home-WiFi mode. &nbsp;
+      <b>5</b> The P4 has no native radio — WiFi runs through an on-board ESP32-C6 co-processor (self-updated from the SD card).
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-eyebrow">Dongles</div>
+    <h2>Wireless feeder dongles</h2>
+    <p class="lead">Plug into a Gotek on another machine and present a disk that’s flung to them from a touchscreen. The current firmware is the <b>Webby</b> (HD) edition — the older classic DD-only SuperMini build is <b>retired</b>. The ESP32-S3-Zero runs the SuperMini Webby image; the XIAO also has an older HD “classic” build.</p>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th style="text-align:left">Feature</th>
+        <th><span class="dev">SuperMini · Zero</span><span class="ver">Webby 1.6.1 · HD</span></th>
+        <th><span class="dev">XIAO</span><span class="ver">classic · v3.7.0</span></th>
+        <th><span class="dev">XIAO</span><span class="ver">Webby 1.5</span></th>
+      </tr></thead>
+      <tbody>
+        <tr><th>Presents a disk to a remote Gotek (USB-MSC)</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>DD disks</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>HD (1.76 MB) disks</th><td class="y">✓<sup>1</sup></td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Receive FLING</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Save write-back</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Remote eject</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Owner-lock / pairing</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Status LED</th><td class="y">✓<sup>2</sup></td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><th>Settable device name</th><td class="y">✓</td><td class="n">—</td><td class="y">✓</td></tr>
+        <tr><th>WiFi web page + SD upload</th><td class="y">✓</td><td class="n">—</td><td class="y">✓</td></tr>
+        <tr><th>Home-WiFi (router / STA) mode</th><td class="y">✓</td><td class="n">—</td><td class="y">✓</td></tr>
+        <tr><th>Fleet discovery (multi-dongle console)</th><td class="y">✓</td><td class="n">—</td><td class="y">✓</td></tr>
+      </tbody>
+    </table></div>
+    <p class="notes">
+      <b>1</b> The classic DD-only SuperMini firmware (1 MB RAM disk) is <b>retired</b> — the SuperMini now runs the Webby (HD, 1.75 MB) image, as does the Zero. The XIAO (8 MB) is HD on both its firmwares. &nbsp;
+      <b>2</b> The SuperMini/Zero Webby build drives a WS2812 RGB pixel (dim green idle, blue loaded, magenta on receive, amber busy, red fault); the XIAO drives discrete red/blue LEDs.
+    </p>
+    <div class="note">
+      <div class="h">The ESP32-S3-Zero</div>
+      <p>Not a separate firmware — the Zero runs the <b>SuperMini Webby</b> image unchanged, so its column is “SuperMini · Zero.” Its one difference is the LED: a single WS2812 RGB on GPIO21 instead of two discrete LEDs.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-eyebrow">Reference cards</div>
+    <h2>Per-device summary</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="top"><h3>JC3248</h3><span class="ver">5.9.23</span></div>
+        <div class="chip">3.5″ 320×480 · ESP32-S3 · 8 MB PSRAM</div>
+        <p>The flagship. Every feature, and the only board with browser-based WiFi SD file access.</p>
+        <div><span class="tag">everything</span><span class="tag">WiFi SD files</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h3>JC4827</h3><span class="ver">5.9.8</span></div>
+        <div class="chip">4.3″ 480×272 · ESP32-S3</div>
+        <p>The JC3248’s bigger sibling — identical bar one thing: web panel yes, in-browser SD file access no.</p>
+        <div><span class="tag">bigger screen</span><span class="tag mut">no WiFi SD files</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h3>ESP32-P4</h3><span class="ver">5.9.7 · beta</span></div>
+        <div class="chip">JC4880 · MIPI-DSI · 32 MB PSRAM · C6 WiFi</div>
+        <p>Bigger, faster panel; full library + HD + flinging via a C6 co-processor. Beta, not on the public flasher.</p>
+        <div><span class="tag">fast MIPI</span><span class="tag mut">ask / DIY</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h3>Waveshare 7″ / 7B</h3><span class="ver">v5.0.1</span></div>
+        <div class="chip">7″ 800×480 · grid view</div>
+        <p>Big-screen standalone. Grid browsing, DD only, no screensaver or home-WiFi; still flings to dongles.</p>
+        <div><span class="tag">big screen</span><span class="tag mut">DD only</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h3>SuperMini</h3><span class="ver">Webby 1.6.1</span></div>
+        <div class="chip">ESP32-S3 · 2 MB · onboard antenna</div>
+        <p>Cheapest dongle. Runs the Webby (HD) image — WiFi web + fleet + WS2812 status LED. The old DD-only classic firmware is retired.</p>
+        <div><span class="tag">cheapest</span><span class="tag">HD</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h3>XIAO</h3><span class="ver">3.7.0 / 1.5</span></div>
+        <div class="chip">ESP32-S3 · 8 MB · external antenna</div>
+        <p>HD on both firmwares. Webby adds WiFi web + fleet. (Still on Webby 1.5 — no status-LED HAL yet.)</p>
+        <div><span class="tag">HD both ways</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h3>ESP32-S3-Zero</h3><span class="ver">Webby 1.6.1</span></div>
+        <div class="chip">ESP32-S3 · WS2812 on GPIO21</div>
+        <p>Runs the SuperMini Webby image. Tiny, HD, single RGB status pixel.</p>
+        <div><span class="tag">newest</span><span class="tag">RGB LED</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-eyebrow">Legacy</div>
+    <h2>Legacy boards</h2>
+    <p class="lead">Still in the tree, kept working, but not recommended for a new build.</p>
+    <div class="cards">
+      <div class="card">
+        <div class="top"><h3>CYD</h3><span class="ver">v3.9.0</span></div>
+        <div class="chip">2.8″ resistive · remote only</div>
+        <p>A basic remote: DSK mode, themes, cracktro, ESP-NOW FLING. No saves, reel, search or covers. The jank is the hardware.</p>
+      </div>
+      <div class="card">
+        <div class="top"><h3>Waveshare 2.8″</h3><span class="ver">v3.4.7</span></div>
+        <div class="chip">2.8″ · ESP32-S3</div>
+        <p>DSK mode, themes, cracktro, covers, USB-MSC, ESP-NOW FLING. An early small-screen build.</p>
+      </div>
+    </div>
+  </section>
+
+</main></div>
+
+<footer class="foot"><div class="wrap">
+  <p>Compiled by reading each device’s <code>.ino</code> at HEAD on 13 Sep 2026 (feature-marker sweep + targeted verification). Versions shown are the on-device <code>FW_VERSION</code> strings; the public web flasher may carry a slightly earlier build per channel. Hidden/easter-egg features are intentionally omitted.</p>
+</div></footer>
+
+<script>
+(function(){
+  var root=document.documentElement,btn=document.getElementById('themeToggle'),s=null;
+  try{s=localStorage.getItem('gti-theme');}catch(e){}
+  if(s)root.setAttribute('data-theme',s);
+  function cur(){return root.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');}
+  btn.addEventListener('click',function(){var n=cur()==='dark'?'light':'dark';root.setAttribute('data-theme',n);try{localStorage.setItem('gti-theme',n);}catch(e){}});
+})();
+</script>
+</body>
+</html>

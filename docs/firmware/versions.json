@@ -174,13 +174,6 @@
         "date": "2026-09-13",
         "full": "firmware/supermini-beta/manifest.json",
         "note": "status LED \u2014 discrete red/blue + WS2812 RGB (drives SuperMini LEDs and the S3-Zero pixel); magenta flash on ADF receive; LED=OFF to silence. (incl. 1.5 fleet/naming fixes)"
-      },
-      {
-        "v": "3.2.0",
-        "ch": "stable",
-        "date": "2026-08-02",
-        "full": "firmware/supermini/manifest.json",
-        "note": "ESP-NOW + WiFi transport, owner-lock, save write-back"
       }
     ]
   },
