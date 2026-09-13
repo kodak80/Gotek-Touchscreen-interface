@@ -168,12 +168,12 @@
     "chipFamily": "ESP32-S3",
     "builds": [
       {
-        "v": "Webby-1.5",
+        "v": "Webby-1.6.1",
         "ch": "beta",
         "latest": true,
-        "date": "2026-09-12",
+        "date": "2026-09-13",
         "full": "firmware/supermini-beta/manifest.json",
-        "note": "unique-SSID fix + settable device name + name-on-fling + screen-as-leader fleet naming"
+        "note": "status LED \u2014 discrete red/blue + WS2812 RGB (drives SuperMini LEDs and the S3-Zero pixel); magenta flash on ADF receive; LED=OFF to silence. (incl. 1.5 fleet/naming fixes)"
       },
       {
         "v": "3.2.0",

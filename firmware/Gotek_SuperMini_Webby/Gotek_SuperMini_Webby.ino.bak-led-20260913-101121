@@ -47,7 +47,7 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.1-statusLED"
+#define FW_VERSION     "Webby-1.5-fleetUI"
 #define ESPNOW_CHANNEL 6
 // ── Board profile ──────────────────────────────────────────
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -55,25 +55,11 @@
 // The SuperMini is just the cheapest board that packages those three. To port to
 // another S3, override these pins for that board (an unused GPIO is fine — the
 // LEDs are optional status, not required). Defaults = SuperMini.
-// --- Status LEDs (driven unconditionally — no board detection) ------------
-// We light BOTH kinds of status LED on every render, so ONE firmware image
-// works on every board with no build switch: two discrete LEDs (SuperMini:
-// red=GPIO1, blue=GPIO2) AND a WS2812 RGB (Zero: GPIO21). A board simply
-// ignores the output it doesn't have — toggling an unused GPIO is harmless.
 #ifndef LED_RED
-#define LED_RED        1      // SuperMini red
+#define LED_RED        1
 #endif
 #ifndef LED_BLUE
-#define LED_BLUE       2      // SuperMini blue
-#endif
-#ifndef LED_NP_PIN
-#define LED_NP_PIN     21     // Zero WS2812 data
-#endif
-#ifndef LED_NP_SWAP_RG
-#define LED_NP_SWAP_RG 1      // this Zero's pixel reads bytes R,G,B (green<->red)
-#endif
-#ifndef LED_NP_BRIGHT
-#define LED_NP_BRIGHT  28     // 0..255, keep low
+#define LED_BLUE       2
 #endif
 #ifndef BOOT_PIN
 #define BOOT_PIN       0
@@ -154,56 +140,14 @@ static uint32_t crc32sw(uint32_t crc,const uint8_t*p,size_t n){
   return ~crc;
 }
 
-// --- LED status HAL -------------------------------------------------------
-// The rest of the firmware only calls setLeds()/ledRed()/ledBlue()/ledActivity();
-// this maps the (red,blue) status onto whatever the board has — two discrete LEDs,
-// or the Zero's single WS2812. LED=OFF in WEBBY.TXT silences it on either board.
-static bool     g_led_enabled = true;
-static bool     g_led_red = false, g_led_blue = false;
-static uint32_t g_led_act_until = 0;   // activity pulse end (millis)
-
-static void ledRender() {
-  bool actv = ((int32_t)(g_led_act_until - millis()) > 0);
-  // Discrete pair (SuperMini): the exact rule it always used.
-  bool dred  = g_led_enabled && g_led_red;
-  bool dblue = g_led_enabled && (g_led_blue || actv);
-  // WS2812 (Zero): richer colour map with a distinct activity colour.
-  uint8_t r=0,g=0,b=0;
-  if (g_led_enabled) {
-    if      (actv)                    { r=180; g=0;  b=200; }  // activity = magenta pulse (ADF arriving)
-    else if (g_led_red && g_led_blue) { r=200; g=90; b=0;   }  // both  = amber (busy / unsaved writes)
-    else if (g_led_red)               { r=220; g=0;  b=0;   }  // red   = fault / not paired
-    else if (g_led_blue)              { r=0;   g=0;  b=220; }  // blue  = ready / disk loaded
-    else                              { r=0;   g=16; b=0;   }  // idle  = dim green
-  }
-  uint8_t R=(uint16_t)r*LED_NP_BRIGHT/255, G=(uint16_t)g*LED_NP_BRIGHT/255, B=(uint16_t)b*LED_NP_BRIGHT/255;
-  // Only touch the hardware when something changed (covers both outputs).
-  uint32_t sig=((uint32_t)R<<16)|((uint32_t)G<<8)|B|((uint32_t)(dred?1:0)<<25)|((uint32_t)(dblue?1:0)<<24);
-  static uint32_t last=0xFFFFFFFFu; if(sig==last) return; last=sig;
-  digitalWrite(LED_RED,  dred ? HIGH : LOW);
-  digitalWrite(LED_BLUE, dblue? HIGH : LOW);
-#if LED_NP_SWAP_RG
-  neopixelWrite(LED_NP_PIN, G, R, B);   // R/G swapped for this Zero's pixel
-#else
-  neopixelWrite(LED_NP_PIN, R, G, B);
-#endif
-}
-static inline void ledRed(bool on){ g_led_red = on; ledRender(); }
-static inline void ledBlue(bool on){ g_led_blue = on; ledRender(); }
-static inline void setLeds(bool red, bool blue){ g_led_red = red; g_led_blue = blue; ledRender(); }
-static inline void ledActivity(uint16_t ms=350){ g_led_act_until = millis() + ms; ledRender(); }
-static inline void ledTick(){ ledRender(); }   // call each loop so time-based states refresh
-static void ledInit(){
-  pinMode(LED_RED, OUTPUT); pinMode(LED_BLUE, OUTPUT);   // WS2812 needs no pinMode
-  ledRender();
-}
+static void setLeds(bool red, bool blue){ digitalWrite(LED_RED, red?HIGH:LOW); digitalWrite(LED_BLUE, blue?HIGH:LOW); }
 static void oledStatus(const String& l0, const String& l1, const String& l2, const String& l3) {
   (void)l1;(void)l2;(void)l3;
   if (l0.startsWith("**") || l0.startsWith("Receiving") || l0.startsWith("Gotek") || l0.startsWith("LOADED")) setLeds(false,true);
   else if (l0.startsWith("Not paired")) setLeds(true,false);
 }
 static void oledProgress(uint32_t done, uint32_t total) {
-  (void)total; static bool t=false; t=!t; ledBlue(t); (void)done;
+  (void)total; static bool t=false; t=!t; digitalWrite(LED_BLUE, t?HIGH:LOW); (void)done;
 }
 
 // TinyUSB
@@ -407,7 +351,7 @@ static void handleESPNOW(const uint8_t* data, int len) {
   }
   if (type == PKT_DISK_EJECT) {
     if (g_disk_loaded) { hardDetach(); g_disk_loaded=false; }
-    dirtyReset(); ledBlue(false);
+    dirtyReset(); digitalWrite(LED_BLUE, LOW);
     oledStatus("Gotek OMEGA " FW_VERSION, "Ejected", "", "Ready");
     return;
   }
@@ -467,7 +411,6 @@ static void loadWifiCfg() {
     else if (line.startsWith("PASS=")) g_pass    = line.substring(5);
     else if (line.startsWith("MODE=")) g_modeStr = line.substring(5);
     else if (line.startsWith("NAME=")) g_devname = line.substring(5);
-    else if (line.startsWith("LED="))  { String v=line.substring(4); v.trim(); v.toUpperCase(); g_led_enabled = !(v=="OFF"||v=="0"||v=="NO"); }
   }
   f.close();
 }
@@ -511,7 +454,7 @@ static inline void wrLE16(uint8_t*p,uint16_t v){p[0]=(uint8_t)v;p[1]=(uint8_t)(v
 static void doEject(WiFiClient& client, bool force){
   if (!force && g_dirty_count > 0) { client.write((uint8_t)0x02); client.flush(); return; }
   if (g_disk_loaded) { hardDetach(); g_disk_loaded = false; }
-  dirtyReset(); g_loaded_name=""; ledBlue(false);
+  dirtyReset(); g_loaded_name=""; digitalWrite(LED_BLUE, LOW);
   oledStatus("Gotek OMEGA " FW_VERSION, "Ejected (app)", "", "Ready");
   client.write((uint8_t)0x01); client.flush();
 }
@@ -595,7 +538,7 @@ static void handleTCPClient(WiFiClient& client) {
     g_loaded_name = g_next_name.length() ? g_next_name : String("DISK.ADF");   // #24: pretty name from the set-next-name escape, else the constant
     g_next_name = "";   // consume it — the next fling must set its own name
     uint8_t ack[5]; ack[0]=0x01; wrLE32(ack+1,g_load_id); client.write(ack,5); client.flush(); delay(100); client.stop();
-    if (g_disk_loaded) hardDetach(); hardAttach(); g_disk_loaded = true; g_next_status_ms = 0; ledBlue(true); ledActivity();
+    if (g_disk_loaded) hardDetach(); hardAttach(); g_disk_loaded = true; g_next_status_ms = 0; digitalWrite(LED_BLUE, HIGH);
     oledStatus("LOADED!", "", "USB: attached", "Gotek ready");
     sendSimple(PKT_XIAO_DONE);
   } else {
@@ -644,7 +587,7 @@ static void webFinishLoad(){
   build_volume_ex(to83(g_up_name).c_str(), size, false);   // #24: 8.3-mangle for the FAT12 root; full name kept in g_loaded_name (below)
   g_image_size = size; g_load_id++; dirtyReset();
   if (g_disk_loaded) hardDetach();
-  hardAttach(); g_disk_loaded = true; g_next_status_ms = 0; ledBlue(true); ledActivity();
+  hardAttach(); g_disk_loaded = true; g_next_status_ms = 0; digitalWrite(LED_BLUE, HIGH);
   oledStatus("LOADED!", "", "USB: attached", "Gotek ready");
   sendSimple(PKT_XIAO_DONE);   // harmless if no ESP-NOW peer
 }
@@ -654,7 +597,7 @@ static void handleUpload(){
     g_up_recv = 0; g_up_overflow = false;
     g_up_name = up.filename; if (g_up_name.length()==0) g_up_name = "DISK.ADF";
     // detach first so the Amiga isn't reading the disk while we rewrite its data region
-    if (g_disk_loaded) { hardDetach(); g_disk_loaded = false; ledBlue(false); }
+    if (g_disk_loaded) { hardDetach(); g_disk_loaded = false; digitalWrite(LED_BLUE, LOW); }
   } else if (up.status == UPLOAD_FILE_WRITE) {
     if (!g_up_overflow && g_up_recv + up.currentSize <= MAX_FILE_BYTES) {
       memcpy(g_disk + DATA_LBA*SECTOR_SIZE + g_up_recv, up.buf, up.currentSize);
@@ -673,7 +616,7 @@ static void handleUploadDone(){
 }
 static void handleEjectWeb(){
   if (g_disk_loaded) { hardDetach(); g_disk_loaded = false; }
-  dirtyReset(); g_loaded_name=""; ledBlue(false);
+  dirtyReset(); g_loaded_name=""; digitalWrite(LED_BLUE, LOW);
   oledStatus("Gotek OMEGA " FW_VERSION, "Ejected (web)", "", "Ready");
   server.send(200,"application/json", statusJson());
 }
@@ -899,7 +842,7 @@ static void apiDiskStatus(){
 }
 static void apiDiskUnload(){
   if (g_disk_loaded) { hardDetach(); g_disk_loaded = false; }
-  dirtyReset(); g_loaded_name=""; ledBlue(false);
+  dirtyReset(); g_loaded_name=""; digitalWrite(LED_BLUE, LOW);
   server.send(200,"application/json","{\"status\":\"ok\"}");
 }
 static void apiGamesUploadDone(){
@@ -1193,13 +1136,14 @@ static void startEspnowApMode(){
 
 void setup() {
   Serial.begin(115200); delay(200);
-  ledInit(); pinMode(BOOT_PIN, INPUT_PULLUP);
+  pinMode(LED_RED, OUTPUT); pinMode(LED_BLUE, OUTPUT); pinMode(BOOT_PIN, INPUT_PULLUP);
+  digitalWrite(LED_RED, LOW); digitalWrite(LED_BLUE, LOW);
   _rxQueue = xQueueCreate(32, sizeof(RxPkt));
 
   // PSRAM ramdisk
   g_disk = (uint8_t*)ps_malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE);
   if (!g_disk) g_disk = (uint8_t*)malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE);
-  if (!g_disk) { Serial.println("[FATAL] RAM disk alloc failed \u2014 enable PSRAM (QSPI) in the board menu, or the disk is too big for this board's PSRAM"); oledStatus("FATAL: no RAM","Set PSRAM=QSPI","in board menu",""); while(true){ledRed(true);delay(200);ledRed(false);delay(200);} }
+  if (!g_disk) { Serial.println("[FATAL] RAM disk alloc failed \u2014 enable PSRAM (QSPI) in the board menu, or the disk is too big for this board's PSRAM"); oledStatus("FATAL: no RAM","Set PSRAM=QSPI","in board menu",""); while(true){digitalWrite(LED_RED,HIGH);delay(200);digitalWrite(LED_RED,LOW);delay(200);} }
   build_volume("DISK.ADF", ADF_DEFAULT_SIZE);
 
   // USB MSC
@@ -1225,9 +1169,9 @@ void setup() {
       if (attempt) { WiFi.disconnect(true); delay(400); }
       WiFi.begin(g_ssid.c_str(), g_pass.c_str());
       uint32_t t0 = millis();
-      while (WiFi.status() != WL_CONNECTED && millis()-t0 < 12000) { ledRed(((millis()/200)&1)); delay(50); }
+      while (WiFi.status() != WL_CONNECTED && millis()-t0 < 12000) { digitalWrite(LED_RED, ((millis()/200)&1)?HIGH:LOW); delay(50); }
     }
-    ledRed(false);
+    digitalWrite(LED_RED, LOW);
     g_join_failed = (WiFi.status() != WL_CONNECTED);
     if (WiFi.status() == WL_CONNECTED) {
       g_webmode = 1;
@@ -1252,7 +1196,6 @@ void setup() {
 // LOOP
 // ============================================================================
 void loop() {
-  ledTick();
   server.handleClient();
   if (g_dns_up) dnsServer.processNextRequest();
 

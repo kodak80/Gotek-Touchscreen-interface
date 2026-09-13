@@ -47,7 +47,7 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.1-statusLED"
+#define FW_VERSION     "Webby-1.6-statusLED"
 #define ESPNOW_CHANNEL 6
 // ── Board profile ──────────────────────────────────────────
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -55,25 +55,25 @@
 // The SuperMini is just the cheapest board that packages those three. To port to
 // another S3, override these pins for that board (an unused GPIO is fine — the
 // LEDs are optional status, not required). Defaults = SuperMini.
-// --- Status LEDs (driven unconditionally — no board detection) ------------
-// We light BOTH kinds of status LED on every render, so ONE firmware image
-// works on every board with no build switch: two discrete LEDs (SuperMini:
-// red=GPIO1, blue=GPIO2) AND a WS2812 RGB (Zero: GPIO21). A board simply
-// ignores the output it doesn't have — toggling an unused GPIO is harmless.
-#ifndef LED_RED
-#define LED_RED        1      // SuperMini red
-#endif
-#ifndef LED_BLUE
-#define LED_BLUE       2      // SuperMini blue
-#endif
-#ifndef LED_NP_PIN
-#define LED_NP_PIN     21     // Zero WS2812 data
-#endif
-#ifndef LED_NP_SWAP_RG
-#define LED_NP_SWAP_RG 1      // this Zero's pixel reads bytes R,G,B (green<->red)
-#endif
-#ifndef LED_NP_BRIGHT
-#define LED_NP_BRIGHT  28     // 0..255, keep low
+// --- Board LED type -------------------------------------------------------
+// SuperMini / XIAO: two discrete on/off LEDs (red + blue).
+// ESP32-S3-Zero:    ONE addressable WS2812 RGB on GPIO21 — a different KIND of
+// part (not just a different pin), so it's driven through the ledXxx() HAL below.
+// To build for the Zero, uncomment the next line (and pick the Zero board + QSPI PSRAM):
+//#define GTI_BOARD_ZERO 1
+#if defined(GTI_BOARD_ZERO)
+  #define LED_NEOPIXEL   1
+  #define LED_NP_PIN     21     // WS2812 data on the Zero
+  #define LED_NP_SWAP_RG 1      // this Zero's pixel reads bytes R,G,B (green<->red vs standard)
+  #define LED_NP_BRIGHT  28     // 0..255, keep low
+#else
+  #define LED_NEOPIXEL   0
+  #ifndef LED_RED
+  #define LED_RED        1
+  #endif
+  #ifndef LED_BLUE
+  #define LED_BLUE       2
+  #endif
 #endif
 #ifndef BOOT_PIN
 #define BOOT_PIN       0
@@ -164,10 +164,7 @@ static uint32_t g_led_act_until = 0;   // activity pulse end (millis)
 
 static void ledRender() {
   bool actv = ((int32_t)(g_led_act_until - millis()) > 0);
-  // Discrete pair (SuperMini): the exact rule it always used.
-  bool dred  = g_led_enabled && g_led_red;
-  bool dblue = g_led_enabled && (g_led_blue || actv);
-  // WS2812 (Zero): richer colour map with a distinct activity colour.
+#if LED_NEOPIXEL
   uint8_t r=0,g=0,b=0;
   if (g_led_enabled) {
     if      (actv)                    { r=180; g=0;  b=200; }  // activity = magenta pulse (ADF arriving)
@@ -177,15 +174,20 @@ static void ledRender() {
     else                              { r=0;   g=16; b=0;   }  // idle  = dim green
   }
   uint8_t R=(uint16_t)r*LED_NP_BRIGHT/255, G=(uint16_t)g*LED_NP_BRIGHT/255, B=(uint16_t)b*LED_NP_BRIGHT/255;
-  // Only touch the hardware when something changed (covers both outputs).
-  uint32_t sig=((uint32_t)R<<16)|((uint32_t)G<<8)|B|((uint32_t)(dred?1:0)<<25)|((uint32_t)(dblue?1:0)<<24);
+  uint32_t sig=((uint32_t)R<<16)|((uint32_t)G<<8)|B;
   static uint32_t last=0xFFFFFFFFu; if(sig==last) return; last=sig;
-  digitalWrite(LED_RED,  dred ? HIGH : LOW);
-  digitalWrite(LED_BLUE, dblue? HIGH : LOW);
-#if LED_NP_SWAP_RG
-  neopixelWrite(LED_NP_PIN, G, R, B);   // R/G swapped for this Zero's pixel
+  #if LED_NP_SWAP_RG
+    neopixelWrite(LED_NP_PIN, G, R, B);   // R/G swapped for this Zero's pixel
+  #else
+    neopixelWrite(LED_NP_PIN, R, G, B);
+  #endif
 #else
-  neopixelWrite(LED_NP_PIN, R, G, B);
+  bool red  = g_led_enabled && g_led_red;
+  bool blue = g_led_enabled && (g_led_blue || actv);
+  uint32_t sig=(red?2:0)|(blue?1:0);
+  static uint32_t last=0xFFFFFFFFu; if(sig==last) return; last=sig;
+  digitalWrite(LED_RED,  red ? HIGH : LOW);
+  digitalWrite(LED_BLUE, blue? HIGH : LOW);
 #endif
 }
 static inline void ledRed(bool on){ g_led_red = on; ledRender(); }
@@ -194,7 +196,9 @@ static inline void setLeds(bool red, bool blue){ g_led_red = red; g_led_blue = b
 static inline void ledActivity(uint16_t ms=350){ g_led_act_until = millis() + ms; ledRender(); }
 static inline void ledTick(){ ledRender(); }   // call each loop so time-based states refresh
 static void ledInit(){
-  pinMode(LED_RED, OUTPUT); pinMode(LED_BLUE, OUTPUT);   // WS2812 needs no pinMode
+#if !LED_NEOPIXEL
+  pinMode(LED_RED, OUTPUT); pinMode(LED_BLUE, OUTPUT);
+#endif
   ledRender();
 }
 static void oledStatus(const String& l0, const String& l1, const String& l2, const String& l3) {
