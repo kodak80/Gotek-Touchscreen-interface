@@ -168,20 +168,12 @@
     "chipFamily": "ESP32-S3",
     "builds": [
       {
-        "v": "Webby-1.6.1",
-        "ch": "beta",
-        "latest": true,
-        "date": "2026-09-13",
-        "full": "firmware/supermini-beta/manifest.json",
-        "note": "Webby: status LED (discrete + WS2812), magenta on ADF receive, LED=OFF to silence (incl. 1.5 fleet/naming fixes)"
-      },
-      {
         "v": "Webby-1.5",
         "ch": "beta",
-        "latest": false,
+        "latest": true,
         "date": "2026-09-12",
         "full": "firmware/supermini-beta/manifest-1.5.json",
-        "note": "Webby (pre status-LED): unique-SSID fix + settable device name + name-on-fling + screen-as-leader naming"
+        "note": "Webby: unique-SSID fix + settable device name + name-on-fling + screen-as-leader naming. (1.6.1 pulled \u2014 status-LED refresh starved the ESP-NOW radio; fix pending as 1.6.2)"
       },
       {
         "v": "3.4.0-beta",

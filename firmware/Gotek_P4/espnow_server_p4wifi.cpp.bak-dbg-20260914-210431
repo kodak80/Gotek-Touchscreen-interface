@@ -104,15 +104,13 @@ static void saveConfig() {
 
 // ---------- API ----------
 void espnowBegin() {
-  Serial.println("[P4WIFI] espnowBegin ENTER");
+  // C6 already alive (self-updated). Just bring WiFi up in STA and load the saved dongle.
   WiFi.mode(WIFI_STA);
-  Serial.println("[P4WIFI] after mode(STA)");
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
   uint32_t t0=millis(); while(!WiFi.STA.started() && millis()-t0<3000) delay(50);
-  Serial.printf("[P4WIFI] STA.started=%d (%ums)\n",(int)WiFi.STA.started(),(unsigned)(millis()-t0));
   loadConfig();
-  Serial.printf("[P4WIFI] begin DONE; paired=%d ip=%s\n", g_espnow_paired, _dongle_ip.c_str());
+  Serial.printf("[P4WIFI] begin; paired=%d ip=%s\n", g_espnow_paired, _dongle_ip.c_str());
 }
 
 // Blocking WiFi scan for the dongle's GotekOMEGA AP on ch6. BLOCKING, not async: on the P4
