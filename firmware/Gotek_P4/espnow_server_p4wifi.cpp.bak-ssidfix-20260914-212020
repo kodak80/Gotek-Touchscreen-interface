@@ -61,7 +61,7 @@ static uint32_t crc32sw(uint32_t crc, const uint8_t* p, size_t n) {
 
 // ---------- Multi-dongle scan (WiFi AP scan for SSID "GotekOMEGA") ----------
 #define MAX_SCANNED 64
-struct ScannedDongle { uint8_t mac[6]; char ip[16]; char ssid[33]; };
+struct ScannedDongle { uint8_t mac[6]; char ip[16]; };
 static ScannedDongle _scanned[MAX_SCANNED];
 static int  _scanned_count = 0;
 static int  _scanCap = 32;
@@ -123,7 +123,7 @@ static void blockingScanHarvest() {
   int n = WiFi.scanNetworks(false /*blocking*/, false /*show_hidden*/, false /*passive*/, 300, DONGLE_AP_CHANNEL);
   if (n <= 0) { WiFi.scanDelete(); return; }
   for (int i = 0; i < n && _scanned_count < _scanCap; i++) {
-    if (!WiFi.SSID(i).startsWith(DONGLE_AP_SSID)) continue;   // 5.9.11: match GotekOMEGA AND GotekOMEGA-<mac> (unique-SSID dongles)
+    if (WiFi.SSID(i) != String(DONGLE_AP_SSID)) continue;
     uint8_t* b = WiFi.BSSID(i);
     if (!b) continue;
     bool dup=false;
@@ -132,7 +132,6 @@ static void blockingScanHarvest() {
     memcpy(_scanned[_scanned_count].mac, b, 6);
     strncpy(_scanned[_scanned_count].ip, DONGLE_AP_IP, 15);   // AP-mode dongles all serve .4.1
     _scanned[_scanned_count].ip[15]=0;
-    strncpy(_scanned[_scanned_count].ssid, WiFi.SSID(i).c_str(), 32); _scanned[_scanned_count].ssid[32]=0;   // 5.9.11: remember the dongle's actual (unique) SSID for the join
     _scanned_count++;
     g_espnow_xiao_last_seen = millis();
   }
@@ -198,10 +197,8 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
   delay(200);
 
   bool haveMac = false; for (int i=0;i<6;i++) if(mac[i]){ haveMac=true; break; }
-  const char* joinSsid = DONGLE_AP_SSID;   // 5.9.11: dongles use unique GotekOMEGA-<mac> SSIDs; use this dongle's actual SSID from the scan
-  for (int i=0;i<_scanned_count;i++) if(memcmp(_scanned[i].mac,mac,6)==0 && _scanned[i].ssid[0]){ joinSsid=_scanned[i].ssid; break; }
-  if (haveMac) WiFi.begin(joinSsid, DONGLE_AP_PASS, DONGLE_AP_CHANNEL, (uint8_t*)mac);
-  else         WiFi.begin(joinSsid, DONGLE_AP_PASS);
+  if (haveMac) WiFi.begin(DONGLE_AP_SSID, DONGLE_AP_PASS, DONGLE_AP_CHANNEL, (uint8_t*)mac);
+  else         WiFi.begin(DONGLE_AP_SSID, DONGLE_AP_PASS);
 
   uint32_t t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis()-t0 < connectTimeoutMs) { delay(200); Serial.print("."); }
