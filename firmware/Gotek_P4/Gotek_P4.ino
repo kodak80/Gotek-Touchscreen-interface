@@ -32,7 +32,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.11-P4"
+#define FW_VERSION "5.9.13-P4"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -1138,6 +1138,7 @@ static void doUnload();
 
 static void cycleTheme(){applyTheme((g_theme_idx+1)%NUM_THEMES);saveConfigKey("THEME",String(g_theme_idx));drawFullUI();gfx_flush();}
 static bool g_espnow_started=false;
+static bool g_c6_ready=false;   // 5.9.12: set true only when the C6 is confirmed up-to-date and STA is up; gates arming the radio
 static void ensureEspNow(){if(!g_espnow_started){espnowBegin();g_espnow_started=true;}}
 
 // ============================================================================
@@ -3010,6 +3011,11 @@ static bool doLoadSelected(const String&adfPath){
   hardAttach();g_loaded=true;g_loaded_name=basenameNoExt(filenameOnly(adfPath));g_loaded_path=loadPath;g_loaded_game_idx=g_sel;g_loaded_disk_idx=g_disk_sel;
   if(g_sel>=0&&g_sel<(int)g_games.size()){if(g_games[g_sel].plays<65535)g_games[g_sel].plays++;saveStats();}
   if(g_wireless_mode&&g_espnow_started){
+    // wireless DSK fix: tell the dongle the FAT12 name+extension to build, so a
+    // CPC .dsk mounts as DISK.DSK not DISK.ADF (FlashFloppy Error 34).
+    { String fn = (g_mode==MODE_GEN) ? filenameOnly(adfPath)
+                                     : (basenameNoExt(filenameOnly(adfPath)) + (g_mode==MODE_ADF ? ".adf" : ".dsk"));
+      espnowSetFlingName(fn); }
     uint8_t mcMacs[64][6]; int mcN=enumMuCaDongles(mcMacs,g_dongle_cap);
     if(mcN>0&&g_hivemind){                                  // multicast: fan the disk out to every MuCa- dongle in turn (v4.8.1: only when HIVEMIND=ON)
       g_sv_wl_path="";g_sv_wl_loadid=0;                     // Hivemind saves: PINNED — no writeback mapping for multicast
@@ -4092,7 +4098,7 @@ static void c6SelfUpdate(){
   bool haveVer = (esp_hosted_get_coprocessor_fwversion(&v)==ESP_OK);
   // Skip only if the C6 is already at 2.12.13 or newer; anything lower is offered the update.
   auto c6AtLeast=[&](int a,int b,int c){ if(v.major1!=a)return v.major1>a; if(v.minor1!=b)return v.minor1>b; return v.patch1>=c; };
-  if(haveVer && c6AtLeast(2,12,13)){ if(!g_wireless_mode) WiFi.mode(WIFI_OFF); return; }   // fix: in WIRELESS leave STA up so espnowBegin need not re-init the hosted radio (OFF->STA re-init crashed)
+  if(haveVer && c6AtLeast(2,12,13)){ g_c6_ready=true; return; }   // 5.9.12: radio always-on; leave STA up so espnowBegin never re-inits the hosted radio (that OFF->STA re-init crashed)
 
   // Image source: an SD override wins (drop a newer c6_network_adapter_*.bin on the card),
   // otherwise the embedded 'c6fw' flash partition baked in at build time. Header = "C6FW" + u32 LE length.
@@ -4191,7 +4197,7 @@ void setup(){
     }
     espnowSetScanCap(g_dongle_cap);
     relayout();                 // apply ROTATE/COMPACT from config before first draw
-    c6SelfUpdate();             // P4: one-time C6 WiFi-firmware self-update (tap-gated; skips if no image on SD)
+    if(!sdAccessReq) c6SelfUpdate();   // P4: one-time C6 WiFi self-update (tap-gated). 5.9.12: skipped in SD-access so the radio stays down while the PC holds the card
     listImages(SD_MMC,g_files);
     if(!readGameCache()){buildGameList();buildThumbs();}   // fresh card: build reel thumbs up-front
     applyStats();
@@ -4199,7 +4205,7 @@ void setup(){
     if(!g_games.empty())setActiveLetter(bucketOf(g_games[0].name));
     scanScreensaver();
   } else {gfx_setTextColor(TFT_RED,TFT_BLACK);gfx_setCursor(8,200);gfx_print(T(L_SD_MOUNT_FAIL));gfx_flush();delay(2000);relayout();}   // no card: still init layout so INFO/LOAD DIAG work
-  if(g_wireless_mode&&!sdAccessReq){espnowBegin();g_espnow_started=true;}   // v5.1: don't arm the radio when booting into SD access
+  if(!sdAccessReq && g_c6_ready){espnowBegin();g_espnow_started=true;}   // 5.9.12: radio armed at boot in BOTH modes (MODE is a pure UI gate, no reboot); off in SD access, and only if the C6 is ready
   if(g_cracktro>=0)drawCracktro(g_cracktro);   // CRACKTRO=OFF/NONE (-1) skips the boot demo entirely
   USB.onEvent(usbEventCB);
   if(sdAccessReq){runSDAccessBoot(sdok);}   // v5.1: SD-access boot mode — never returns (reboots to normal)
@@ -4390,7 +4396,7 @@ static void drawInfoFull(){
 }
 static void infoAction(uint8_t act){
   switch(act){
-    case IA_MODE: { g_wireless_mode=!g_wireless_mode; saveConfigKey("MODE",g_wireless_mode?"WIRELESS":"STANDALONE"); gfx_fillScreen(COL_BG);gfx_setTextSize(2);gfx_setTextColor(COL_LIT,COL_BG); const char*m=g_wireless_mode?"WIRELESS - restarting...":"STANDALONE - restarting..."; gfx_setCursor((VW-gfx_textWidth(m))/2,VH/2-8);gfx_print(m);gfx_flush(); delay(600); ESP.restart(); } break;   // P4: reboot to (dis)arm the C6 radio via the clean boot path; live esp-hosted toggle crashed
+    case IA_MODE: g_wireless_mode=!g_wireless_mode; saveConfigKey("MODE",g_wireless_mode?"WIRELESS":"STANDALONE"); drawInfoFull(); break;   // 5.9.12: radio is armed at boot in both modes; MODE is a pure UI gate now - no reboot, never touches the radio
     case IA_FONT: applyFont((g_font+1)%3);saveConfigKey("FONT",fontKey(g_font));drawInfoFull();break;
     case IA_THEME: applyTheme((g_theme_idx+1)%NUM_THEMES);saveConfigKey("THEME",String(g_theme_idx));drawInfoFull();break;   // Vince test: theme cycling lives in CONFIG now
     case IA_LANG: g_lang=(g_lang+1)%LANG_N;saveConfigKey("LANG",LANG_NAMES[g_lang]);drawInfoFull();break;

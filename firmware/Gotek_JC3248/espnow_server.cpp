@@ -347,6 +347,38 @@ bool espnowSendNotify(const String& name, const String& mode, uint32_t size) {
   return true; // proceed straight to sendDisk
 }
 
+// ── Wireless DSK fix (1.6.3) ────────────────────────────────────────────────
+// The dongle historically named EVERY flung image DISK.ADF, so a CPC/Spectrum
+// .dsk mounted as an ADF and FlashFloppy threw Error 34. The panel now sends
+// the real filename+extension via the CMD_SET_NAME escape on its own short TCP
+// connection just before the disk fling; the dongle builds the FAT12 root from
+// that extension. Backward compatible: a dongle too old to know CMD_SET_NAME
+// simply NAKs the escape and the fling still lands as DISK.ADF (old behaviour).
+#ifndef CMD_SET_NAME
+#define CMD_SET_NAME 0x06
+#endif
+static String g_fling_name = "";
+void espnowSetFlingName(const String& nameWithExt){
+  g_fling_name = nameWithExt.length() ? nameWithExt : String("DISK.ADF");
+}
+// Open a short TCP connection to the dongle and set the name+ext for the NEXT
+// fling. Best-effort: any failure is silently ignored (fling falls back to ADF).
+static void tcpSendSetName(const char* ip){
+  if (g_fling_name.length() == 0) return;
+  WiFiClient c;
+  if (!c.connect(ip, DONGLE_TCP_PORT)) return;
+  uint8_t esc[5] = {0xFF,0xFF,0xFF,0xFF, CMD_SET_NAME};
+  c.write(esc, 5);
+  uint8_t L = (uint8_t)(g_fling_name.length() > 128 ? 128 : g_fling_name.length());
+  c.write(&L, 1);
+  c.write((const uint8_t*)g_fling_name.c_str(), L);
+  uint32_t t0 = millis();
+  while (!c.available() && millis()-t0 < 1000) delay(5);
+  if (c.available()) c.read();   // consume the 0x01/0x00 ack
+  c.stop();
+  delay(20);
+}
+
 static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uint32_t connectTimeoutMs) {
   String ip = String(ipc);
   Serial.printf("[TCP] Connecting to XIAO at %s:%d\n", ip.c_str(), DONGLE_TCP_PORT);
@@ -395,6 +427,9 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
     return false;
   }
   Serial.printf("[TCP] WiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+
+  // 1.6.3: tell the dongle the real filename+ext before the disk fling
+  tcpSendSetName(ip.c_str());
 
   // Connect TCP
   WiFiClient client;
@@ -503,6 +538,7 @@ bool espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, ui
       MDNS.end();
     }
     if (ip.length() > 0) {
+      tcpSendSetName(ip.c_str());   // 1.6.3: real filename+ext for the fling
       WiFiClient client;
       if (client.connect(ip.c_str(), DONGLE_TCP_PORT)) {
         uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;

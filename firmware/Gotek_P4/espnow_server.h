@@ -83,4 +83,5 @@ bool   espnowSendDiskTo(const uint8_t* mac, uint32_t size);   // multicast: send
 // Home-WiFi transport: join the home router (STA), resolve the dongle via mDNS "gotek.local"
 // (ioIp seeds a cached IP and receives the resolved one to persist), push over TCP-3333.
 bool   espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, uint32_t size);
+void   espnowSetFlingName(const String& nameWithExt);   // 1.6.3 wireless DSK fix: real filename+ext for the next fling (CMD_SET_NAME)
 void   espnowSendEject();

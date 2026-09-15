@@ -47,7 +47,7 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.2"
+#define FW_VERSION     "Webby-1.6.3"
 #define ESPNOW_CHANNEL 6
 //  Board profile 
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -301,6 +301,24 @@ static String to83(const String& in){
     if((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')) base += (char)toupper(c); }
   if(base.length()==0) base="OMEGA";
   return base + ".ADF";
+}
+
+// Wireless DSK fix (1.6.3): like to83() but PRESERVES the real extension
+// (ADF/DSK/IMG/DSD/...) so the FAT12 root advertises the correct format to
+// FlashFloppy. A flung CPC .dsk used to be named DISK.ADF -> FF Error 34.
+// Base is upper-alnum, <=8 chars; extension is upper-alnum, <=3 chars; ADF fallback.
+static String to83keepext(const String& in){
+  const char* s=in.c_str(); const char* dot=strrchr(s,'.');
+  size_t nl = dot ? (size_t)(dot-s) : in.length();
+  String base;
+  for(size_t i=0;i<nl && base.length()<8;i++){ char c=s[i];
+    if((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')) base += (char)toupper(c); }
+  if(base.length()==0) base="OMEGA";
+  String ext;
+  if(dot){ for(size_t i=1;i<=3 && dot[i] && dot[i]!='.'; i++){ char c=dot[i];
+    if((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')) ext += (char)toupper(c); } }
+  if(ext.length()==0) ext="ADF";
+  return base + "." + ext;
 }
 
 static String macToStr(const uint8_t* mac) {
@@ -581,8 +599,12 @@ static void handleTCPClient(WiFiClient& client) {
     return;
   }
   if (size == 0 || size > MAX_FILE_BYTES) { client.write((uint8_t)0x00); return; }
-  const char* outName = "DISK.ADF";   // #24: FAT12 root stays a constant legal 8.3 (cosmetic); the pretty name lands in g_loaded_name
-  build_volume(outName, size);
+  // Wireless DSK fix (1.6.3): name the FAT12 root with the flung disk's REAL
+  // extension so FlashFloppy detects the format. The panel sends the real
+  // filename+ext via CMD_SET_NAME immediately before the fling; absent that
+  // (older panel), fall back to the historic DISK.ADF.
+  String fatName = g_next_name.length() ? to83keepext(g_next_name) : String("DISK.ADF");
+  build_volume(fatName.c_str(), size);
   uint8_t* dst = g_disk + DATA_LBA * SECTOR_SIZE;
   uint32_t received = 0; const size_t BUF = 4096;
   uint8_t* buf = (uint8_t*)malloc(BUF); if (!buf) { client.write((uint8_t)0x00); return; }
@@ -597,7 +619,9 @@ static void handleTCPClient(WiFiClient& client) {
   free(buf);
   if (received == size) {
     g_load_id++; g_image_size = size; dirtyReset();
-    g_loaded_name = g_next_name.length() ? g_next_name : String("DISK.ADF");   // #24: pretty name from the set-next-name escape, else the constant
+    { String pretty = g_next_name.length() ? g_next_name : String("DISK.ADF");   // #24/1.6.3: pretty display name (extension stripped)
+      int d = pretty.lastIndexOf('.'); if (d > 0) pretty = pretty.substring(0, d);
+      g_loaded_name = pretty; }
     g_next_name = "";   // consume it  the next fling must set its own name
     uint8_t ack[5]; ack[0]=0x01; wrLE32(ack+1,g_load_id); client.write(ack,5); client.flush(); delay(100); client.stop();
     if (g_disk_loaded) hardDetach(); hardAttach(); g_disk_loaded = true; g_next_status_ms = 0; ledBlue(true); ledActivity();
@@ -646,7 +670,7 @@ static String statusJson(){
 // Finalize a browser upload: lay metadata over the streamed data, re-insert.
 static void webFinishLoad(){
   uint32_t size = g_up_recv;
-  build_volume_ex(to83(g_up_name).c_str(), size, false);   // #24: 8.3-mangle for the FAT12 root; full name kept in g_loaded_name (below)
+  build_volume_ex(to83keepext(g_up_name).c_str(), size, false);   // #24/1.6.3: 8.3-mangle keeping the real extension so FF detects DSK/ADF/etc; full name kept in g_loaded_name (below)
   g_image_size = size; g_load_id++; dirtyReset();
   if (g_disk_loaded) hardDetach();
   hardAttach(); g_disk_loaded = true; g_next_status_ms = 0; ledBlue(true); ledActivity();

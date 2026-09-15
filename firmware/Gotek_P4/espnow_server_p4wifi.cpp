@@ -188,6 +188,34 @@ bool espnowSendNotify(const String&, const String&, uint32_t) {
 }
 
 // ---------- Core AP-direct push: join a dongle's SoftAP by BSSID, stream over TCP-3333 ----------
+// ── Wireless DSK fix (matches Webby 1.6.3) ──────────────────────────────────
+// Tell the dongle the flung disk's real filename+extension via the CMD_SET_NAME
+// escape just before the disk fling, so a CPC/Spectrum .dsk mounts as DISK.DSK
+// (was hardcoded DISK.ADF on the dongle -> FlashFloppy Error 34). Best-effort;
+// an older dongle NAKs the escape and the fling still lands as before.
+#ifndef CMD_SET_NAME
+#define CMD_SET_NAME 0x06
+#endif
+static String g_fling_name = "";
+void espnowSetFlingName(const String& nameWithExt){
+  g_fling_name = nameWithExt.length() ? nameWithExt : String("DISK.ADF");
+}
+static void tcpSendSetName(const char* ip){
+  if (g_fling_name.length() == 0) return;
+  WiFiClient c;
+  if (!c.connect(ip, DONGLE_TCP_PORT)) return;
+  uint8_t esc[5] = {0xFF,0xFF,0xFF,0xFF, CMD_SET_NAME};
+  c.write(esc, 5);
+  uint8_t L = (uint8_t)(g_fling_name.length() > 128 ? 128 : g_fling_name.length());
+  c.write(&L, 1);
+  c.write((const uint8_t*)g_fling_name.c_str(), L);
+  uint32_t t0 = millis();
+  while (!c.available() && millis()-t0 < 1000) delay(5);
+  if (c.available()) c.read();
+  c.stop();
+  delay(20);
+}
+
 static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uint32_t connectTimeoutMs) {
   String ip = String(ipc && ipc[0] ? ipc : DONGLE_AP_IP);
 
@@ -212,6 +240,7 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
   }
   Serial.printf("[P4WIFI] joined, IP %s -> dongle %s:%d\n", WiFi.localIP().toString().c_str(), ip.c_str(), DONGLE_TCP_PORT);
 
+  tcpSendSetName(ip.c_str());   // wireless DSK fix: real filename+ext for the fling
   WiFiClient client;
   if (!client.connect(ip.c_str(), DONGLE_TCP_PORT)) {
     Serial.println("[P4WIFI] TCP connect failed");
@@ -275,6 +304,7 @@ bool espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, ui
       MDNS.end();
     }
     if (ip.length() > 0) {
+      tcpSendSetName(ip.c_str());   // wireless DSK fix: real filename+ext for the fling
       WiFiClient client;
       if (client.connect(ip.c_str(), DONGLE_TCP_PORT)) {
         uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
