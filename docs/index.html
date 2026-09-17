@@ -569,11 +569,17 @@
       const b = cfg ? (selVer || cfg.builds.find(x=>x.latest) || cfg.builds[0]) : null;
       if(!cfg || !b){ grid.hidden=true; return; }
       grid.hidden=false;
-      const up=$('dl-update');
-      if(b.app){ up.hidden=false; up.href=_abs(b.app); up.setAttribute('download', b.app.split('/').pop()); }
-      else { up.hidden=true; }
+      // merged.bin — version-stamped name shown in the label (double confirmation: label + saved file)
+      const mname='GTi-'+sel.id+'-'+b.v+'-merged.bin';
       const mg=$('dl-merged');
+      mg.innerHTML='⬇ <b>'+mname+'</b>&nbsp;<small>full clean flash (esptool / recovery)</small>';
       mg.onclick=(e)=>{ e.preventDefault(); mergedDownload(cfg,b); };
+      // update.bin — same, its name already carries the version
+      const up=$('dl-update');
+      if(b.app){ const an=b.app.split('/').pop();
+        up.hidden=false; up.href=_abs(b.app); up.setAttribute('download', an);
+        up.innerHTML='⬇ <b>'+an+'</b>&nbsp;<small>SD-card update — keeps your settings</small>'; }
+      else { up.hidden=true; }
     }catch(e){ /* downloads are additive — never break the flow */ }
   }
   function populateVerSel(cfg){
@@ -662,9 +668,14 @@
   function applyMode(){
     const b=curBuild();
     setupDownloads();   // refresh the per-version merged/update download links
+    // SD access only exists for versions with a compatible update.bin. When there isn't
+    // one, hide the whole Fresh/SD toggle (no dead greyed button) and force Fresh flash.
+    const canSd = !!(b && b.sd);
+    $('mode-seg').hidden = !canSd;
+    if(!canSd) mode='fresh';
     $('mode-fresh').classList.toggle('on',mode==='fresh');
     $('mode-sd').classList.toggle('on',mode==='sd');
-    $('mode-sd').disabled = !(b && b.sd);
+    $('mode-sd').disabled = !canSd;
     if(mode==='sd' && b && b.sd){
       $('mode-note').hidden=false;
       $('mode-note').innerHTML='<b>SD access</b> updates the firmware straight from the SD card — no bootloader mode, no serial port. The GTi mounts its own SD over USB, so you just drop the file on and reboot.';
