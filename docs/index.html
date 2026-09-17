@@ -118,6 +118,10 @@
   .mode-note b{color:var(--text)}
   .dl{display:inline-flex;align-items:center;gap:.45rem;font-size:.75rem;color:var(--blue);border:1px solid #345b8f;border-radius:4px;padding:.4rem .7rem;background:#0e1626;text-decoration:none;margin:.1rem 0 .9rem;cursor:pointer}
   .dl:hover{background:#132038}
+  .dl small{color:var(--muted);font-weight:400}
+  .dlgrid{display:flex;flex-direction:column;gap:.35rem;margin:.2rem 0 .8rem}
+  .dlgrid-h{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .dlgrid .dl{margin:0}
   .chk{display:flex;gap:.6rem;align-items:flex-start;font-size:.79rem;color:var(--text);cursor:pointer;user-select:none;margin-bottom:1rem}
   .chk input{margin-top:.2rem;accent-color:var(--copper1);width:16px;height:16px;flex-shrink:0}
   .trouble{font-size:.74rem;color:var(--dim);border:1px solid var(--border);border-radius:4px;padding:.7rem .85rem;margin-top:.2rem;line-height:1.55}
@@ -241,6 +245,11 @@
       <div class="card-h"><span class="num">2</span>Get it ready</div>
       <label class="verbox" id="verbox" hidden><span>Version</span> <select id="verSel" onchange="onVer()"></select> <span class="vhint" id="vhint"></span></label>
       <label class="betabox" id="betabox" hidden><input type="checkbox" id="beta-chk" onchange="onBeta()"> <span class="lab">Show the <b>beta / testing</b> build</span></label>
+      <div class="dlgrid" id="dlgrid" hidden>
+        <span class="dlgrid-h">Download this version</span>
+        <a class="dl" id="dl-merged" href="#">⬇ merged.bin&nbsp;<small>full clean flash (esptool / recovery)</small></a>
+        <a class="dl" id="dl-update" hidden target="_blank" rel="noopener">⬇ update.bin&nbsp;<small>SD-card update — keeps your settings</small></a>
+      </div>
       <div class="seg" id="mode-seg">
         <button class="on" id="mode-fresh" onclick="setMode('fresh')">Fresh flash</button>
         <button id="mode-sd" onclick="setMode('sd')">SD access</button>
@@ -525,6 +534,47 @@
     b._blob = URL.createObjectURL(new Blob([JSON.stringify(man)], {type:'application/json'}));
     return b._blob;
   }
+  // ── Per-version downloads: a merged.bin (full clean flash) for EVERY version, plus the
+  //    update.bin (SD-OTA, keeps settings) where an app image exists. 'full' entries link
+  //    their archived merged; 'app' entries assemble the merged in-browser from the shared
+  //    boot parts + this version's app (same data the flasher already uses to install). ──
+  function _dlAnchor(url,name){ const a=document.createElement('a'); a.href=url; if(name)a.download=name; document.body.appendChild(a); a.click(); a.remove(); }
+  async function mergedDownload(cfg, b){
+    const mg=$('dl-merged'); const html=mg.innerHTML; mg.style.pointerEvents='none'; mg.innerHTML='⏳ building merged.bin…';
+    try{
+      if(b.full){
+        const man = await fetch(_abs(b.full)).then(r=>r.json());
+        const rel = man.builds[0].parts[0].path;
+        const url = new URL(rel, _abs(b.full)).href;
+        _dlAnchor(url, rel.split('/').pop());
+      } else if(b.app){
+        const items = cfg.shared.map(p=>({url:_abs(p.path),off:p.offset}));
+        items.push({url:_abs(b.app), off:cfg.appOffset});
+        const parts = await Promise.all(items.map(async it=>({off:it.off, data:new Uint8Array(await (await fetch(it.url)).arrayBuffer())})));
+        const end = Math.max.apply(null, parts.map(p=>p.off+p.data.length));
+        const out = new Uint8Array(end); out.fill(0xFF);
+        parts.forEach(p=>out.set(p.data, p.off));
+        const url = URL.createObjectURL(new Blob([out], {type:'application/octet-stream'}));
+        _dlAnchor(url, (sel.id+'-'+b.v+'-merged.bin'));
+        setTimeout(()=>URL.revokeObjectURL(url), 8000);
+      }
+    }catch(err){ alert('Could not build merged.bin — '+err+'\n(Try again once online, or use the update.bin.)'); }
+    mg.innerHTML=html; mg.style.pointerEvents='';
+  }
+  function setupDownloads(){
+    try{
+      const grid=$('dlgrid'); if(!grid) return;
+      const cfg=deviceVersions(sel);
+      const b = cfg ? (selVer || cfg.builds.find(x=>x.latest) || cfg.builds[0]) : null;
+      if(!cfg || !b){ grid.hidden=true; return; }
+      grid.hidden=false;
+      const up=$('dl-update');
+      if(b.app){ up.hidden=false; up.href=_abs(b.app); up.setAttribute('download', b.app.split('/').pop()); }
+      else { up.hidden=true; }
+      const mg=$('dl-merged');
+      mg.onclick=(e)=>{ e.preventDefault(); mergedDownload(cfg,b); };
+    }catch(e){ /* downloads are additive — never break the flow */ }
+  }
   function populateVerSel(cfg){
     const el=$('verSel'); el.innerHTML='';
     cfg.builds.forEach((b,i)=>{ const o=document.createElement('option'); o.value=i;
@@ -610,6 +660,7 @@
   }
   function applyMode(){
     const b=curBuild();
+    setupDownloads();   // refresh the per-version merged/update download links
     $('mode-fresh').classList.toggle('on',mode==='fresh');
     $('mode-sd').classList.toggle('on',mode==='sd');
     $('mode-sd').disabled = !(b && b.sd);
