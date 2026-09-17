@@ -542,11 +542,12 @@
   async function mergedDownload(cfg, b){
     const mg=$('dl-merged'); const html=mg.innerHTML; mg.style.pointerEvents='none'; mg.innerHTML='⏳ building merged.bin…';
     try{
+      const mname = 'GTi-'+sel.id+'-'+b.v+'-merged.bin';   // version-unique name (so it's clear on the SD card / disk)
       if(b.full){
         const man = await fetch(_abs(b.full)).then(r=>r.json());
         const rel = man.builds[0].parts[0].path;
         const url = new URL(rel, _abs(b.full)).href;
-        _dlAnchor(url, rel.split('/').pop());
+        _dlAnchor(url, mname);
       } else if(b.app){
         const items = cfg.shared.map(p=>({url:_abs(p.path),off:p.offset}));
         items.push({url:_abs(b.app), off:cfg.appOffset});
@@ -555,7 +556,7 @@
         const out = new Uint8Array(end); out.fill(0xFF);
         parts.forEach(p=>out.set(p.data, p.off));
         const url = URL.createObjectURL(new Blob([out], {type:'application/octet-stream'}));
-        _dlAnchor(url, (sel.id+'-'+b.v+'-merged.bin'));
+        _dlAnchor(url, mname);
         setTimeout(()=>URL.revokeObjectURL(url), 8000);
       }
     }catch(err){ alert('Could not build merged.bin — '+err+'\n(Try again once online, or use the update.bin.)'); }
