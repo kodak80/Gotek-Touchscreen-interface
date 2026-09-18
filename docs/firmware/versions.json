@@ -19,9 +19,16 @@
     "appOffset": 65536,
     "builds": [
       {
-        "v": "5.9.27",
+        "v": "5.9.28",
         "ch": "beta",
         "latest": true,
+        "date": "2026-09-18",
+        "app": "firmware/jc3248-beta/GTi-JC35-5.9.28-update.bin",
+        "note": "Settings tab now follows BTNSTYLE - PILL gives the config buttons the same coloured capsules as the nav/reel bars (the grid was previously hardcoded flat). Includes 5.9.27's REEL BORDER + LAST USED"
+      },
+      {
+        "v": "5.9.27",
+        "ch": "beta",
         "date": "2026-09-18",
         "app": "firmware/jc3248-beta/GTi-JC35-5.9.27-update.bin",
         "note": "REEL BORDER on/off toggle (frameless reel option) + LAST USED (boot jumps back to the game you last loaded). Also since 5.9.23: CRACKTRO on/off toggle + DIAG-DISP live stats overlay (FPS / RAM / uptime / temp)"

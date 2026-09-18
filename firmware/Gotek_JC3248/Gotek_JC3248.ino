@@ -35,7 +35,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.27-JC3248"
+#define FW_VERSION "5.9.28-JC3248"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -2207,13 +2207,24 @@ static void drawInfoPanel(){
   for(int i2=startI;i2<endI;i2++){
     int idx=i2-startI, col=idx%cols, row=idx/cols;
     int bx=ix+pad+col*(colW+colGap), by=areaTop+row*(bh+gap);
-    uint16_t kc=g_ii[i2].bg, kdim=(uint16_t)((kc>>2)&0x39E7), kink=keyInk(kc);   // v5.6.7: dim-fill + bright border key (matches nav/reel bars)
-    gfx_fillRoundRect(bx,by,colW,bh,8,kdim);
-    gfx_drawRoundRect(bx,by,colW,bh,8,kink);
-    gfx_drawRoundRect(bx+1,by+1,colW-2,bh-2,7,kink);
+    // 5.9.28: the settings grid now follows BTNSTYLE too. It used to be hardcoded to the
+    // dim-fill+border look, so PILL only ever restyled the two bottom bars and this tab
+    // stayed flat. PILL = solid coloured capsule + auto-contrast ink (same language as the
+    // nav/reel bars); FLAT = the original v5.6.7 dim-fill + bright double border.
+    uint16_t kc=g_ii[i2].bg, kfill, kink;
+    if(g_btn_pill){
+      kfill=kc; kink=inkFor(kc);                 // inkFor (not the row's fg) so every theme stays readable
+      gfx_fillRoundRect(bx,by,colW,bh,bh/2,kfill);
+    }else{
+      kfill=(uint16_t)((kc>>2)&0x39E7); kink=keyInk(kc);   // v5.6.7: dim-fill + bright border key
+      gfx_fillRoundRect(bx,by,colW,bh,8,kfill);
+      gfx_drawRoundRect(bx,by,colW,bh,8,kink);
+      gfx_drawRoundRect(bx+1,by+1,colW-2,bh-2,7,kink);
+    }
     int sz=2; gfx_setTextSize(sz); int tw=gfx_textWidth(g_ii[i2].lbl);
-    if(tw>colW-8){ sz=1; gfx_setTextSize(sz); tw=gfx_textWidth(g_ii[i2].lbl); }   // shrink an over-long label to fit the half-width cell
-    gfx_setTextColor(kink,kdim);
+    int kinset=g_btn_pill?(bh/2):8;              // pill: keep the label clear of the rounded caps
+    if(tw>colW-kinset){ sz=1; gfx_setTextSize(sz); tw=gfx_textWidth(g_ii[i2].lbl); }   // shrink an over-long label to fit the half-width cell
+    gfx_setTextColor(kink,kfill);
     gfx_setCursor(bx+(colW-tw)/2,by+(bh-8*sz)/2);gfx_print(g_ii[i2].lbl);
     if(g_ir_n<20){g_ir[g_ir_n].x=bx;g_ir[g_ir_n].y=by;g_ir[g_ir_n].w=colW;g_ir[g_ir_n].h=bh;g_ir[g_ir_n].act=g_ii[i2].act;g_ir_n++;}
   }
