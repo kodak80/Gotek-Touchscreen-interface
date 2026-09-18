@@ -35,12 +35,13 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.28-JC3248"
+#define FW_VERSION "5.9.29-JC3248"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
 #include <Update.h>            // v5.3: self-flash an app image off the SD (OTA)
 #include "esp_ota_ops.h"       // v5.3: OTA slot query + rollback-validate handshake
+#include "esp_log.h"           // 5.9.29: capture IDF OTA/image log lines into /gti.log
 
 extern "C" { bool tud_mounted(void); void tud_disconnect(void); void tud_connect(void); void* ps_malloc(size_t size); }
 
@@ -4484,7 +4485,43 @@ static void runSDAccessBoot(bool sdok){
 #define FWUP_PATH "/GTi_update.bin"
 #define FWUP_TAG  "JC35"   // v5.5.3: SD update auto-detects any *.bin whose name carries this tag (no rename)
 static void fwupMsg(int y,const char*s,uint16_t fg,uint16_t bg,int sz){gfx_setTextSize(sz);gfx_setTextColor(fg,bg);gfx_setCursor((VW-gfx_textWidth(s))/2,y);gfx_print(s);}
-static void fwupWait(){uint16_t tx,ty;gfx_flush();while(!(Touch_ReadFrame()&&getTouchXY(&tx,&ty)))delay(30);delay(200);}
+// 5.9.29: the old one-liner waited for "a touch" but never for a RELEASE first. The tap
+// that got us here (plus the AXS15231B's stale idle frames) satisfied it instantly, so every
+// UPDATE FAILED message painted and vanished in ~200ms - which is why the real reason has
+// been invisible this whole time. Now: hold the screen readable, drain, then need a FRESH press.
+static void fwupWait(){
+  uint16_t tx,ty; gfx_flush();
+  uint32_t t0=millis();
+  while(millis()-t0<1500){ Touch_ReadFrame(); delay(30); }          // minimum readable time + drain stale frames
+  while(Touch_ReadFrame()&&getTouchXY(&tx,&ty)) delay(30);          // wait for release
+  while(!(Touch_ReadFrame()&&getTouchXY(&tx,&ty))) delay(30);       // fresh press
+  delay(200);
+}
+// ── 5.9.29 FW-UPDATE DIAGNOSTICS ────────────────────────────────────────────
+// The single USB-C is the TinyUSB MSC floppy, so there is NO serial console while the
+// sketch runs - every OTA failure reason was being generated and thrown away. It all goes
+// to /gti.log now. IDF lines (esp_image / esp_ota_ops carry the REAL verify reason) are
+// captured into RAM during the OTA window and flushed afterwards - never written from
+// inside the log callback itself, which would recurse if the SD driver logged.
+// NOTE: needs Core Debug Level >= Error, or the IDF's ESP_LOGE calls aren't compiled in.
+static char g_fwup_idf[2048]; static size_t g_fwup_idf_n=0;
+static vprintf_like_t g_fwup_idf_prev=NULL;
+static int g_fwup_cands=0;
+static int fwupIdfCapture(const char*fmt, va_list ap){
+  char b[192]; int n=vsnprintf(b,sizeof b,fmt,ap);
+  size_t len=strlen(b);
+  if(len && g_fwup_idf_n+len < sizeof(g_fwup_idf)-1){ memcpy(g_fwup_idf+g_fwup_idf_n,b,len); g_fwup_idf_n+=len; g_fwup_idf[g_fwup_idf_n]=0; }
+  return n;
+}
+static void fwupIdfBegin(){ g_fwup_idf_n=0; g_fwup_idf[0]=0; g_fwup_idf_prev=esp_log_set_vprintf(fwupIdfCapture); }
+static void fwupIdfEnd(){
+  if(g_fwup_idf_prev){ esp_log_set_vprintf(g_fwup_idf_prev); g_fwup_idf_prev=NULL; }
+  if(g_fwup_idf_n && g_log_enabled){
+    File lf=SD_MMC.open("/gti.log",FILE_APPEND);
+    if(lf){ lf.print("[fwup] --- IDF log ---\n"); lf.print(g_fwup_idf); lf.print("[fwup] --- end IDF ---\n"); lf.close(); }
+  }
+  g_fwup_idf_n=0;
+}
 // Board-ID guard. Arduino stamps EVERY ESP32 sketch with the same esp_app_desc
 // project_name ("arduino-lib-builder"), so that field can't tell boards apart. Instead
 // every JC build carries this unique marker in its .rodata (it's referenced below, so the
@@ -4508,6 +4545,10 @@ static bool fwupHasMarker(File&f,const char*mark){
 // whose NAME carries this board tag (FWUP_TAG). Pass 2 = any *.bin whose CONTENTS carry
 // our board marker (name-independent safety net). Else the legacy /GTi_update.bin.
 static String fwupFindFile(){
+  // 5.9.29: now scans the whole root so EVERY candidate is logged. Selection is deliberately
+  // UNCHANGED (first match in directory order still wins) so this build debugs the same
+  // behaviour you've been hitting - it just tells you what else was sitting there.
+  String first=""; g_fwup_cands=0;
   for(int pass=0;pass<2;pass++){
     File root=SD_MMC.open("/"); if(!root)break;
     File e;
@@ -4517,18 +4558,29 @@ static String fwupFindFile(){
         int sl=up.lastIndexOf(0x2F); String leaf=(sl>=0)?up.substring(sl+1):up;
         if(leaf.endsWith(".BIN")){
           bool hit=(pass==0)?(leaf.indexOf(FWUP_TAG)>=0):fwupHasMarker(e,GTI_FW_MARK);
-          if(hit){ String p=nm; if(!p.startsWith("/"))p=String("/")+p; e.close(); root.close(); return p; }
+          if(hit){ String pp=nm; if(!pp.startsWith("/"))pp=String("/")+pp;
+            g_fwup_cands++;
+            gLog("[fwup] candidate %d (pass %d) %s  %u bytes\n",g_fwup_cands,pass,pp.c_str(),(unsigned)e.size());
+            if(!first.length()) first=pp;
+          }
         }
       }
       e.close();
     }
     root.close();
+    if(first.length())break;              // pass 2 only runs if pass 1 found nothing (unchanged)
   }
-  if(SD_MMC.exists(FWUP_PATH)) return String(FWUP_PATH);
+  if(first.length()){
+    if(g_fwup_cands>1) gLog("[fwup] WARNING: %d candidates in root - using FIRST in directory order\n",g_fwup_cands);
+    return first;
+  }
+  if(SD_MMC.exists(FWUP_PATH)){ gLog("[fwup] using legacy %s\n",FWUP_PATH); return String(FWUP_PATH); }
+  gLog("[fwup] NO candidate .bin in SD ROOT (root is not searched recursively)\n");
   return String();
 }
 static void doFirmwareUpdate(){
   gfx_fillScreen(COL_BG);
+  gLog("[fwup] ===== FW UPDATE requested, running %s =====\n",FW_VERSION);
   String fpath=fwupFindFile();
   File f; if(fpath.length())f=SD_MMC.open(fpath,FILE_READ);
   if(!f||f.isDirectory()){
@@ -4540,6 +4592,11 @@ static void doFirmwareUpdate(){
   size_t fsz=f.size();
   uint8_t h0=0;f.read(&h0,1);f.seek(0);bool isImg=(h0==0xE9);   // ESP image magic
   bool idOK=isImg&&fwupHasMarker(f,GTI_FW_MARK);                // JC builds carry GTI_FW_MARK in .rodata
+  gLog("[fwup] chosen=%s size=%u magic=%s marker=%s\n",fpath.c_str(),(unsigned)fsz,isImg?"E9-ok":"BAD",idOK?"ok":"MISSING");
+  { const esp_partition_t*run=esp_ota_get_running_partition();
+    const esp_partition_t*nxt=esp_ota_get_next_update_partition(NULL);
+    gLog("[fwup] running slot %s @0x%06X size=0x%06X\n", run?run->label:"?", run?(unsigned)run->address:0u, run?(unsigned)run->size:0u);
+    gLog("[fwup] target  slot %s @0x%06X size=0x%06X\n", nxt?nxt->label:"NONE", nxt?(unsigned)nxt->address:0u, nxt?(unsigned)nxt->size:0u); }
   if(esp_ota_get_next_update_partition(NULL)==NULL){     // single-slot build: no spare OTA slot
     f.close();
     fwupMsg(VH/2-30,"SD UPDATE NOT ENABLED",COL_ORANGE,COL_BG,2);
@@ -4569,22 +4626,37 @@ static void doFirmwareUpdate(){
   if(!go){f.close();return;}
   // ── flash ──
   gfx_fillScreen(COL_BG);fwupMsg(VH/2-46,"FLASHING - DO NOT UNPLUG",COL_AMBER,COL_BG,2);gfx_flush();
+  fwupIdfBegin();                                   // 5.9.29: capture IDF esp_image/esp_ota complaints
   if(!Update.begin(fsz,U_FLASH)){
+    gLog("[fwup] begin FAILED err=%d %s\n",(int)Update.getError(),Update.errorString());
+    fwupIdfEnd();
     f.close();gfx_fillScreen(COL_BG);fwupMsg(VH/2-8,"UPDATE FAILED",COL_ORANGE,COL_BG,2);fwupMsg(VH/2+16,Update.errorString(),COL_DIM,COL_BG,1);fwupMsg(VH-22,"tap to return",COL_MID,COL_BG,1);fwupWait();return;}
+  gLog("[fwup] begin ok, writing %u bytes\n",(unsigned)fsz);
   int pbx=30,pbw=VW-60,pby=VH/2,pbh=22;gfx_drawRoundRect(pbx,pby,pbw,pbh,5,COL_SEP);
   static uint8_t buf[4096];size_t wrote=0;bool err=false;int since=0;
+  int errKind=0;                                    // 1=SD read short, 2=flash write short
   while(wrote<fsz){
-    int n=f.read(buf,sizeof buf);if(n<=0){err=true;break;}
-    if(Update.write(buf,n)!=(size_t)n){err=true;break;}
+    int n=f.read(buf,sizeof buf);
+    if(n<=0){err=true;errKind=1;gLog("[fwup] SD READ failed at %u/%u (n=%d)\n",(unsigned)wrote,(unsigned)fsz,n);break;}
+    size_t w=Update.write(buf,n);
+    if(w!=(size_t)n){err=true;errKind=2;gLog("[fwup] FLASH WRITE short at %u/%u (asked %d got %u) err=%d %s\n",(unsigned)wrote,(unsigned)fsz,n,(unsigned)w,(int)Update.getError(),Update.errorString());break;}
     wrote+=n;
     if(++since>=8||wrote>=fsz){since=0;
       int fillw=(int)((uint64_t)(pbw-4)*wrote/fsz);gfx_fillRect(pbx+2,pby+2,fillw,pbh-4,COL_GREEN);
       char pc[12];snprintf(pc,sizeof pc,"%u%%",(unsigned)(100ULL*wrote/fsz));gfx_fillRect(0,pby+pbh+10,VW,14,COL_BG);fwupMsg(pby+pbh+10,pc,COL_LIT,COL_BG,1);gfx_flush();}}
   f.close();
-  if(err||!Update.end(true)){
+  gLog("[fwup] write loop done: wrote=%u/%u err=%d\n",(unsigned)wrote,(unsigned)fsz,errKind);
+  bool endOK = (!err) && Update.end(true);
+  if(!endOK){
+    int ec=(int)Update.getError(); const char*es=Update.errorString();
+    gLog("[fwup] END FAILED errKind=%d updErr=%d %s\n",errKind,ec,es);
+    fwupIdfEnd();                                   // flush the IDF reason to /gti.log
     Update.abort();gfx_fillScreen(COL_BG);fwupMsg(VH/2-14,"UPDATE FAILED",COL_ORANGE,COL_BG,2);
-    fwupMsg(VH/2+12,err?"read/write error - image unchanged":Update.errorString(),COL_DIM,COL_BG,1);
-    fwupMsg(VH/2+26,"current firmware kept.",COL_DIM,COL_BG,1);fwupMsg(VH-22,"tap to return",COL_MID,COL_BG,1);fwupWait();return;}
+    fwupMsg(VH/2+12,err?(errKind==1?"SD read error - image unchanged":"flash write error - image unchanged"):es,COL_DIM,COL_BG,1);
+    {char l[64];snprintf(l,sizeof l,"err=%d  see /gti.log",ec);fwupMsg(VH/2+26,l,COL_DIM,COL_BG,1);}
+    fwupMsg(VH/2+40,"current firmware kept.",COL_DIM,COL_BG,1);fwupMsg(VH-22,"tap to return",COL_MID,COL_BG,1);fwupWait();return;}
+  fwupIdfEnd();
+  gLog("[fwup] end ok - activating new image, rebooting\n");
   SD_MMC.rename(fpath.c_str(),(fpath+".installed").c_str());   // best-effort: don't re-offer the same file
   gfx_fillScreen(COL_BG);fwupMsg(VH/2-8,"UPDATE OK - REBOOTING",COL_GREEN,COL_BG,2);gfx_flush();delay(900);ESP.restart();
 }
