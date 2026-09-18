@@ -19,9 +19,16 @@
     "appOffset": 65536,
     "builds": [
       {
-        "v": "5.9.28",
+        "v": "5.9.29",
         "ch": "beta",
         "latest": true,
+        "date": "2026-09-18",
+        "app": "firmware/jc3248-beta/GTi-JC35-5.9.29-update.bin",
+        "note": "DIAGNOSTIC BUILD. SD FW-UPDATE now logs everything to /gti.log (candidate files, target OTA slot, byte counts, and the underlying ESP-IDF image/OTA error) and the on-screen failure message no longer vanishes before it can be read. Same features as 5.9.28"
+      },
+      {
+        "v": "5.9.28",
+        "ch": "beta",
         "date": "2026-09-18",
         "app": "firmware/jc3248-beta/GTi-JC35-5.9.28-update.bin",
         "note": "Settings tab now follows BTNSTYLE - PILL gives the config buttons the same coloured capsules as the nav/reel bars (the grid was previously hardcoded flat). Includes 5.9.27's REEL BORDER + LAST USED"
