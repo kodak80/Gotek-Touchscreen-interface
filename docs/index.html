@@ -100,6 +100,13 @@
   .legacy-toggle{width:100%;margin-top:.8rem;background:none;border:1px dashed var(--border);border-radius:4px;color:var(--dim);font-family:var(--mono);font-size:.74rem;letter-spacing:.06em;padding:.6rem;cursor:pointer;transition:border-color .12s,color .12s}
   .legacy-toggle:hover{border-color:var(--dim);color:var(--text)}
   .legacy-wrap{margin-top:.7rem}
+  .szgrp{margin-bottom:1.1rem}
+  .szgrp-h{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;color:var(--text);
+    border-bottom:1px solid var(--border);padding-bottom:.35rem;margin-bottom:.6rem;display:flex;
+    align-items:baseline;gap:.6rem;flex-wrap:wrap}
+  .szgrp-h span{font-size:.7rem;letter-spacing:.03em;color:var(--dim)}
+  .dev.soon{opacity:.55;cursor:default}
+  .dev.soon:hover{border-color:var(--border)}
 
   .tag{display:inline-block;font-size:.58rem;letter-spacing:.08em;text-transform:uppercase;padding:.14rem .4rem;border-radius:3px;border:1px solid;white-space:nowrap}
   .t-rec{color:var(--copper2);border-color:var(--copper2)}
@@ -237,12 +244,12 @@
     <!-- step 1: device -->
     <div class="card" id="s1">
       <div class="card-h"><span class="num">1</span><span id="s1h">Choose your device</span></div>
-      <div class="devgrid" id="dev-main"></div>
+      <div id="dev-main"></div>
       <button class="legacy-toggle" id="legacy-btn" onclick="toggleLegacy()">＋ Legacy boards — 2.8″ &amp; CYD</button>
       <div class="legacy-wrap" id="legacy-wrap" hidden><div class="devgrid" id="dev-legacy"></div></div>
       <button class="legacy-toggle" id="diag-btn" onclick="toggleDiag()" hidden>🔧 Diagnostics — panel test</button>
       <div class="legacy-wrap" id="diag-wrap" hidden>
-        <div class="diag-note">🔧 <b>Diagnostic — not the firmware.</b> This flashes a touch-panel tester onto a JC3248. Use it only to check the touch digitiser (AXS15231B), then re-flash the real firmware afterwards.</div>
+        <div class="diag-note">🔧 <b>Tools — not the firmware.</b> These flash a diagnostic onto a JC3248: the touch tester checks the digitiser (AXS15231B), the hardware diag reports chip ID, PSRAM, display and clocks over USB serial. Re-flash the real firmware afterwards.</div>
         <div class="devgrid" id="dev-diag"></div>
       </div>
     </div>
@@ -260,11 +267,11 @@
       <div class="mode-note" id="mode-note" hidden></div>
       <div class="prep" id="prep">Pick a device first.</div>
       <a class="dl" id="sd-dl" hidden target="_blank" rel="noopener">⬇ Download <span id="sd-name">update.bin</span></a>
-      <div class="dlgrid" id="dlgrid" hidden>
-        <span class="dlgrid-h">Advanced — download the raw image</span>
-        <a class="dl" id="dl-merged" href="#">⬇ merged.bin&nbsp;<small>full clean flash (esptool / recovery)</small></a>
-        <a class="dl" id="dl-update" hidden target="_blank" rel="noopener">⬇ update.bin&nbsp;<small>SD-card update — keeps your settings</small></a>
-      </div>
+      <!-- merged.bin download retired: it is a FULL-FLASH image (bootloader at 0x0) and cannot be
+           used for the on-screen FW UPDATE, which needs the ~1.8MB app image. Offering it here got
+           one dropped on an SD card and the OTA refused to activate it. The flasher still uses
+           merged images internally; only the download button is gone. Markup + setupDownloads()/
+           mergedDownload() kept below (uncalled) if it ever needs restoring. -->
       <label class="chk" id="ready-row"><input type="checkbox" id="ready-chk" onchange="onReady()"> <span id="ready-lbl">My board is plugged in via a USB data cable and in bootloader mode.</span></label>
       <button class="btn btn-confirm" id="btn-confirm" disabled onclick="doConfirm()">Confirm</button>
       <div class="status" id="confirm-status"></div>
@@ -425,33 +432,37 @@
   // ── real device data: manifests + versions + SD-update bins from docs/firmware/ ──
   const TOUCH = {
     main:[
-      {id:'jc3248', img:'img/jc3248.jpg', nm:'Guition JC3248', sz:'3.5″', ar:480/320, meta:'ESP32-S3 · 480×320',
+      {id:'jc3248', grp:'3.5', img:'img/jc3248.jpg', nm:'Guition JC3248', sz:'3.5″', ar:480/320, meta:'ESP32-S3 · 480×320',
         spot:'Guition 3.5-inch capacitive panel', tags:[['RECOMMENDED','t-rec'],['STANDALONE','t-stand'],['WIRELESS','t-wifi']],
         prep:'Connect the board to your PC with a <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, then release BOOT. <span class="muted">The screen stays dark in flash mode — that\'s normal.</span>',
         stable:{man:'firmware/jc3248/manifest.json', ver:'Firmware 5.5.5', sd:'firmware/jc3248/GTi-JC35-5.5.5-update.bin'},
         beta:{man:'firmware/jc3248-beta/manifest.json', ver:'Firmware 5.9.7 — sample manual (jump sections) + OMEGA/Dutch named; touch fix + shared web panel', sd:'firmware/jc3248-beta/GTi-JC35-5.9.7-update.bin'}},
-      {id:'jc4827', nm:'Guition JC4827W543', sz:'4.3″', ar:480/272, meta:'ESP32-S3 · 480×272',
+      {id:'jc4827', grp:'4.3', nm:'Guition JC4827W543', sz:'4.3″', ar:480/272, meta:'ESP32-S3 · 480×272',
         spot:'4.3-inch QSPI, single USB-C', tags:[['BETA','t-beta'],['STANDALONE','t-stand'],['WIRELESS','t-wifi']],
         prep:'Connect the board to your PC with a <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release BOOT.',
         stable:null,
         beta:{man:'firmware/jc4827-beta/manifest.json', ver:'Firmware 5.9.7 — sample manual (jump sections) + OMEGA/Dutch named; shared web panel', sd:'firmware/jc4827-beta/GTi-JC43-5.9.7-update.bin'}},
-      {id:'p4', nm:'Guition JC4880 · P4', sz:'4.3″', ar:800/480, meta:'ESP32-P4 + C6 · 480×800 DSI',
+      {id:'p4', grp:'4.3', nm:'Guition JC4880 · P4', sz:'4.3″', ar:800/480, meta:'ESP32-P4 + C6 · 480×800 DSI',
         spot:'The flagship — TWO USB-C ports', tags:[['RECOMMENDED','t-rec'],['STANDALONE','t-stand'],['WIRELESS','t-wifi']],
         prep:'Use the USB-C port <b>furthest from the buttons</b>, with a <b>data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release. <span class="muted">First boot self-updates its WiFi co-processor from the SD card.</span>',
         stable:null,
         beta:{man:'firmware/p4-beta/manifest.json', ver:'Firmware 5.9.11-P4 — wireless radio fixed: clean C6 bring-up, stable mode-switch, ESP-NOW dongle scan + fling, 40MHz SD (embedded C6 self-update). C6 stale? see c6-update.html', sd:'firmware/p4-beta/GTi-P4-5.9.11-update.bin'}},
-      {id:'ws7b', img:'img/ws7b.jpg', nm:'Waveshare 7B', sz:'7″', ar:1024/600, meta:'ESP32-S3 · 7″ 1024×600 RGB',
-        spot:'Waveshare ESP32-S3-Touch-LCD-7B', tags:[['BETA','t-beta'],['STANDALONE','t-stand'],['WIRELESS','t-wifi']],
-        prep:'Connect the board to your PC with a <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release BOOT.',
-        stable:null,
-        beta:{man:'firmware/waveshare7b-beta/manifest.json', ver:'Firmware v5.0.1-7B — 1024×600, recurse-flatten library, 3×2 cover grid, dirty-rect perf engine', sd:'firmware/waveshare7b-beta/GTi-7B-5.0.1-update.bin'}},
-      {id:'ws7', img:'img/ws7.jpg', nm:'Waveshare 7″', sz:'7″', ar:800/480, meta:'ESP32-S3 · 7″ 800×480 RGB',
+      {id:'ws7', grp:'7', img:'img/ws7.jpg', nm:'Waveshare 7″', sz:'7″', ar:800/480, meta:'ESP32-S3 · 7″ 800×480 RGB',
         spot:'The original Waveshare 7-inch RGB panel', tags:[['BETA','t-beta'],['STANDALONE','t-stand'],['WIRELESS','t-wifi']],
         prep:'Connect the board to your PC with a <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release BOOT.',
         stable:null,
         beta:{man:'firmware/waveshare7/manifest.json', ver:'Firmware v5.0.1-7 — 800×480, ADF/DSK browser, cover art, USB-MSC RAM disk', sd:'firmware/waveshare7/GTi-7in-5.0.1-update.bin'}},
+      {id:'ws7b', grp:'7', img:'img/ws7b.jpg', nm:'Waveshare 7B', sz:'7″', ar:1024/600, meta:'ESP32-S3 · 7″ 1024×600 RGB',
+        spot:'Waveshare ESP32-S3-Touch-LCD-7B', tags:[['BETA','t-beta'],['STANDALONE','t-stand'],['WIRELESS','t-wifi']],
+        prep:'Connect the board to your PC with a <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release BOOT.',
+        stable:null,
+        beta:{man:'firmware/waveshare7b-beta/manifest.json', ver:'Firmware v5.0.1-7B — 1024×600, recurse-flatten library, 3×2 cover grid, dirty-rect perf engine', sd:'firmware/waveshare7b-beta/GTi-7B-5.0.1-update.bin'}},
+      {id:'ws7b-p4', grp:'7', nm:'Waveshare 7B · P4', sz:'7″', ar:1024/600, meta:'ESP32-P4 + C6 · 7″ 1024×600',
+        spot:'ESP32-P4-WIFI6-Touch-LCD-7B — the fast 7-inch', tags:[['IN BRING-UP','t-diag'],['STANDALONE','t-stand']],
+        soon:'In bring-up — display, touch, SD and large libraries all working on hardware; no public build yet.',
+        prep:'', stable:null, beta:null},
     ],
-    diag:[
+    tools:[
       {id:'jc3248-touchtest', nm:'JC3248 — Touch Test', sz:'3.5″', ar:480/320, meta:'ESP32-S3 · 480×320 · AXS15231B touch @ 0x3B',
         spot:'Diagnostic — verifies the touch panel, not the firmware', tags:[['DIAGNOSTIC','t-diag'],['TOUCH TEST','t-stand']],
         prep:'Connect the board to your PC with a <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, then release BOOT. <span class="muted">Flashes a touch-panel tester — re-flash the real firmware when you\'re done.</span>',
@@ -460,10 +471,6 @@
         spot:'Diagnostic — reads the board ID, tests PSRAM/display/digitizer, sweeps clocks', tags:[['DIAGNOSTIC','t-diag'],['CHIP · PSRAM','t-stand']],
         prep:'Connect via <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release BOOT. <span class="muted">After flashing, open a serial monitor at <b>115200</b> for the full board report; drop <a href="firmware/jc3248-hwdiag/config.test">config.test</a> on the SD root to change the test mode or clocks.</span>',
         stable:{man:'firmware/jc3248-hwdiag/manifest.json', ver:'Board ID + PSRAM/display/digitizer test + CPU/QSPI/I2C clock sweep — reports over USB serial (config.test on SD)', sd:null}, beta:null},
-      {id:'jc3248-ghost', nm:'JC3248 — GHOST2 + Touch Fix', sz:'3.5″', ar:480/320, meta:'ESP32-S3 · touch idle-frame fix + liveness ghost',
-        spot:'5.9.4 with the digitizer idle-frame fix (kills phantom touches) + optional liveness ghost', tags:[['FIX','t-rec'],['DIAGNOSTIC','t-diag']],
-        prep:'Connect via <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release BOOT. <span class="muted">Add <b>GHOST=ON</b> to CONFIG.TXT — a small cyan ghost draws in a fixed panel corner: eyes moving = the board is alive, ghost frozen in place = the loop is wedged, no ghost = it died before the loop.</span>',
-        stable:{man:'firmware/jc3248-ghost/manifest.json', ver:'GTi 5.9.4-ghost2-tfix — rejects the AXS15231B 0xCA/0xFF idle frames that were read as phantom touches (fixes the “frozen/bouncing” boards); liveness ghost via GHOST=ON', sd:'firmware/jc3248-ghost/GTi-JC35-5.9.4-ghost2-tfix-update.bin'}, beta:null},
     ],
     legacy:[
       {id:'cyd', nm:'CYD', sz:'2.8″', ar:320/240, meta:'ESP32 · 320×240 ILI9341',
@@ -616,20 +623,42 @@
     $('mode-seg').hidden = (k!=='touch');
     renderDevices();
   }
+  // Boards are binned by panel size — that's what people actually know they own.
+  const SIZE_GROUPS=[
+    {key:'3.5', label:'3.5″', note:'Guition JC3248 — the shipping build'},
+    {key:'4.3', label:'4.3″', note:'Guition S3, and the P4 flagship'},
+    {key:'7',   label:'7″',   note:'Three panels — two ESP32-S3, one ESP32-P4'},
+  ];
   function curSet(){ return kind==='touch'?TOUCH:DONGLE; }
   function renderDevices(){
-    $('dev-main').innerHTML = curSet().main.map(devCard).join('');
-    $('dev-legacy').innerHTML = curSet().legacy.map(devCard).join('');
-    const _diag = curSet().diag||[];
-    $('dev-diag').innerHTML = _diag.map(devCard).join('');
-    $('diag-btn').hidden = !(kind==='touch' && _diag.length);
+    const set=curSet(), mains=set.main||[];
+    // grouped by screen size, smallest job first: pick your panel size, then the variant
+    const grouped = SIZE_GROUPS.map(g=>{
+      const items=mains.filter(d=>d.grp===g.key);
+      if(!items.length) return '';
+      return '<div class="szgrp"><div class="szgrp-h">'+g.label
+           +'<span>'+g.note+'</span></div><div class="devgrid">'
+           +items.map(devCard).join('')+'</div></div>';
+    }).join('');
+    const ungrouped = mains.filter(d=>!d.grp);
+    $('dev-main').innerHTML = grouped + (ungrouped.length?'<div class="devgrid">'+ungrouped.map(devCard).join('')+'</div>':'');
+    $('dev-legacy').innerHTML = (set.legacy||[]).map(devCard).join('');
+    const _tools = set.tools||[];
+    $('dev-diag').innerHTML = _tools.map(devCard).join('');
+    $('diag-btn').hidden = !(kind==='touch' && _tools.length);
     $('diag-wrap').hidden = true;
-    $('diag-btn').textContent='🔧 Diagnostics — panel test';
+    $('diag-btn').textContent='🔧 Tools — panel & hardware diagnostics';
     $('legacy-wrap').hidden = true;
     $('legacy-btn').textContent='＋ Legacy boards — 2.8″ & CYD';
   }
   function devCard(d){
     const szBadge = d.sz?'<span class="sz">'+d.sz+'</span>':'';
+    if(d.soon){   // listed so the range is visible, but there's no build to flash yet
+      return '<button class="dev soon" disabled title="'+d.soon+'">'
+        +szBadge+'<span class="pic">'+devPic(d)+'</span>'
+        +'<span class="nm">'+d.nm+'</span><span class="meta">'+d.meta+'</span>'
+        +'<span class="spot">'+d.soon+'</span><span class="tagrow">'+tagHtml(d.tags)+'</span></button>';
+    }
     return '<button class="dev '+(sel&&sel.id===d.id?'sel':'')+'" onclick="pickDev(\''+d.id+'\')">'
       +szBadge+'<span class="pic">'+devPic(d)+'</span>'
       +'<span class="nm">'+d.nm+'</span><span class="meta">'+d.meta+'</span>'
@@ -641,9 +670,9 @@
   }
   function toggleDiag(){
     const w=$('diag-wrap'); w.hidden=!w.hidden;
-    $('diag-btn').textContent=(w.hidden?'🔧':'－')+' Diagnostics — panel test';
+    $('diag-btn').textContent=(w.hidden?'🔧':'－')+' Tools — panel & hardware diagnostics';
   }
-  function findDev(id){const s=curSet(); return s.main.concat(s.legacy, s.diag||[]).find(d=>d.id===id);}
+  function findDev(id){const s=curSet(); return (s.main||[]).concat(s.legacy||[], s.tools||[]).find(d=>d.id===id);}
   function hasBeta(d){ return !!(d.stable && d.beta); }              // toggle only when there are two channels
   function curBuild(){
     if(!sel) return null;
@@ -689,14 +718,13 @@
     $('mode-sd').disabled = !canSd;
     if(mode==='sd' && b && b.sd){
       // ── SD ACCESS path: pick a version above, then download its update.bin and drop it on the SD. ──
-      $('dlgrid').hidden=true;   // advanced merged-image grid belongs to the FLASH path
       $('mode-note').hidden=false;
       $('mode-note').innerHTML='<b>SD access</b> updates the firmware straight from the SD card — no bootloader mode, no serial port. The GTi mounts its own SD over USB, so you just drop the file on and reboot.';
       $('prep').innerHTML='<b>Firmware 5.4.0 or newer:</b>'
         +'<ol style="margin:.55rem 0 0;padding-left:1.15rem;line-height:1.75">'
         +'<li>On the GTi, open the <b>Config / Info</b> tab and turn on <b>SD access</b>.</li>'
         +'<li>Make sure a <b>USB-C data cable</b> runs from the device to your PC — the SD card mounts as a drive.</li>'
-        +'<li>Choose the version above, download the <b>.bin</b> below, and copy it to the <b>root of the SD card</b>, then reboot.</li>'
+        +'<li>Choose the version above, download the <b>update.bin</b> below, and copy it to the <b>root of the SD card</b>, then reboot. <span style="color:var(--dim)">(This is the only image the on-screen FW UPDATE accepts — a full merged.bin will not work.)</span></li>'
         +'</ol>';
       $('ready-lbl').textContent='I’ve copied the .bin to the SD card root.';
       $('sd-dl').hidden=false; $('sd-dl').setAttribute('href', b.sd); $('sd-dl').setAttribute('download', b.sd.split('/').pop()); $('sd-name').textContent=b.sd.split('/').pop();
@@ -706,8 +734,8 @@
       $('mode-note').hidden=true; $('sd-dl').hidden=true; $('trouble').hidden=false;
       $('prep').innerHTML = sel?sel.prep:'Pick a device first.';
       $('ready-lbl').textContent='My board is plugged in via a USB data cable and in bootloader mode.';
-      setupDownloads();          // advanced merged.bin download (esptool / recovery) for this version
-      $('dl-update').hidden=true; // update.bin lives on the SD ACCESS method, not here
+      // no raw-image downloads on the FLASH path: flashing happens over the cable from here,
+      // and the only file anyone should ever download is the SD update.bin (SD ACCESS method).
     }
     const sd=(mode==='sd');
     $('s3').hidden=sd; $('stln2').hidden=sd; $('step3-dot').hidden=sd;
@@ -749,7 +777,7 @@
     $('s2').classList.add('muted'); $('s3').classList.add('muted');
     $('s2').classList.remove('done'); $('s3').classList.remove('done');
     $('prep').innerHTML='Pick a device first.'; $('mode-note').hidden=true; $('sd-dl').hidden=true;
-    $('methodhelp').hidden=true; $('dlgrid').hidden=true; $('s2h').textContent='Choose how to update';
+    $('methodhelp').hidden=true; $('s2h').textContent='Choose how to update';
     $('mode-seg').hidden = (kind!=='touch');
     $('mode-fresh').classList.add('on'); $('mode-sd').classList.remove('on');
     $('ready-chk').checked=false; $('btn-confirm').disabled=true;

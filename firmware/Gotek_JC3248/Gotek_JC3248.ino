@@ -35,7 +35,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.29-JC3248"
+#define FW_VERSION "5.9.30-JC3248"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -4528,6 +4528,31 @@ static void fwupIdfEnd(){
 // linker always keeps it); a SuperMini/XIAO bin doesn't, so scanning the incoming image
 // for it reliably refuses a cross-board flash. Marker spans chunk boundaries safely.
 static const char GTI_FW_MARK[]="OMEGAWARE.GTi.JC3248.fw";
+// 5.9.30: a scannable version stamp. Arduino's esp_app_desc.version is the CORE's git hash
+// ("ee57070"), not ours, so it can't tell you which GTi build a .bin is. This literal can be
+// found in any 5.9.30+ image, letting the confirm screen show the INCOMING version before you
+// commit to flashing it. (Referenced in doFirmwareUpdate so the linker keeps it.)
+static const char GTI_FW_VERTAG[]="GTiFWVER=" FW_VERSION;
+static bool fwupFindVer(File&f,char*out,size_t outsz){
+  const char*pre="GTiFWVER="; size_t pl=strlen(pre);
+  static uint8_t buf[4096]; uint8_t tail[64]; size_t tlen=0;
+  out[0]=0; f.seek(0);
+  while(true){
+    memcpy(buf,tail,tlen);
+    int n=f.read(buf+tlen,sizeof buf-tlen);
+    if(n<=0)break;
+    size_t total=tlen+(size_t)n;
+    for(size_t i=0;i+pl<total;i++){
+      if(memcmp(buf+i,pre,pl)==0){
+        size_t j=i+pl,k=0;
+        while(j<total&&k<outsz-1&&buf[j]>=32&&buf[j]<127) out[k++]=(char)buf[j++];
+        out[k]=0; f.seek(0); return k>0;
+      }
+    }
+    tlen=(total>=64)?64:total; memcpy(tail,buf+total-tlen,tlen);
+  }
+  f.seek(0); return false;
+}
 static bool fwupHasMarker(File&f,const char*mark){
   size_t ml=strlen(mark);if(ml==0||ml>32)return false;
   static uint8_t buf[4096];uint8_t tail[32];size_t tlen=0;
@@ -4593,6 +4618,31 @@ static void doFirmwareUpdate(){
   uint8_t h0=0;f.read(&h0,1);f.seek(0);bool isImg=(h0==0xE9);   // ESP image magic
   bool idOK=isImg&&fwupHasMarker(f,GTI_FW_MARK);                // JC builds carry GTI_FW_MARK in .rodata
   gLog("[fwup] chosen=%s size=%u magic=%s marker=%s\n",fpath.c_str(),(unsigned)fsz,isImg?"E9-ok":"BAD",idOK?"ok":"MISSING");
+  // 5.9.30: work out what this file ACTUALLY is before offering to flash it.
+  // APP image    -> esp_app_desc_t sits at 0x20 (magic 0xABCD5432), version string at 0x30.
+  // MERGED image -> starts with the BOOTLOADER and carries the partition table (AA 50) at 0x8000.
+  // Writing a merged image into an OTA slot puts a bootloader where an app belongs: it writes
+  // perfectly, then esp_ota_set_boot_partition parses the bootloader header as an app header
+  // and refuses with a nonsense chip/efuse-revision complaint (err=9). Caught up front now.
+  bool isApp=false,isMerged=false; char imgVer[33]={0};
+  { uint8_t b4[4];
+    f.seek(0x20);
+    if(f.read(b4,4)==4){ uint32_t m=(uint32_t)b4[0]|((uint32_t)b4[1]<<8)|((uint32_t)b4[2]<<16)|((uint32_t)b4[3]<<24); isApp=(m==0xABCD5432u); }
+    if(isApp) fwupFindVer(f,imgVer,sizeof imgVer);   // our stamp, not the core's git hash
+    if(fsz>0x8100){ uint8_t p2[2]; f.seek(0x8000); if(f.read(p2,2)==2) isMerged=(p2[0]==0xAA&&p2[1]==0x50); }
+    f.seek(0); }
+  gLog("[fwup] kind: app=%d merged=%d imgver='%s' (this build stamps %s)\n",(int)isApp,(int)isMerged,imgVer,GTI_FW_VERTAG);
+  if(isMerged||!isApp){
+    f.close();
+    gLog("[fwup] REFUSED: not a plain app image (merged/full-flash image)\n");
+    gfx_fillScreen(COL_BG);
+    fwupMsg(VH/2-46,isMerged?"MERGED IMAGE":"NOT AN APP IMAGE",COL_ORANGE,COL_BG,2);
+    fwupMsg(VH/2-18,"This file starts with a bootloader,",COL_DIM,COL_BG,1);
+    fwupMsg(VH/2-4,"so it cannot go in an OTA slot.",COL_DIM,COL_BG,1);
+    fwupMsg(VH/2+14,"Use the APP image instead:",COL_DIM,COL_BG,1);
+    fwupMsg(VH/2+28,"GTi-" FWUP_TAG "-<ver>-update.bin",COL_LIT,COL_BG,1);
+    fwupMsg(VH/2+42,"(merged .bin is for the web flasher only)",COL_DIM,COL_BG,1);
+    fwupMsg(VH-22,"tap to return",COL_MID,COL_BG,1);fwupWait();return;}
   { const esp_partition_t*run=esp_ota_get_running_partition();
     const esp_partition_t*nxt=esp_ota_get_next_update_partition(NULL);
     gLog("[fwup] running slot %s @0x%06X size=0x%06X\n", run?run->label:"?", run?(unsigned)run->address:0u, run?(unsigned)run->size:0u);
@@ -4608,7 +4658,7 @@ static void doFirmwareUpdate(){
   gfx_fillScreen(COL_BG);
   fwupMsg(24,"FIRMWARE UPDATE",COL_LIT,COL_BG,2);
   {String leaf=fpath;int sl=leaf.lastIndexOf(0x2F);if(sl>=0)leaf=leaf.substring(sl+1);fwupMsg(40,leaf.c_str(),COL_MID,COL_BG,1);}
-  {char l[48];snprintf(l,sizeof l,"File: %u KB",(unsigned)(fsz/1024));fwupMsg(56,l,COL_DIM,COL_BG,1);}
+  {char l[80];snprintf(l,sizeof l,"File: %u KB   %s",(unsigned)(fsz/1024),imgVer[0]?imgVer:"(version unknown - pre-5.9.30 build)");fwupMsg(56,l,imgVer[0]?COL_GREEN:COL_DIM,COL_BG,1);}   // 5.9.30: show the INCOMING version, not just the running one
   fwupMsg(72,idOK?"Image: GTi-JC firmware  [OK]":(isImg?"Image: unrecognised (not GTi-JC)":"Image: not a firmware .bin"),idOK?COL_GREEN:COL_ORANGE,COL_BG,1);
   {char l[64];snprintf(l,sizeof l,"Now running: %s",FW_VERSION);fwupMsg(88,l,COL_DIM,COL_BG,1);}
   if(!idOK)fwupMsg(106,"! flash only a GTi-JC .bin here",COL_ORANGE,COL_BG,1);
@@ -4893,6 +4943,21 @@ static void drawInfoBottomBar(){
   struct{const char*l;bool on;}bb[5]={
     {"< PAGE",g_info_page>0},{"PAGE >",g_info_page<g_info_pages-1},
     {"",false},{"",false},{"CLOSE",true}};
+  if(g_btn_pill){   // 5.9.30: this bar was hardcoded flat, so PILL left the settings screen half-styled
+    static const uint16_t pc[5]={COL_BLUE,COL_BLUE,COL_BG,COL_BG,COL_ACCENT};
+    int pad=5, bh2=BOTTOM_H-2*pad, r=bh2/2, by=y+pad;
+    for(int i=0;i<5;i++){
+      if(!bb[i].l[0])continue;
+      uint16_t bc=bb[i].on?pc[i]:COL_BAR, ic=inkFor(bc);      // inactive PAGE key = dim capsule, not just dim text
+      int bx=i*bw+pad, w=bw-2*pad;
+      gfx_fillRoundRect(bx,by,w,bh2,r,bc);
+      int sz=2; gfx_setTextSize(sz); int tw=gfx_textWidth(bb[i].l);
+      if(tw>w-6){ sz=1; gfx_setTextSize(sz); tw=gfx_textWidth(bb[i].l); }
+      gfx_setTextColor(ic,bc);
+      gfx_setCursor(bx+(w-tw)/2,by+(bh2-8*sz)/2);gfx_print(bb[i].l);
+    }
+    return;
+  }
   for(int i=1;i<5;i++){ if(bb[i-1].l[0]&&bb[i].l[0]) gfx_vline(i*bw,y+8,BOTTOM_H-16,ink); }   // dividers between adjacent populated slots
   for(int i=0;i<5;i++){
     if(!bb[i].l[0])continue;
