@@ -19,9 +19,16 @@
     "appOffset": 65536,
     "builds": [
       {
-        "v": "5.9.23",
+        "v": "5.9.27",
         "ch": "beta",
         "latest": true,
+        "date": "2026-09-18",
+        "app": "firmware/jc3248-beta/GTi-JC35-5.9.27-update.bin",
+        "note": "REEL BORDER on/off toggle (frameless reel option) + LAST USED (boot jumps back to the game you last loaded). Also since 5.9.23: CRACKTRO on/off toggle + DIAG-DISP live stats overlay (FPS / RAM / uptime / temp)"
+      },
+      {
+        "v": "5.9.23",
+        "ch": "beta",
         "date": "2026-09-12",
         "app": "firmware/jc3248-beta/GTi-JC35-5.9.23-update.bin",
         "note": "WiFi SD file access over home WiFi (browse / upload / download / recursive-delete ADFs from a browser) + live 3-way mode switch Standalone/ESP-NOW/WiFi (no reboot) + folder upload incl. subfolders + GTi.local + tidied sectioned CONFIG.TXT"
@@ -95,8 +102,13 @@
         "v": "5.5.5",
         "ch": "stable",
         "date": "2026-08-07",
-        "full": "firmware/jc3248/manifest.json",
-        "note": "last 5.5.x stable \u2014 full image (clean wipe)"
+        "shared": [
+          { "path": "firmware/_shared/jc3248-55x/bootloader.bin", "offset": 0 },
+          { "path": "firmware/_shared/jc3248-55x/partitions.bin", "offset": 32768 },
+          { "path": "firmware/_shared/jc3248/boot_app0.bin", "offset": 57344 }
+        ],
+        "app": "firmware/jc3248/GTi-JC35-5.5.5-update.bin",
+        "note": "last 5.5.x stable (carries its own bootloader/partitions - predates the 5.8+ layout)"
       }
     ]
   },
