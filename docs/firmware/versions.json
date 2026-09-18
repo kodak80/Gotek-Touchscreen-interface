@@ -19,11 +19,11 @@
     "appOffset": 65536,
     "builds": [
       {
-        "v": "5.9.29",
+        "v": "5.9.30",
         "ch": "beta",
         "date": "2026-09-18",
-        "app": "firmware/jc3248-beta/GTi-JC35-5.9.29-update.bin",
-        "note": "DIAGNOSTIC BUILD. SD FW-UPDATE now logs everything to /gti.log (candidate files, target OTA slot, byte counts, and the underlying ESP-IDF image/OTA error) and the on-screen failure message no longer vanishes before it can be read. Same features as 5.9.28",
+        "app": "firmware/jc3248-beta/GTi-JC35-5.9.30-update.bin",
+        "note": "SD FW-UPDATE now refuses a merged/full-flash image up front (it can only ever flash the ~1.8MB app image) and shows the INCOMING firmware version on the confirm screen before you commit. Settings tab fully follows BTNSTYLE incl. the page/close bar. Keeps 5.9.29's /gti.log diagnostics, plus REEL BORDER and LAST USED.",
         "latest": true
       },
       {
