@@ -19,6 +19,14 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.36",
+        "ch": "lab",
+        "date": "2026-09-20",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.36-update.bin",
+        "note": "LAB BUILD - experimental, for testers. Boot-time rework: the scan and cover-build progress screens redrew 10-12 times a second, and every redraw was a FULL-SCREEN panel push (~36ms) plus a write to /gti.log on the same card the build was reading - roughly half the scan time and a third of the build time spent drawing progress. Now count-driven (every 50 files / 25 games) with a live ETA on the cover build. Also carries the 5.9.31-35 lab work: sidecar .nfocache, fast reel blit, list covers from the cached tile, DISKMAXKB image sizing, and CONFIG.TXT switches NOCACHE / COVERS / REELPROF / LISTTILE / STRIPROWS / FLUSHUS. Not a stable channel build.",
+        "latest": false
+      },
+      {
         "v": "5.9.30",
         "ch": "beta",
         "date": "2026-09-18",
@@ -31,14 +39,16 @@
         "ch": "beta",
         "date": "2026-09-12",
         "app": "firmware/jc3248-beta/GTi-JC35-5.9.23-update.bin",
-        "note": "WiFi SD file access over home WiFi (browse / upload / download / recursive-delete ADFs from a browser) + live 3-way mode switch Standalone/ESP-NOW/WiFi (no reboot) + folder upload incl. subfolders + GTi.local + tidied sectioned CONFIG.TXT"
+        "note": "WiFi SD file access over home WiFi (browse / upload / download / recursive-delete ADFs from a browser) + live 3-way mode switch Standalone/ESP-NOW/WiFi (no reboot) + folder upload incl. subfolders + GTi.local + tidied sectioned CONFIG.TXT",
+        "latest": false
       },
       {
         "v": "5.9.7",
         "ch": "beta",
         "date": "2026-09-09",
         "app": "firmware/jc3248-beta/GTi-JC35-5.9.7-update.bin",
-        "note": "sample manual rewrite (jump [Section] markers); config names OMEGA theme & Dutch"
+        "note": "sample manual rewrite (jump [Section] markers); config names OMEGA theme & Dutch",
+        "latest": false
       },
       {
         "v": "5.5.5",
@@ -59,7 +69,8 @@
           }
         ],
         "app": "firmware/jc3248/GTi-JC35-5.5.5-update.bin",
-        "note": "last 5.5.x stable (carries its own bootloader/partitions - predates the 5.8+ layout)"
+        "note": "last 5.5.x stable (carries its own bootloader/partitions - predates the 5.8+ layout)",
+        "latest": false
       }
     ]
   },

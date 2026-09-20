@@ -34,7 +34,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.22-7B nfocache"
+#define FW_VERSION "5.9.23-7B sidework"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -3072,6 +3072,64 @@ static int wrkPick(){
   }
   return -1;
 }
+// ── 5.9.23-7B: SIDECAR WORKER ───────────────────────────────────────────────
+// Chunking (5.9.21) split the sidecar BUNDLE across frames, but one chunk — findNFOFor —
+// is up to two complete directory walks of a flat 1700-file folder, ~1s, and a single
+// blocking SD call cannot be chunked. So a tap still hitched. Now the whole bundle runs on
+// the worker core and the UI just polls for a published result: tap through Cannon Fodder ->
+// Conan -> Commando and each retarget simply abandons the in-flight lookup; settle on one
+// and its blurb appears when it's ready, without the list ever stalling.
+// Ownership rule: the WORKER only ever READS g_games (under g_lib_mtx, and only long enough
+// to copy a path out). Every write into g_games stays on the UI core, so there is no
+// cross-core race on the vector itself.
+static volatile int      g_side_req=-1;        // UI -> worker: selection wanting sidecars
+static volatile uint32_t g_side_reqgen=0;
+static volatile int      g_side_pub=-1;        // worker -> UI: selection whose payload is published
+static volatile uint32_t g_side_pubgen=0;
+static SemaphoreHandle_t g_side_mtx=NULL;      // guards the published payload below
+static String g_side_blurb="",g_side_title="",g_side_manual="";
+static bool   g_side_hasSav=false,g_side_hd=false;
+// Runs on the worker core. Returns true if it did sidecar work this tick.
+static bool wrkSidecarTick(){
+  int req=g_side_req;
+  if(req<0) return false;
+  if(req==g_side_pub && g_side_reqgen==g_side_pubgen) return false;   // already answered
+  // Copy what we need out from under the library mutex, then LET GO — the SD work below can
+  // take a second, and holding g_lib_mtx that long would stall wrkPark() (i.e. a rescan).
+  String path; bool haveCached=false; String cachedBlurb; uint32_t gen;
+  if(g_lib_mtx) xSemaphoreTakeRecursive(g_lib_mtx,portMAX_DELAY);
+  gen=g_lib_gen;
+  if(req<0||req>=(int)g_games.size()){ if(g_lib_mtx)xSemaphoreGiveRecursive(g_lib_mtx); return false; }
+  { GameEntry&g=g_games[req]; path=g_files[g.first_file_idx]; haveCached=g.nfo_done; cachedBlurb=g.blurb; }
+  if(g_lib_mtx) xSemaphoreGiveRecursive(g_lib_mtx);
+  String blurb,title,manual; bool hasSav=false,hd=false;
+  #define SIDE_BAIL() do{ if(g_side_req!=req) return true; }while(0)   // user moved on -> drop it
+  if(haveCached) blurb=cachedBlurb;                                    // .nfocache hit: no card I/O at all
+  else{
+    String nfoP; bool found;
+    SD_LOCK(); found=findNFOFor(path,nfoP); SD_UNLOCK();
+    SIDE_BAIL();
+    if(found){ SD_LOCK(); File nf=SD_MMC.open(nfoP,FILE_READ);
+      if(nf){ char nb[513]; int nr=nf.read((uint8_t*)nb,512); if(nr<0)nr=0; nb[nr]=0; nf.close(); SD_UNLOCK();
+              String txt(nb),t,b; parseNFO(txt,t,b); title=t; blurb=b; }
+      else SD_UNLOCK(); }
+  }
+  SIDE_BAIL();
+  if(g_saves_mode==1){ SD_LOCK(); hasSav=savExistsFor(path); SD_UNLOCK(); }
+  SIDE_BAIL();
+  if(g_mode==MODE_ADF){ SD_LOCK(); hd=isHDImage(path); SD_UNLOCK(); }
+  SIDE_BAIL();
+  { String mp; bool f; SD_LOCK(); f=manualFor(path,mp); SD_UNLOCK(); if(f)manual=mp; }
+  SIDE_BAIL();
+  #undef SIDE_BAIL
+  if(g_side_mtx) xSemaphoreTake(g_side_mtx,portMAX_DELAY);
+  g_side_blurb=blurb; g_side_title=title; g_side_manual=manual;
+  g_side_hasSav=hasSav; g_side_hd=hd; g_side_pubgen=gen;
+  if(g_side_mtx) xSemaphoreGive(g_side_mtx);
+  __atomic_thread_fence(__ATOMIC_RELEASE);   // payload visible before the UI sees g_side_pub move
+  g_side_pub=req;
+  return true;
+}
 #define WRK_IDLE_MS 400   // 5.9.20: the worker only builds when the UI has been idle this long — so
                           // active tapping/scrolling gets the SD card + CPU to itself and stays snappy
 static void coverWorker(void*){
@@ -3080,6 +3138,9 @@ static void coverWorker(void*){
     // Yield to the user: while they're actively touching (or just did), do NOTHING — no SD, no
     // decode. The worker was hammering the SD card during browsing, which made the first tap and
     // game-select take seconds. It resumes ~WRK_IDLE_MS after the last touch and fills during idle.
+    // Sidecars first, and deliberately NOT idle-gated: they're short, and they're the thing the
+    // user is actively waiting to see. Cover building stays gated below.
+    if(wrkSidecarTick()){ vTaskDelay(pdMS_TO_TICKS(2)); continue; }
     if(millis()-g_last_touch_ms < WRK_IDLE_MS){ vTaskDelay(pdMS_TO_TICKS(40)); continue; }
     if(!wrk_tile){ wrk_tile=(uint16_t*)ps_malloc((size_t)CAR_TILE*CAR_TILE*2); if(!wrk_tile){ vTaskDelay(pdMS_TO_TICKS(250)); continue; } }
     // Hold g_lib_mtx for the WHOLE build: g_games[gi] is referenced throughout wrkDecodeTile,
@@ -3615,6 +3676,26 @@ static void drawListAndCover(){drawCoverPanel();drawActionStrip();drawFileList()
 static void coverSidecarTick(uint32_t now){
   if(g_info_showing||g_car_active||g_games.empty())return;
   if(g_cp_side_sel==g_sel && g_cp_side_gen==g_lib_gen)return;   // already loaded for this selection
+  if(g_wrk_run){
+    // 5.9.23: the worker core owns the SD lookups. Retargeting is a single store, so tapping
+    // through games just abandons whatever was in flight — the list never waits on the card.
+    if(g_side_req!=g_sel){ g_side_reqgen=g_lib_gen; g_side_req=g_sel; }   // gen BEFORE req: the worker reads the pair
+    if(g_side_pub==g_sel && g_side_pubgen==g_lib_gen){
+      __atomic_thread_fence(__ATOMIC_ACQUIRE);                  // pairs with the worker's RELEASE
+      String t;
+      if(g_side_mtx) xSemaphoreTake(g_side_mtx,portMAX_DELAY);
+      g_cp_blurb=g_side_blurb; t=g_side_title; g_cp_manual=g_side_manual;
+      g_cp_hasSav=g_side_hasSav; g_cp_hd=g_side_hd;
+      if(g_side_mtx) xSemaphoreGive(g_side_mtx);
+      auto&game=g_games[g_sel];                                 // every WRITE into g_games stays on this core
+      if(t.length()&&game.name==basenameNoExt(filenameOnly(g_files[game.first_file_idx])))game.name=t;
+      game.blurb=g_cp_blurb; game.nfo_done=true;                // remember it, so re-selecting never asks again
+      g_cp_side_sel=g_sel; g_cp_side_gen=g_lib_gen;
+      drawCoverPanel(); gfx_flush();
+    }
+    return;
+  }
+  // COVERWORKER=OFF, or the task never started: fall back to the 5.9.21 chunked UI-core loader.
   static int seen=-1; static uint32_t since=0;
   if(seen!=g_sel){seen=g_sel;since=now;g_cp_step=0;return;}     // selection changed -> restart settle + step machine
   if(now-since<120)return;                                      // short dwell before starting (tap-through never triggers it)
@@ -4931,6 +5012,7 @@ void setup(){
   g_sd_mtx=xSemaphoreCreateRecursiveMutex();   // 5.9.18: SD access mutex live before any SD use (cover worker shares SD)
   g_lib_mtx=xSemaphoreCreateRecursiveMutex();  // 5.9.18: guards g_games/g_files against realloc while the cover worker indexes them
   g_micro_mtx=xSemaphoreCreateRecursiveMutex();// 5.9.19: guards the reel micro block (carMicroInit vs worker) — decoupled from g_lib_mtx
+  g_side_mtx=xSemaphoreCreateMutex();          // 5.9.23: guards the worker's published sidecar payload
   applyCpuClock();   // 7B: pick CPU clock from silicon rev BEFORE anything heavy (AUTO 360/400; CONFIG.TXT CPUMHZ re-applies after loadConfig)
   // v5.1: SD-access is requested only when our NOINIT flag survived a *software* restart
   // (cold power-on => reset reason POWERON => never a false trigger from RTC garbage).

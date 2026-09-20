@@ -35,7 +35,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.30-JC3248"
+#define FW_VERSION "5.9.36-lab6-JC3248"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -74,6 +74,24 @@ struct DiskGrid{int pages,pageStart,pageEnd,COLS,dbw,dbh,dgap,gridW,gx,gridY,gri
 #define SD_D0 13
 static int g_sd_freq=20000;   // 5.3.5: SDIO clock kHz. 20000=safe default, 40000=fast (SDSPEED= in CONFIG.TXT, auto-falls back)
 #define ROWS_PER_STRIP 10
+// ── 5.9.33-lab3: panel-push + reel profiling knobs ─────────────────────────
+// gfx_flush() pushes the 307 KB PSRAM framebuffer to the panel in strips, with a
+// fixed delayMicroseconds() after each one. At 10 rows that is 48 strips x 500us
+// = 24 ms of pure SLEEP in every single frame, before a pixel is drawn — a hard
+// ~27 FPS ceiling on the reel that no amount of caching can touch.
+// Both are runtime now (STRIPROWS= / FLUSHUS= in CONFIG.TXT) and both DEFAULT TO
+// TODAY'S VALUES, so an untouched card behaves exactly as 5.9.32 did.
+//   STRIPROWS=40  -> 12 strips instead of 48 (24 ms of delay becomes 6 ms)
+//   FLUSHUS=0     -> no inter-strip delay at all (fastest; watch for tearing)
+// If the panel tears or shows torn bands, raise FLUSHUS or drop STRIPROWS back.
+#define MAX_STRIP_ROWS 40
+static int g_strip_rows=ROWS_PER_STRIP;   // STRIPROWS=  (clamped to g_strip_cap)
+static int g_strip_cap =ROWS_PER_STRIP;   // what the DMA buffer was actually sized for
+static int g_flush_us  =500;              // FLUSHUS=    (microseconds per strip)
+// Reel frame profiler (REELPROF=ON / Settings). Costs two micros() calls a frame
+// when off. When on it prints, every ~1.5 s, exactly where the frame time went.
+static bool     g_reelprof=false;
+static uint32_t g_rp_frames=0,g_rp_blit=0,g_rp_sav=0,g_rp_clear=0,g_rp_draw=0,g_rp_flush=0,g_rp_t0=0;
 
 #define TFT_BLACK   0x0000
 #define TFT_WHITE   0xFFFF
@@ -245,6 +263,17 @@ static void gfx_print(const char*s){gfx_print(String(s));}
 // Drawn on top of the framebuffer at the end of every gfx_flush when enabled: FPS,
 // free SRAM + PSRAM, uptime, CPU temp. FPS is measured from the flush interval.
 static bool     g_diagdisp=false;   // DIAGDISP= / Settings toggle
+// ── 5.9.32-lab2: EXPERIMENT SWITCHES (both default to normal behaviour) ─────
+// NOCACHE=ON  : ignore EVERY on-SD cache (.index .gamecache .nfocache .gti_micro.pk .tnl).
+//               Nothing is deleted — the files stay put and are simply not read or written,
+//               so flipping back restores the cached behaviour instantly. This is the
+//               "broken" control: every boot re-walks, re-builds and re-reads from scratch.
+// COVERS=OFF  : no cover art at all. findJPGFor refuses, so nothing is ever decoded and the
+//               list/reel fall back to letter placeholders. Isolates list + sidecar cost
+//               from cover-decode noise. (The micro block still allocates, greyed — leaving
+//               that path intact avoids NULL-tile handling just for an experiment.)
+static bool     g_nocache=false;
+static bool     g_covers_on=true;
 static bool     g_reelborder=true;  // REELBORDER= / Settings (MasterTelly CR): ON=frame around reel covers (default), OFF=clean/frameless (the loaded game is still marked green)
 static bool     g_lastused=false;   // LASTUSED= / Settings: ON=on boot, restore the selection to the game you last loaded (remembered in /.gtilastused)
 static uint32_t g_diag_last=0;      // last gfx_flush millis (for FPS)
@@ -270,14 +299,16 @@ static void drawDiagOverlay(){
 
 static void gfx_flush(){
   if(!framebuffer||!panel_handle)return;
+  uint32_t _fl_t0=micros();
   { uint32_t now=millis(); if(g_diag_last){ float dt=(float)(now-g_diag_last); if(dt>0){ float f=1000.0f/dt; g_diag_fps = g_diag_fps>0 ? g_diag_fps*0.85f+f*0.15f : f; } } g_diag_last=now; }
   if(g_diagdisp) drawDiagOverlay();
-  for(int sy=0;sy<LCD_HEIGHT;sy+=ROWS_PER_STRIP){
-    int rows=min(ROWS_PER_STRIP,LCD_HEIGHT-sy);
+  for(int sy=0;sy<LCD_HEIGHT;sy+=g_strip_rows){
+    int rows=min(g_strip_rows,LCD_HEIGHT-sy);
     memcpy(dma_buffer,&framebuffer[sy*LCD_WIDTH],LCD_WIDTH*rows*2);
     esp_lcd_panel_draw_bitmap(panel_handle,0,sy,LCD_WIDTH,sy+rows,dma_buffer);
-    delayMicroseconds(500);
+    if(g_flush_us>0)delayMicroseconds(g_flush_us);
   }
+  g_rp_flush+=micros()-_fl_t0;
 }
 
 // ── JPEG decode via JPEGDEC (from Dimi) ──
@@ -303,12 +334,26 @@ int png_buf_cb(PNGDRAW*pDraw){   // PNGdec's PNG_DRAW_CALLBACK returns int
 }
 // ── Cover ingest: one size-agnostic, garbage-proof decode point (v1) ──────────
 #define COVER_TILE_PX        150               // decode-budget long edge (== CAR_TILE); both panel + reel share this
+#define CAR_TILE  150                            // 5.9.34-lab4: hoisted here (was down with the reel) — the LIST cover panel draws from the reel's tile now
 #define COVER_FILE_CAP       (4u*1024u*1024u)  // max raw cover file loaded into PSRAM; bigger -> placeholder
 #define COVER_DECODE_BUDGET  (4u*1024u*1024u)  // max decoded RGB565 bytes (post hardware-scale); bounds intermediate + resident cache
 static int g_covermin=140;   // COVERMIN: skip covers whose short side < this many px (0=off, SD-editable)
 static bool g_reelfilter=false;   // v5.9.2 REELFILTER: reel shows only covers that pass COVERMIN (A-Z list stays full)
 static bool g_cover_flags_ready=false; static int g_cover_flags_n=-1;
 static void ensureCoverFlags();   // fwd: set each game cover_ok from its cached thumb
+// ── 5.9.34-lab4: the LIST cover panel draws from the reel's tile cache ──────
+// drawCoverPanel() used to call gfx_drawJpgFile() on EVERY selection change: open
+// the ~500 KB cover in the game folder (a FAT walk of a folder that can hold
+// thousands of entries), decode the whole JPEG, then scale it down to 138x112.
+// No cache of any kind — the same cover was re-decoded from scratch every time you
+// moved the cursor onto it. Meanwhile the reel already had that exact cover sitting
+// on the card as a 45 KB pre-decoded .tnl tile, and in PSRAM in a 48-slot LRU.
+// COVER_TILE_PX == CAR_TILE == 150, so the panel was ALREADY looking at a 150px
+// decode: the tile is the same pixels with the decode already paid for.
+// LISTTILE=OFF restores the old decode-every-time path for an A/B.
+static bool g_listtile=true;      // LISTTILE=
+static uint16_t* carTileEx(int gi,bool mayDecode,bool*okOut);   // fwd (defined with the reel)
+static void carBlit(uint16_t*tile,int srcDim,int cx,int cy,int w,int h,int dim);
 
 // A ".png" beside a ".jpg" cover (boxart ships both) — the progressive/failed-JPEG fallback.
 static bool pngSiblingFor(const String& jpgPath, String& out){
@@ -401,7 +446,14 @@ static bool gfx_drawJpgFile(const String& path, int x, int y, int maxW, int maxH
 // ── Display init (from Dimi) ──
 static void displayInit(){
   framebuffer=(uint16_t*)ps_malloc(LCD_WIDTH*LCD_HEIGHT*2);
-  dma_buffer=(uint16_t*)heap_caps_malloc(LCD_WIDTH*ROWS_PER_STRIP*2,MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
+  // 5.9.33-lab3: size the DMA strip buffer for the LARGEST strip we might be asked
+  // for (STRIPROWS=), falling back if internal DMA RAM is tight. displayInit runs
+  // before loadConfig, so we allocate for the max and clamp the runtime value later.
+  {const int cand[3]={MAX_STRIP_ROWS,20,ROWS_PER_STRIP};
+   for(int c=0;c<3;c++){
+     dma_buffer=(uint16_t*)heap_caps_malloc(LCD_WIDTH*cand[c]*2,MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
+     if(dma_buffer){g_strip_cap=cand[c];break;}
+   }}
   if(!framebuffer||!dma_buffer){Serial.println("FATAL: fb alloc");while(1)delay(1000);}
   spi_bus_config_t buscfg={};
   buscfg.data0_io_num=LCD_PIN_MOSI;buscfg.data1_io_num=LCD_PIN_MISO;
@@ -455,17 +507,84 @@ static bool getTouchXY(uint16_t*x,uint16_t*y){if(!gTouchPts)return false;*x=cons
 // MSC RAM DISK
 // ════════════════════════════════════════════════════════════════════════════
 USBMSC MSC;static bool g_usb_online=false;
-static const uint16_t SECTOR_SIZE=512;static const uint32_t TOTAL_SECTORS=4096;   // v4.9: 2MB RAM disk so HD (1.76MB) images fit
-static const uint16_t RESERVED_SECTORS=1,SECTORS_PER_FAT=6,ROOT_DIR_SECTORS=4;
-static const uint8_t SECTORS_PER_CLUSTER=2,NUM_FATS=1;static const uint16_t ROOT_ENTRIES=64;   // v4.9: 1KB clusters -> ~2042 clusters, stays safely FAT12 (limit 4084)
-static const uint32_t FAT_LBA=1,ROOT_LBA=7,DATA_LBA=11;   // reserved(1)+FAT(6)+root(4); metadata region is cluster-size-independent, so unchanged
-static const uint32_t MAX_FILE_BYTES=(TOTAL_SECTORS-DATA_LBA)*512;   // ~1.99MB usable
+// ── 5.9.35: the RAM disk is sized by CONFIG.TXT, not baked in ───────────────
+// The Gotek sees a tiny FAT12 volume in PSRAM holding exactly one file. That
+// volume was a hard 2 MB — fine for ADF (880 KB) and Amiga HD (1.76 MB), but
+// Atari ST .HFE dumps routinely run past it. HFE stores the raw BITSTREAM, not
+// sectors, so its size does not track the floppy's data capacity: an 880 KB ST
+// disk can be a 1-2 MB HFE and a high-sample-rate or HFEv3 dump can exceed
+// 2.88 MB. So there is no natural ceiling to bake in — it is a knob.
+//
+// DISKMAXKB= is the largest IMAGE we must be able to mount (not the volume
+// size). The volume, cluster size and FAT are derived from it so the result is
+// always valid FAT12 and the metadata layout is identical at every size.
+// Default 2880 = the 3.5" ED floppy capacity: covers every raw sector format
+// outright (ADF/ADZ/ST/IMG/DSK) and the large majority of HFE dumps.
+//
+//   DISKMAXKB   volume    sec/clus   PSRAM cost
+//     2048      4109 sec     2        2,103,808   (the old 5.9.34 behaviour)
+//     2560      5133 sec     2        2,628,096
+//     2880      5773 sec     4        2,955,776   <- default
+//     3072      6157 sec     4        3,152,384
+//     4096      8205 sec     4        4,200,960   (ceiling)
+#define DISK_IMG_MIN_KB  1024
+#define DISK_IMG_DEF_KB  2880
+#define DISK_IMG_MAX_KB  4096
+#define DISK_RESERVED_SECTORS 1
+#define DISK_SECTORS_PER_FAT  8        // 4096 bytes = 2730 FAT12 entries; enough for every size above (was 6)
+#define DISK_ROOT_DIR_SECTORS 4
+#define DISK_DATA_LBA (DISK_RESERVED_SECTORS+DISK_SECTORS_PER_FAT+DISK_ROOT_DIR_SECTORS)   // 13
+#define DISK_SECTORS_CEIL ((uint32_t)DISK_IMG_MAX_KB*2+256)   // upper bound for the static dirty-map
+static const uint16_t SECTOR_SIZE=512;
+static const uint16_t RESERVED_SECTORS=DISK_RESERVED_SECTORS,SECTORS_PER_FAT=DISK_SECTORS_PER_FAT,ROOT_DIR_SECTORS=DISK_ROOT_DIR_SECTORS;
+static const uint8_t NUM_FATS=1;static const uint16_t ROOT_ENTRIES=64;
+static const uint32_t FAT_LBA=DISK_RESERVED_SECTORS,ROOT_LBA=DISK_RESERVED_SECTORS+DISK_SECTORS_PER_FAT,DATA_LBA=DISK_DATA_LBA;
+static uint32_t g_img_max_kb=DISK_IMG_DEF_KB;   // DISKMAXKB=
+static uint32_t TOTAL_SECTORS=DISK_IMG_DEF_KB*2+DISK_DATA_LBA;   // real value set by diskGeomApply()
+static uint8_t  SECTORS_PER_CLUSTER=4;
+static uint32_t MAX_FILE_BYTES=0;
+static uint32_t SV_IMG_MAX_SECTORS=0;
+// Smallest power-of-two cluster that keeps this volume inside FAT12 AND inside our fixed FAT.
+static void diskGeomFor(uint32_t sectors,uint8_t*spcOut,uint32_t*maxOut){
+  uint32_t dataSec=sectors-DATA_LBA;
+  uint32_t fatCap=((uint32_t)SECTORS_PER_FAT*512u*2u)/3u;      // FAT12 entries that fit: 2730
+  uint32_t maxCl=fatCap-2; if(maxCl>4084u)maxCl=4084u;         // ...and FAT12's own ceiling
+  uint32_t spc=1; while((dataSec/spc)>maxCl&&spc<128u)spc<<=1;
+  uint32_t cl=dataSec/spc;
+  *spcOut=(uint8_t)spc;
+  *maxOut=cl*spc*512u;      // WHOLE clusters only. The old formula was (dataSec*512), which
+}                           // ran the last cluster one sector past the end of the volume.
+static void diskGeomApply(){
+  uint32_t want=g_img_max_kb;
+  if(want<DISK_IMG_MIN_KB)want=DISK_IMG_MIN_KB;
+  if(want>DISK_IMG_MAX_KB)want=DISK_IMG_MAX_KB;
+  g_img_max_kb=want;
+  uint32_t target=want*1024u, sectors=want*2u+DATA_LBA;
+  uint8_t spc=4; uint32_t mx=0;
+  for(int guard=0;guard<64;guard++){
+    diskGeomFor(sectors,&spc,&mx);
+    if(mx>=target)break;
+    sectors+=(uint32_t)spc;                                    // one more cluster
+  }
+  TOTAL_SECTORS=sectors;SECTORS_PER_CLUSTER=spc;MAX_FILE_BYTES=mx;SV_IMG_MAX_SECTORS=sectors-DATA_LBA;
+}
 static const uint32_t ADF_DEFAULT_SIZE=901120;             // standard DD ADF = 880KB
 static const uint32_t ADF_HD_SIZE=1802240;                 // Amiga HD floppy = 1760KB (22 sectors/track, half-speed)
 static const uint32_t HD_FLAG_BYTES=1258291;               // >1.2MB => flag as HD; extended-DD disks (~900-960KB) stay DD (A500-readable)
 enum DiskMode{MODE_ADF=0,MODE_DSK=1,MODE_GEN=2};static DiskMode g_mode=MODE_ADF;   // v5.2: GEN = generic/any-machine library (/GENERIC)
 static const char*getOutputFilename(){return g_mode==MODE_ADF?"DISK.ADF":"DISK.DSK";}
 uint8_t*g_disk=nullptr;
+// Allocate the volume, stepping the request down 256 KB at a time if PSRAM is
+// short (a big library plus a big disk can be tighter than a blank card).
+static bool diskAlloc(){
+  for(;;){
+    diskGeomApply();
+    g_disk=(uint8_t*)ps_malloc((size_t)TOTAL_SECTORS*512);
+    if(g_disk)return true;
+    if(g_img_max_kb<=DISK_IMG_MIN_KB)return false;
+    g_img_max_kb=(g_img_max_kb>DISK_IMG_MIN_KB+256)?(g_img_max_kb-256):DISK_IMG_MIN_KB;
+  }
+}
 static void wr16(uint8_t*p,int o,uint16_t v){p[o]=v;p[o+1]=v>>8;}
 static void wr32(uint8_t*p,int o,uint32_t v){p[o]=v;p[o+1]=v>>8;p[o+2]=v>>16;p[o+3]=v>>24;}
 static void build_boot_sector(uint8_t*bs){memset(bs,0,512);bs[0]=0xEB;bs[1]=0x3C;bs[2]=0x90;memcpy(bs+3,"MSDOS5.0",8);wr16(bs,11,512);bs[13]=SECTORS_PER_CLUSTER;wr16(bs,14,RESERVED_SECTORS);bs[16]=NUM_FATS;wr16(bs,17,ROOT_ENTRIES);wr16(bs,19,(uint16_t)TOTAL_SECTORS);bs[21]=0xF8;wr16(bs,22,SECTORS_PER_FAT);wr16(bs,24,32);wr16(bs,26,64);bs[36]=0x80;bs[38]=0x29;wr32(bs,39,0x12345678);memcpy(bs+43,"ESP32MSC   ",11);memcpy(bs+54,"FAT12   ",8);bs[510]=0x55;bs[511]=0xAA;}
@@ -478,10 +597,11 @@ static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n){uint32_t s=
 // STANDALONE: the Amiga writes to OUR RAM disk (we are the USB drive) — onWrite
 // below ticks the dirty map; a settle timer + eject flush persist to .sav.adf.
 // WIRELESS: the dongle ticks its own map and beacons; we pull + patch (espnow).
-#define SV_IMG_MAX_SECTORS (TOTAL_SECTORS-DATA_LBA)     // 4085 (v4.9: 2MB disk)
+// SV_IMG_MAX_SECTORS is a runtime value now (see diskGeomApply); the dirty map is
+// sized once for the largest disk DISKMAXKB can ever ask for.
 #define SV_SETTLE_MS 3000
 static int      g_saves_mode=1;                          // 0=OFF 1=COPY 2=OVERWRITE (SAVES=)
-static uint8_t  g_sv_dirty[(SV_IMG_MAX_SECTORS+7)/8];
+static uint8_t  g_sv_dirty[((DISK_SECTORS_CEIL-DISK_DATA_LBA)+7)/8];
 static volatile uint16_t g_sv_dirty_count=0;
 static volatile uint32_t g_sv_last_write=0;
 static volatile uint32_t g_sv_total_writes=0;
@@ -554,8 +674,8 @@ static bool onStartStopSD(uint8_t,bool start,bool load_eject){if(load_eject&&!st
 // SD + INDEX CACHE
 // ════════════════════════════════════════════════════════════════════════════
 static String indexFilePath(){return g_mode==MODE_ADF?"/ADF/.index":g_mode==MODE_DSK?"/DSK/.index":"/GENERIC/.index";}
-static void writeIndexCache(const std::vector<String>&v){File f=SD_MMC.open(indexFilePath().c_str(),FILE_WRITE);if(!f)return;f.println("#COUNT="+String(v.size()));for(auto&p:v)f.println(p);f.close();}
-static bool readIndexCache(std::vector<String>&out){out.clear();File f=SD_MMC.open(indexFilePath().c_str(),FILE_READ);if(!f){return false;}
+static void writeIndexCache(const std::vector<String>&v){ if(g_nocache)return;File f=SD_MMC.open(indexFilePath().c_str(),FILE_WRITE);if(!f)return;f.println("#COUNT="+String(v.size()));for(auto&p:v)f.println(p);f.close();}
+static bool readIndexCache(std::vector<String>&out){ if(g_nocache){out.clear();return false;}out.clear();File f=SD_MMC.open(indexFilePath().c_str(),FILE_READ);if(!f){return false;}
   long declaredCount=-1;
   while(f.available()){String l=f.readStringUntil('\n');l.trim();if(!l.length())continue;
     if(l.startsWith("#COUNT=")){declaredCount=l.substring(7).toInt();if(declaredCount>0)out.reserve(declaredCount);continue;}
@@ -564,30 +684,63 @@ static bool readIndexCache(std::vector<String>&out){out.clear();File f=SD_MMC.op
   // Validate: declared count must match actual lines read (catches partial writes/corruption)
   if(declaredCount>=0&&declaredCount!=(long)out.size()){out.clear();return false;}
   return!out.empty();}
-// Draw bouncing Amiga ball animation frame + counter
-static int ball_x=0,ball_y=0,ball_dx=3,ball_dy=2;
-static void drawScanFrame(int count){
-  if((count%128)==0)gLog("[scan] files=%d int=%u psram=%u\n",count,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
-  // Ball area: centre of screen
-  int areaX=60,areaY=gH/2-50,areaW=gW-120,areaH=60;
-  // Erase previous ball
-  gfx_fillRect(ball_x-8,ball_y-8,18,18,0x1082);
-  // Move ball
-  ball_x+=ball_dx;ball_y+=ball_dy;
-  if(ball_x<=areaX||ball_x>=areaX+areaW-10){ball_dx=-ball_dx;ball_x+=ball_dx;}
-  if(ball_y<=areaY||ball_y>=areaY+areaH-10){ball_dy=-ball_dy;ball_y+=ball_dy;}
-  // Draw Amiga-style ball (red+white chequered circle)
+// ── 5.9.36-lab6: the scan screen used to cost HALF the scan ────────────────
+// It animated a bouncing ball every 80ms, and every frame ended in gfx_flush(),
+// which pushes the WHOLE 320x480 framebuffer: 48 strips, each with a hard-coded
+// 500us delay, plus ~12ms of SPI. About 36ms. So in every 80ms of wall clock,
+// ~38ms went on drawing a ball and ~42ms on actually scanning the card - the
+// scan took roughly 1.9x as long as the work required.
+//
+// Now the ball is painted ONCE as decoration and only the counter is refreshed,
+// driven by the file COUNT rather than a timer: every 50 files is roughly every
+// 1.7s instead of 12 times a second. Same reassurance, ~2% overhead instead of
+// ~47%, and the number climbing tells you more than the ball ever did.
+//
+// The time floor is the one piece of the old behaviour worth keeping: if a
+// single slow directory stalls the walk, the count stops moving and a static
+// screen reads as a hang. A redraw every 3s regardless proves it is still alive.
+#define SCAN_EVERY_N   50
+#define SCAN_FLOOR_MS  3000
+static bool     g_scan_painted=false;
+static uint32_t g_scan_lastdraw=0;
+static int      g_scan_lastcount=-1;
+static void drawScanBall(int cx,int cy){          // static decoration, drawn once
   for(int dy=-6;dy<=6;dy++)for(int dx=-6;dx<=6;dx++){
     if(dx*dx+dy*dy>36)continue;
     bool checker=((dx+6)/3+(dy+6)/3)%2==0;
-    gfx_drawPixel(ball_x+dx,ball_y+dy,checker?TFT_RED:TFT_WHITE);
+    gfx_drawPixel(cx+dx,cy+dy,checker?TFT_RED:TFT_WHITE);
   }
-  // Counter text
-  gfx_fillRect(gW/2-60,gH/2+20,120,12,0x1082);
-  gfx_setTextSize(1);gfx_setTextColor(0x9BD6,0x1082);
-  String msg="Found: "+String(count)+" files";
-  gfx_setCursor(gW/2-gfx_textWidth(msg)/2,gH/2+22);gfx_print(msg);
+}
+static void drawScanFrame(int count){
+  if((count%512)==0)gLog("[scan] files=%d int=%u psram=%u\n",count,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+  if(!g_scan_painted){                            // full paint: background, ball, label
+    g_scan_painted=true;
+    gfx_fillScreen(0x1082);
+    drawScanBall(gW/2,gH/2-46);
+    gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
+    {const char*t="SCANNING CARD";int tw=gfx_textWidth(t);gfx_setCursor((gW-tw)/2,gH/2-20);gfx_print(t);}
+  }
+  gfx_fillRect(gW/2-110,gH/2+14,220,20,0x1082);   // counter only
+  gfx_setTextSize(2);gfx_setTextColor(0x9BD6,0x1082);
+  String msg=String(count)+" files";
+  gfx_setCursor(gW/2-gfx_textWidth(msg)/2,gH/2+16);gfx_print(msg);
   gfx_flush();
+  g_scan_lastdraw=millis(); g_scan_lastcount=count;
+}
+// Safe to call on EVERY directory entry. Gated on the DELTA since the last
+// redraw, not "count % 50" — with a modulo, every entry seen while count sat on
+// a multiple of 50 would redraw, which is the bug we are removing.
+static inline bool scanTick(int count){
+  if(count-g_scan_lastcount>=SCAN_EVERY_N)return true;
+  return (millis()-g_scan_lastdraw)>SCAN_FLOOR_MS;     // liveness: a slow folder still shows a pulse
+}
+// Remaining-time string from work done so far. No user type in the signature
+// (Arduino auto-prototype), so this is safe at file scope in a .ino.
+static String etaStr(uint32_t elapsedMs,int done,int total){
+  if(done<=0||done>=total||elapsedMs<1500)return String("");
+  uint32_t rem=(uint32_t)(((uint64_t)elapsedMs*(uint64_t)(total-done))/(uint64_t)done)/1000UL;
+  if(rem<60)return String(rem)+"s left";
+  return String(rem/60)+"m "+String(rem%60)+"s left";
 }
 
 // v5.2 GEN mode: a "disk image" is any file that ISN'T a known sidecar (cover/info/manual/
@@ -605,6 +758,35 @@ static bool isGenImage(const String&u){
 static std::vector<uint64_t> g_coverset;
 static uint64_t coverHash(const String&s){uint64_t h=1469598103934665603ULL;for(unsigned i=0;i<s.length();i++){h^=(uint8_t)s[i];h*=1099511628211ULL;}return h;}   // 5.3.7: lowercased cover-image paths (jpg/png) harvested during the scan walk, so buildThumbs resolves each cover from RAM instead of probing the card. Covers ONLY — .nfo/.rtfm are read on demand when you open a game, never in bulk, so they were dead weight here.
 static inline bool isCoverExtU(const String&u){return u.endsWith(".JPG")||u.endsWith(".JPEG")||u.endsWith(".PNG");}
+// ── 5.9.31-lab1: SIDECAR HARVEST ────────────────────────────────────────────
+// Selecting a game used to cost ~10 full directory walks on a flat 1700-file card:
+// findNFOFor (2 on a miss) + the NFO open + savExistsFor + isHDImage + manualFor (6 on
+// a miss). That is FAT resolving names entry-by-entry - seek-bound, so faster silicon
+// never helped. Fix: during the scan walk every entry is already in our hand, so record
+// what we need then. Blurbs are read from the open handle; .rtfm presence and the HD flag
+// fall out of the directory entry itself (e.size()) for free. Same hashed-vector +
+// binary_search shape as g_coverset, so 1000 games cost 8 bytes each, not a String each.
+// NOT harvested: savExistsFor - saves are created at runtime, so a scan-time answer goes
+// stale. It stays a live check (one walk) until lab2 gives it an invalidation hook.
+static inline uint64_t sideKey(const String&nameNoDir){          // lc basename of a name WITH an extension ("Game.nfo" -> "game")
+  String k=nameNoDir; int d=k.lastIndexOf('.'); if(d>0)k=k.substring(0,d); k.toLowerCase(); return coverHash(k);
+}
+static inline uint64_t sideKeyRaw(const String&stem){            // lc of an ALREADY extension-less stem — must not strip again,
+  String k=stem; k.toLowerCase(); return coverHash(k);           // or "Turrican II v1.2" keys as "turrican ii v1" and misses
+}
+struct NfoRec{ uint64_t k; String t,b; };
+static std::vector<NfoRec>   g_nfoharvest;     // .nfo title+blurb by lc basename
+static std::vector<uint64_t> g_manualset;      // games carrying a .rtfm
+static std::vector<uint64_t> g_hdset;          // disk images over HD_FLAG_BYTES
+static bool g_sidecars_harvested=false;        // this boot walked the tree -> the harvest is authoritative
+#define NFO_BLURB_MAX 400                      // 3.5" PSRAM budget: 1000 games x 400B worst case = 400KB
+                                               // (the 7B capped at 2000 with 26MB spare; we have ~5.6MB)
+static void parseNFO(const String&txt,String&t,String&b);        // fwd: defined with the game-cache helpers
+static void sideNoteNfo(const String&fname,const String&txt){
+  String t,b; parseNFO(txt,t,b);
+  if((int)b.length()>NFO_BLURB_MAX) b=b.substring(0,NFO_BLURB_MAX);
+  if(t.length()||b.length()){ NfoRec r; r.k=sideKey(fname); r.t=t; r.b=b; g_nfoharvest.push_back(r); }
+}
 // ── v5.6.0 Library Categories (CONFIG.TXT gated; folders auto-classified by content) ──
 static bool   g_categories=false;   // CATEGORIES=ON : show the category browse (a folder with no disk images but subfolders = a category)
 static bool   g_nesting=false;      // NESTING=ON : allow category recursion beyond one level
@@ -617,7 +799,7 @@ static void reloadLevel();          // fwd: fresh (uncached) rescan of mode root
 // letter/label folders (ADF/A/<game>/, ADF/Games/<game>/) still surface in the flat
 // list — the card can be organised, the screen looks exactly the same.
 static void scanDirInto(const String& dir, std::vector<String>& out, const String& ext,
-                        int depth, int& count, uint32_t& lastDraw){
+                        int depth, int& count){
   if(depth>5) return;                                   // safety cap against pathological trees
   File root=SD_MMC.open(dir.c_str());
   if(!root||!root.isDirectory()){ if(root)root.close(); return; }
@@ -628,45 +810,59 @@ static void scanDirInto(const String& dir, std::vector<String>& out, const Strin
        if(leaf=="SAMPLE"||leaf.startsWith(".")){gd.close();continue;}}   // skip SAMPLE + dot-folders at every level
       size_t _imgs0=out.size();
       File e;while((e=gd.openNextFile())){String fn=e.name();int sl=fn.lastIndexOf('/');if(sl>=0)fn=fn.substring(sl+1);String u=fn;u.toUpperCase();
+      if(scanTick(count))drawScanFrame(count);   // every entry: a folder of 2000 covers must not look hung
       if(isCoverExtU(u)){String ap=en+"/"+fn;if(!ap.startsWith("/"))ap="/"+ap;ap.toLowerCase();g_coverset.push_back(coverHash(ap));}
+      if(u.endsWith(".NFO")){char _nb[513];int _nr=e.read((uint8_t*)_nb,512);if(_nr<0)_nr=0;_nb[_nr]=0;sideNoteNfo(fn,String(_nb));e.close();continue;}   // 5.9.31-lab1: read the blurb while the handle is open (no extra dir-scan)
+      if(u.endsWith(".RTFM")){g_manualset.push_back(sideKey(fn));e.close();continue;}
       if(u.indexOf(".SAV.")>=0){
         if(u.endsWith(".TMP")){String fp=en+"/"+fn;if(!fp.startsWith("/"))fp="/"+fp;SD_MMC.remove(fp);}
         e.close();continue;}
       if(g_mode==MODE_GEN?isGenImage(u):(u.endsWith(ext)||u.endsWith(".IMG")||u.endsWith(".ADZ"))){String fp=en+"/"+fn;if(!fp.startsWith("/"))fp="/"+fp;out.push_back(fp);count++;
-        if(millis()-lastDraw>80){drawScanFrame(count);lastDraw=millis();}}e.close();}
+        if((uint32_t)e.size()>HD_FLAG_BYTES)g_hdset.push_back(sideKey(fn));   // 5.9.31-lab1: HD flag straight off the directory entry — isHDImage's stat() was a whole walk
+        }e.close();}
       if(out.size()==_imgs0){                            // image-less folder = organisational
         if(g_categories&&(g_libpath.length()==0||g_nesting)){
           String _cn=en;int _cs=_cn.lastIndexOf('/');if(_cs>=0)_cn=_cn.substring(_cs+1);g_cats.push_back(_cn);   // Categories: browsable bucket
         }else{
-          scanDirInto(en,out,ext,depth+1,count,lastDraw);   // otherwise recurse-and-flatten
+          scanDirInto(en,out,ext,depth+1,count);   // otherwise recurse-and-flatten
         }
       }
     }
     else{String fn=en;int sl=fn.lastIndexOf('/');if(sl>=0)fn=fn.substring(sl+1);String u=fn;u.toUpperCase();
+      if(scanTick(count))drawScanFrame(count);   // per entry, as above
       if(isCoverExtU(u)){String ap=en;ap.toLowerCase();g_coverset.push_back(coverHash(ap));}
+      if(u.endsWith(".NFO")){char _nb[513];int _nr=gd.read((uint8_t*)_nb,512);if(_nr<0)_nr=0;_nb[_nr]=0;sideNoteNfo(fn,String(_nb));gd.close();continue;}
+      if(u.endsWith(".RTFM")){g_manualset.push_back(sideKey(fn));gd.close();continue;}
       if(u.indexOf(".SAV.")>=0){
         if(u.endsWith(".TMP"))SD_MMC.remove(en);
         gd.close();continue;}
       if(g_mode==MODE_GEN?isGenImage(u):(u.endsWith(ext)||u.endsWith(".IMG")||u.endsWith(".ADZ"))){out.push_back(en);count++;
-        if(millis()-lastDraw>80){drawScanFrame(count);lastDraw=millis();}}}
+        if((uint32_t)gd.size()>HD_FLAG_BYTES)g_hdset.push_back(sideKey(fn));}}
     gd.close();}
   root.close();
 }
 static std::vector<String> scanImagesAnimated(){
   std::vector<String>out;out.reserve(4096);   // scan-fix: no vector-growth copy-storm on big cards
-  g_coverset.clear();g_coverset.reserve(4096);g_cats.clear();String dir=g_mode==MODE_ADF?"/ADF":g_mode==MODE_DSK?"/DSK":"/GENERIC";if(g_categories&&g_libpath.length())dir+=g_libpath;String ext=g_mode==MODE_ADF?".ADF":".DSK";
-  // Init ball position
-  ball_x=gW/2;ball_y=gH/2-30;ball_dx=3;ball_dy=2;
-  // Draw initial scan screen
+  g_coverset.clear();g_coverset.reserve(4096);g_cats.clear();
+  g_nfoharvest.clear();g_manualset.clear();g_hdset.clear();g_sidecars_harvested=false;   // 5.9.31-lab1
+  String dir=g_mode==MODE_ADF?"/ADF":g_mode==MODE_DSK?"/DSK":"/GENERIC";if(g_categories&&g_libpath.length())dir+=g_libpath;String ext=g_mode==MODE_ADF?".ADF":".DSK";
+  // Draw the scan screen ONCE, here. drawScanFrame() then only repaints the
+  // counter, so a RESCAN gets immediate feedback without a second full paint.
   gfx_fillScreen(0x1082);
   gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
   {const char*s="SCANNING";int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-60);gfx_print(s);}
+  drawScanBall(gW/2,gH/2-30);                     // static decoration - no longer animated
   gfx_setTextSize(1);gfx_setTextColor(0x4A8A,0x1082);
   {const char*s="Building game index...";int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2+40);gfx_print(s);}
   gfx_flush();
-  int count=0;uint32_t lastDraw=0;
-  scanDirInto(dir,out,ext,0,count,lastDraw);
+  g_scan_painted=true; g_scan_lastdraw=millis(); g_scan_lastcount=-1;   // reset per scan, so RESCAN works too
+  int count=0;
+  scanDirInto(dir,out,ext,0,count);
   std::sort(g_coverset.begin(),g_coverset.end());   // 5.8.8: sorted for binary_search
+  std::sort(g_manualset.begin(),g_manualset.end());
+  std::sort(g_hdset.begin(),g_hdset.end());
+  std::sort(g_nfoharvest.begin(),g_nfoharvest.end(),[](const NfoRec&a,const NfoRec&b){return a.k<b.k;});
+  g_sidecars_harvested=true;   // 5.9.31-lab1: tree walked -> harvest authoritative (an empty set means genuinely none, not "unknown")
   // Final count
   drawScanFrame(count);delay(500);
   std::sort(out.begin(),out.end());return out;
@@ -920,7 +1116,7 @@ static bool findNFOFor(const String&p,String&out){
   String b=basenameNoExt(filenameOnly(p)),d=parentDir(p),gb=getGameBaseName(p);
   if(findInDir(d,b+".nfo",out))return true;if(gb!=b&&findInDir(d,gb+".nfo",out))return true;return false;
 }
-static bool findJPGFor(const String&p,String&out){
+static bool findJPGFor(const String&p,String&out){ if(!g_covers_on){out="";return false;}
   String b=basenameNoExt(filenameOnly(p)),d=parentDir(p),gb=getGameBaseName(p);
   // 5.3.7: VFAT lookups are case-insensitive, so the upper-case variants were pure
   // redundancy (6 probes -> 3). Name stems tried in priority order: exact, game base
@@ -994,7 +1190,7 @@ static bool g_hotswap=false;    // ON = tapping another disk while loaded swaps 
 static bool g_forceswap=false;  // ON = swap disk bytes in place without the USB eject/re-attach cycle
 static int g_info_x=0,g_info_w=150,g_info_bottom=0;
 static String g_manual_path=""; static int g_manual_bx=0,g_manual_by=0,g_manual_bw=0,g_manual_bh=0;  // v4.9.2 .rtfm book button rect
-struct GameEntry{String name;int first_file_idx;int disk_count;String jpg_path;std::vector<int>disk_indices;bool fav=false;uint16_t plays=0;bool cover_ok=false;};
+struct GameEntry{String name;int first_file_idx;int disk_count;String jpg_path;std::vector<int>disk_indices;bool fav=false;uint16_t plays=0;bool cover_ok=false;String blurb;bool nfo_done=false;bool has_manual=false;bool is_hd=false;};   // 5.9.31-lab1: sidecar results cached in PSRAM (see .nfocache) so selecting a game costs ZERO directory walks
 static std::vector<String>g_files;static std::vector<GameEntry>g_games;
 static int g_sel=0,g_scroll=0,g_disk_sel=0,g_loaded_game_idx=-1,g_loaded_disk_idx=-1;
 static int g_disk_page=0;  // current page of disk selector (6 disks/page)
@@ -1016,7 +1212,7 @@ static char bucketOf(const String&name){char c=toupper(name.charAt(0));return (c
 // ── Game cache — caches buildGameList output so NFO/JPG lookups only happen once ──
 static String gameCachePath(){return g_mode==MODE_ADF?"/ADF/.gamecache":g_mode==MODE_DSK?"/DSK/.gamecache":"/GENERIC/.gamecache";}
 
-static void writeGameCache(){
+static void writeGameCache(){ if(g_nocache)return;
   File f=SD_MMC.open(gameCachePath().c_str(),FILE_WRITE);if(!f)return;
   f.println("#V=590");                            // 5.9.0: bump invalidates pre-shard caches -> one clean rebuild into the bucketed .thumbs
   f.println("#FILES="+String(g_files.size()));  // bind to the index this was built from
@@ -1029,7 +1225,7 @@ static void writeGameCache(){
   f.close();
 }
 
-static bool readGameCache(){
+static bool readGameCache(){ if(g_nocache){g_games.clear();return false;}
   g_games.clear();g_games.reserve(g_files.size());
   File f=SD_MMC.open(gameCachePath().c_str(),FILE_READ);
   if(!f){return false;}
@@ -1081,6 +1277,38 @@ static void parseNFO(const String&txt,String&t,String&b){
   t.trim();b.trim();
 }
 
+// 5.9.31-lab1: fold the scan-walk harvest into g_games. Idempotent (nfo_done guards each
+// row). Returns true if any display name was adopted from an NFO title, so the caller can
+// re-persist the game cache. Authoritative after a walk: a row with no harvest entry is
+// still marked nfo_done, which is the whole point — proving "this game has no .nfo" used to
+// cost two complete directory walks, and now costs nothing.
+static bool assignSidecarsFromHarvest(){
+  if(!g_sidecars_harvested) return false;
+  bool nameChanged=false;
+  for(auto&g:g_games){
+    if(g.nfo_done) continue;
+    const String&fp=g_files[g.first_file_idx];
+    String raw=basenameNoExt(filenameOnly(fp));
+    uint64_t k1=sideKey(filenameOnly(fp));            // exact file basename
+    uint64_t k2=sideKeyRaw(getGameBaseName(fp));      // multi-disk game base — already ext-less, so no second strip
+    // blurb + title
+    for(int pass=0;pass<2;pass++){
+      uint64_t k=pass?k2:k1;
+      auto it=std::lower_bound(g_nfoharvest.begin(),g_nfoharvest.end(),k,
+                               [](const NfoRec&r,uint64_t kk){return r.k<kk;});
+      if(it!=g_nfoharvest.end()&&it->k==k){
+        if(it->t.length()&&g.name==raw){ g.name=it->t; nameChanged=true; }
+        g.blurb=it->b; break;
+      }
+      if(k2==k1) break;
+    }
+    g.has_manual = std::binary_search(g_manualset.begin(),g_manualset.end(),k1)
+                || (k2!=k1 && std::binary_search(g_manualset.begin(),g_manualset.end(),k2));
+    g.is_hd      = std::binary_search(g_hdset.begin(),g_hdset.end(),k1);
+    g.nfo_done=true;
+  }
+  return nameChanged;
+}
 static void buildGameList(){
   g_games.clear();g_games.reserve(g_files.size());   // scan-fix: no GameEntry copy-storm (2 Strings each)
   gLog("[buildGameList] files=%d int=%u psram=%u\n",(int)g_files.size(),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
@@ -1099,6 +1327,7 @@ static void buildGameList(){
     // NO NFO/JPG lookups here — done lazily in drawCoverPanel
     g_games.push_back(e);
   }
+  assignSidecarsFromHarvest();   // 5.9.31-lab1: adopt NFO titles BEFORE the sort so the list (and the A-Z buckets) order by the display name
   std::sort(g_games.begin(),g_games.end(),[](const GameEntry&a,const GameEntry&b){String al=a.name,bl=b.name;al.toLowerCase();bl.toLowerCase();return al<bl;});
   gLog("[buildGameList] done games=%d int=%u psram=%u\n",(int)g_games.size(),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
   if(g_libpath.length()==0)writeGameCache();   // v5.6.0: only cache the top level; category sub-levels scan fresh each time
@@ -1502,6 +1731,13 @@ static void selfHealConfig(){
     {"LOOP",     "\n# Loop cracktro splash: 1=loop until tapped, 0=auto-dismiss after 6s\nLOOP=0\n"},
     {"CRACKTRO", "\n# Boot cracktro style: 0=random each boot, or pick one:\n#   1=COPPER CLASSIC  2=STARFIELD  3=RAINBOW RASTER\n#   4=PLASMA  5=BOING BALL  6=SYNTHWAVE  7=OMEGAWARE\nCRACKTRO=0\n"},
     {"DIAGDISP", "\n# DIAG-DISP: live diagnostic overlay box (FPS / free SRAM+PSRAM / uptime / CPU temp). ON or OFF.\nDIAGDISP=OFF\n"},
+    {"NOCACHE",  "\n# NOCACHE: ON = ignore every on-SD cache (.index .gamecache .nfocache micro .tnl).\n#   Nothing is deleted; caches are just not read or written. Everything is rebuilt every\n#   boot. Diagnostic/benchmark use only - leave OFF for normal running.\nNOCACHE=OFF\n"},
+    {"COVERS",   "\n# COVERS: OFF = no cover art at all (nothing decoded, letter placeholders instead).\n#   Diagnostic: isolates list and .nfo cost from cover-decode time.\nCOVERS=ON\n"},
+    {"STRIPROWS","\n# STRIPROWS: how many screen rows go to the panel per SPI burst (1-40, default 10).\n#   The push is 48 bursts at 10 rows, 12 at 40 - and each burst costs FLUSHUS below.\n#   Higher = faster screen updates. Drop it back if you see torn bands.\nSTRIPROWS=10\n"},
+    {"FLUSHUS",  "# FLUSHUS: microseconds to wait after each burst (0-5000, default 500).\n#   At the default that is 48 x 500us = 24ms of pure waiting in EVERY frame.\n#   0 is fastest; raise it if the picture tears.\nFLUSHUS=500\n"},
+    {"DISKMAXKB","\n# DISKMAXKB: largest disk image the Gotek can be handed, in KB (1024-4096).\n#   2880 (default) = 3.5\" ED capacity - fits every ADF/ADZ/ST/IMG/DSK and most HFE.\n#   Atari ST .HFE stores the raw bitstream, so it can be much bigger than the\n#   floppy it came from; raise this if an HFE reports TOO BIG. Costs that much\n#   PSRAM for the whole session, so lower it on a card with thousands of games.\n#   Takes effect on the next boot.\nDISKMAXKB=2880\n"},
+    {"LISTTILE", "\n# LISTTILE: ON (default) = the list's cover panel reuses the reel's cached 45KB\n#   thumbnail. OFF = re-decode the full JPEG on every selection change (the old way,\n#   and much slower on a big library). Same picture either way.\nLISTTILE=ON\n"},
+    {"REELPROF", "# REELPROF: ON = print a reel frame-time breakdown to /gti.log every ~1.5s\n#   while the reel is on screen. Diagnostic only.\nREELPROF=OFF\n"},
     {"REELBORDER","\n# REELBORDER: frame drawn around each cover in the reel. ON=framed (default),\n#   OFF=clean/frameless look (the game you have loaded is still marked green).\nREELBORDER=ON\n"},
     {"LASTUSED", "\n# LASTUSED: ON = on power-up, jump the selection back to the game you last loaded.\n#   OFF (default) = always start at the top of the list.\nLASTUSED=OFF\n"},
     {"FONT",     "\n# Font size: SMALL, NORMAL, LARGE\nFONT=NORMAL\n"},
@@ -1588,6 +1824,13 @@ static void loadConfig(){
     else if(k=="HIVEMIND"){g_hivemind=(v=="OFF"||v=="0")?0:1;}
     else if(k=="CATEGORIES"){String cv=v;cv.toUpperCase();g_categories=(cv=="ON"||cv=="1"||cv=="TRUE");}
     else if(k=="DIAGDISP"){String dv=v;dv.toUpperCase();g_diagdisp=(dv=="ON"||dv=="1"||dv=="TRUE");}
+    else if(k=="NOCACHE"){String nv=v;nv.toUpperCase();g_nocache=(nv=="ON"||nv=="1"||nv=="TRUE");}
+    else if(k=="COVERS"){String cv=v;cv.toUpperCase();g_covers_on=!(cv=="OFF"||cv=="0"||cv=="NO");}
+    else if(k=="STRIPROWS"){int r=v.toInt(); if(r<1)r=1; if(r>g_strip_cap)r=g_strip_cap; g_strip_rows=r;}   // 5.9.33-lab3
+    else if(k=="FLUSHUS"){int u=v.toInt(); if(u<0)u=0; if(u>5000)u=5000; g_flush_us=u;}                     // 5.9.33-lab3
+    else if(k=="REELPROF"){String rv=v;rv.toUpperCase();g_reelprof=(rv=="ON"||rv=="1"||rv=="TRUE");}        // 5.9.33-lab3
+    else if(k=="LISTTILE"){String lv=v;lv.toUpperCase();g_listtile=!(lv=="OFF"||lv=="0"||lv=="NO");}        // 5.9.34-lab4
+    else if(k=="DISKMAXKB"){long d=v.toInt(); if(d>0)g_img_max_kb=(uint32_t)d;}                             // 5.9.35 (applied at boot, before the RAM disk is allocated)
     else if(k=="REELBORDER"){String rv=v;rv.toUpperCase();g_reelborder=!(rv=="OFF"||rv=="0"||rv=="NO");}   // MasterTelly CR: default ON
     else if(k=="LASTUSED"){String lv=v;lv.toUpperCase();g_lastused=(lv=="ON"||lv=="1"||lv=="TRUE");}
     else if(k=="NESTING"){String nv=v;nv.toUpperCase();g_nesting=(nv=="ON"||nv=="1"||nv=="TRUE");}
@@ -2080,15 +2323,35 @@ static void drawCoverPanel(){
   auto&game=g_games[g_sel];
   if(!game.jpg_path.length()){String jpg;if(findJPGFor(g_files[game.first_file_idx],jpg))game.jpg_path=jpg;else game.jpg_path="?";}
   static int lastNfoSel=-1;static String cachedNfoBlurb="";static bool cachedHasSav=false;static bool cachedHD=false;static String cachedManual="";
-  if(lastNfoSel!=g_sel){lastNfoSel=g_sel;cachedNfoBlurb="";String nfoP,nT,nB;
-    if(findNFOFor(g_files[game.first_file_idx],nfoP)){File nf=SD_MMC.open(nfoP,FILE_READ);if(nf){String txt;while(nf.available()&&txt.length()<512)txt+=(char)nf.read();nf.close();parseNFO(txt,nT,nB);
-      if(nT.length()&&game.name==basenameNoExt(filenameOnly(g_files[game.first_file_idx])))game.name=nT;cachedNfoBlurb=nB;}}
-    cachedHasSav=(g_saves_mode==1)&&savExistsFor(g_files[game.first_file_idx]);cachedHD=(g_mode==MODE_ADF)&&isHDImage(g_files[game.first_file_idx]);cachedManual="";{String mp;if(manualFor(g_files[game.first_file_idx],mp))cachedManual=mp;}}   // v4.8.0 badge + v4.9 HD flag + v4.9.2 .rtfm (checked once per selection)
+  if(lastNfoSel!=g_sel){lastNfoSel=g_sel;cachedNfoBlurb="";cachedManual="";
+    const String _fp=g_files[game.first_file_idx];
+    if(game.nfo_done){                       // 5.9.31-lab1: harvested or loaded from .nfocache — ZERO directory walks
+      cachedNfoBlurb=game.blurb;
+      cachedHD=(g_mode==MODE_ADF)&&game.is_hd;
+      if(game.has_manual){String mp;if(manualFor(_fp,mp))cachedManual=mp;}   // only resolve a path when one actually exists (and it hits early)
+    }else{                                   // fallback: no harvest, no cache (pre-lab1 card) — old behaviour, minus the byte-at-a-time read
+      String nfoP,nT,nB;
+      if(findNFOFor(_fp,nfoP)){File nf=SD_MMC.open(nfoP,FILE_READ);if(nf){
+        char _nb[513];int _nr=nf.read((uint8_t*)_nb,512);if(_nr<0)_nr=0;_nb[_nr]=0;nf.close();String txt(_nb);parseNFO(txt,nT,nB);
+        if(nT.length()&&game.name==basenameNoExt(filenameOnly(_fp)))game.name=nT;cachedNfoBlurb=nB;}}
+      cachedHD=(g_mode==MODE_ADF)&&isHDImage(_fp);
+      {String mp;if(manualFor(_fp,mp))cachedManual=mp;}
+      game.blurb=cachedNfoBlurb;game.has_manual=cachedManual.length()>0;game.is_hd=cachedHD;game.nfo_done=true;   // remember for the session even without a cache file
+    }
+    cachedHasSav=(g_saves_mode==1)&&savExistsFor(_fp);}   // still a live check: saves are created at runtime
   // Cover art
   gfx_fillRoundRect(COVER_ART_X,COVER_ART_Y,COVER_ART_W,COVER_ART_H,5,COL_BAR);
   gfx_drawRoundRect(COVER_ART_X-1,COVER_ART_Y-1,COVER_ART_W+2,COVER_ART_H+2,6,COL_ACCENT);
-  {bool _drew=false;
-   if(game.jpg_path.length()>0&&game.jpg_path!="?")_drew=gfx_drawJpgFile(game.jpg_path,COVER_ART_X+2,COVER_ART_Y+2,COVER_ART_W-4,COVER_ART_H-4);
+  {bool _drew=false; uint32_t _cv0=micros();
+   if(game.jpg_path.length()>0&&game.jpg_path!="?"){
+     if(g_listtile){            // 5.9.34-lab4: 45 KB pre-decoded tile instead of a fresh ~500 KB JPEG decode, every single selection change
+       bool _ok=false; uint16_t*_t=carTileEx(g_sel,true,&_ok);
+       if(_t&&_ok){int _s=min(COVER_ART_W-4,COVER_ART_H-4);   // the tile is square with its letterbox baked in, so fit the largest square
+         carBlit(_t,CAR_TILE,COVER_ART_X+COVER_ART_W/2,COVER_ART_Y+COVER_ART_H/2,_s,_s,0);_drew=true;}
+     }
+     if(!_drew)_drew=gfx_drawJpgFile(game.jpg_path,COVER_ART_X+2,COVER_ART_Y+2,COVER_ART_W-4,COVER_ART_H-4);
+   }
+   if(g_reelprof)gLog("[cover] %s art %luus for %s\n",g_listtile?"tile":"jpeg",(unsigned long)(micros()-_cv0),game.name.c_str());
    if(!_drew){char ib[2]={(char)toupper(game.name.charAt(0)),0};gfx_setTextSize(2);gfx_setTextColor(COL_LIT,COL_BAR);gfx_setCursor(COVER_ART_X+COVER_ART_W/2-6,COVER_ART_Y+COVER_ART_H/2-8);gfx_print(ib);}}
   // v4.8.0: floppy icon — this game has a save-copy (INSERT will boot the save)
   if(cachedHasSav)drawSaveFloppy(COVER_ART_X+3,COVER_ART_Y+3);
@@ -2135,9 +2398,9 @@ static void drawActionStrip(){
 
 // INFO / SETTINGS panel — left column (landscape) or full width (portrait). Stores button Ys for touch.
 // ── v5.5.4: full-screen paginated INFO/settings model ──
-enum { IA_NONE=0, IA_MODE, IA_FONT, IA_THEME, IA_LANG, IA_ROTATE, IA_COMPACT, IA_DONGLE, IA_HIVEMIND, IA_RESCAN, IA_RESET, IA_DIAG, IA_SDACCESS, IA_FWUPDATE, IA_LIBMODE, IA_CATEG, IA_BTNSTYLE, IA_SSMODE, IA_SSFAV, IA_LINK, IA_HOMEWIFI, IA_WEBUI, IA_WIFICHECK, IA_SAVER, IA_CRACKTRO, IA_DIAGDISP, IA_REELBORDER, IA_LASTUSED };
+enum { IA_NONE=0, IA_MODE, IA_FONT, IA_THEME, IA_LANG, IA_ROTATE, IA_COMPACT, IA_DONGLE, IA_HIVEMIND, IA_RESCAN, IA_RESET, IA_DIAG, IA_SDACCESS, IA_FWUPDATE, IA_LIBMODE, IA_CATEG, IA_BTNSTYLE, IA_SSMODE, IA_SSFAV, IA_LINK, IA_HOMEWIFI, IA_WEBUI, IA_WIFICHECK, IA_SAVER, IA_CRACKTRO, IA_DIAGDISP, IA_REELBORDER, IA_LASTUSED, IA_NOCACHE, IA_COVERS, IA_REELPROF, IA_LISTTILE };
 struct InfoItem { char lbl[32]; uint16_t bg,fg; uint8_t act; };
-static InfoItem g_ii[24]; static int g_ii_n=0;
+static InfoItem g_ii[32]; static int g_ii_n=0;
 struct InfoRect { int x,y,w,h; uint8_t act; };
 static InfoRect g_ir[20]; static int g_ir_n=0;
 static int g_info_page=0, g_info_pages=1;
@@ -2155,7 +2418,7 @@ static void drawInfoPanel(){
   // record their rects in g_ir[] so the tap handler hits exactly what's drawn.
   g_ii_n=0;
   auto add=[&](const String&l,uint16_t bg,uint16_t fg,uint8_t act){
-    if(g_ii_n>=24)return; strncpy(g_ii[g_ii_n].lbl,l.c_str(),31); g_ii[g_ii_n].lbl[31]=0;
+    if(g_ii_n>=32)return; strncpy(g_ii[g_ii_n].lbl,l.c_str(),31); g_ii[g_ii_n].lbl[31]=0;
     g_ii[g_ii_n].bg=bg; g_ii[g_ii_n].fg=fg; g_ii[g_ii_n].act=act; g_ii_n++; };
   // 5.9.12: single 3-way MODE — STANDALONE (radio off) / ESP-NOW (blind dongles, no router) / WiFi (home router).
   {const char* mlbl = !g_wireless_mode ? "STANDALONE" : (g_link_home ? "WiFi" : "ESP-NOW");
@@ -2185,6 +2448,10 @@ static void drawInfoPanel(){
   add(String("CRACKTRO")+": "+(g_cracktro>=0?T(L_ON):T(L_OFF)), g_cracktro>=0?COL_GREEN:COL_BAR, g_cracktro>=0?TFT_BLACK:COL_LIT, IA_CRACKTRO);   // boot intro on/off -> CONFIG.TXT CRACKTRO=
   add(String("DIAG-DISP")+": "+(g_diagdisp?T(L_ON):T(L_OFF)), g_diagdisp?COL_GREEN:COL_BAR, g_diagdisp?TFT_BLACK:COL_LIT, IA_DIAGDISP);   // live diagnostic overlay -> CONFIG.TXT DIAGDISP=
   add(String("REEL BORDER")+": "+(g_reelborder?T(L_ON):T(L_OFF)), g_reelborder?COL_GREEN:COL_BAR, g_reelborder?TFT_BLACK:COL_LIT, IA_REELBORDER);   // MasterTelly CR: frame around reel covers -> CONFIG.TXT REELBORDER=
+  add(String("NO-CACHE")+": "+(g_nocache?T(L_ON):T(L_OFF)), g_nocache?(uint16_t)0x8000:COL_BAR, g_nocache?TFT_WHITE:COL_LIT, IA_NOCACHE);   // 5.9.32-lab2 benchmark control -> CONFIG.TXT NOCACHE=
+  add(String("COVER ART")+": "+(g_covers_on?T(L_ON):T(L_OFF)), g_covers_on?COL_GREEN:COL_BAR, g_covers_on?TFT_BLACK:COL_LIT, IA_COVERS);   // 5.9.32-lab2 -> CONFIG.TXT COVERS=
+  add(String("REEL PROF")+": "+(g_reelprof?T(L_ON):T(L_OFF)), g_reelprof?(uint16_t)0x8000:COL_BAR, g_reelprof?TFT_WHITE:COL_LIT, IA_REELPROF);   // 5.9.33-lab3 frame profiler -> /gti.log
+  add(String("LIST TILE")+": "+(g_listtile?T(L_ON):T(L_OFF)), g_listtile?COL_GREEN:COL_BAR, g_listtile?TFT_BLACK:COL_LIT, IA_LISTTILE);   // 5.9.34-lab4 -> CONFIG.TXT LISTTILE=
   add(String("LAST USED")+": "+(g_lastused?T(L_ON):T(L_OFF)), g_lastused?COL_GREEN:COL_BAR, g_lastused?TFT_BLACK:COL_LIT, IA_LASTUSED);   // restore last-loaded game on boot -> CONFIG.TXT LASTUSED=
   add(T(L_RESCAN_SD), COL_BLUE, TFT_WHITE, IA_RESCAN);
   add(T(L_SOFT_RESET), (uint16_t)0x8000, TFT_WHITE, IA_RESET);
@@ -2412,11 +2679,12 @@ static uint32_t g_car_die_rest_ms=0;   // v5.4.2: millis() when the die settled 
 static int g_car_ins_x=0,g_car_ins_y=0,g_car_ins_w=0,g_car_ins_h=0;   // INSERT button rect (set by drawCarousel)
 static int g_car_disk_n=0,g_car_disk_x=0,g_car_disk_y=0,g_car_disk_bw=0,g_car_disk_h=0;   // v5.7.x: reel multi-disk button row rect
 static void runScreensaver();   // defined below; the reel's idle tick can summon it
-#define CAR_TILE  150                            // decoded cover tile size (px)
+// CAR_TILE is defined up with COVER_TILE_PX — the list cover panel shares the reel's tile.
 #define CAR_SLOTS 48                             // 5.9.0: LRU tile cache entries (PSRAM ~2.1 MB) — was 16; more cache = less re-reading when you scroll back. Dial down if PSRAM gets tight.
 static uint16_t* car_buf[CAR_SLOTS]={0};         // NULL gates every read of car_game below, so the zero-init is safe at any CAR_SLOTS
 static int      car_game[CAR_SLOTS]={0};         // set to -1 the instant a slot buffer is first allocated (see carTile)
 static uint32_t car_stamp[CAR_SLOTS]={0};
+static uint8_t  car_ok[CAR_SLOTS]={0};           // 5.9.34-lab4: 1 = this slot holds a real cover, 0 = a failed decode left it flat COL_BAR
 static uint32_t car_tick_ctr=0;
 #define CAR_BENCH 0
 #if CAR_BENCH
@@ -2479,7 +2747,7 @@ static String carThumbPath(int gi){
   char bkt[2]={hx[0],0};                                                            // 5.9.0: shard by first hex nibble -> ~n/16 files per dir
   return carThumbRoot(gi)+"/"+bkt+"/"+getGameBaseName(p)+"_"+hx+".tnl";
 }
-static bool carLoadThumb(int gi,uint16_t*dst){
+static bool carLoadThumb(int gi,uint16_t*dst){ if(g_nocache)return false;
   auto&g=g_games[gi];
   if(!(g.jpg_path.length()>0&&g.jpg_path!="?"))return false;
   // 5.9.0: open+read only. The two stat() calls each linearly walked the .thumbs
@@ -2491,7 +2759,7 @@ static bool carLoadThumb(int gi,uint16_t*dst){
   size_t got=f.read((uint8_t*)dst,want);f.close();
   return got==want;
 }
-static void carSaveThumb(int gi,uint16_t*src){
+static void carSaveThumb(int gi,uint16_t*src){ if(g_nocache)return;   // 5.9.32-lab2: NOCACHE - never write a .tnl either
   auto&g=g_games[gi];
   if(!(g.jpg_path.length()>0&&g.jpg_path!="?"))return;
   String root=carThumbRoot(gi);
@@ -2503,8 +2771,9 @@ static void carSaveThumb(int gi,uint16_t*src){
   f.write((uint8_t*)src,(size_t)CAR_TILE*CAR_TILE*2);f.close();
 }
 // Fetch a game's tile (NULL if uncached and decoding isn't allowed right now).
-static uint16_t* carTile(int gi,bool mayDecode){
-  for(int s=0;s<CAR_SLOTS;s++)if(car_buf[s]&&car_game[s]==gi){car_stamp[s]=++car_tick_ctr;return car_buf[s];}
+static uint16_t* carTileEx(int gi,bool mayDecode,bool*okOut){
+  if(okOut)*okOut=false;
+  for(int s=0;s<CAR_SLOTS;s++)if(car_buf[s]&&car_game[s]==gi){car_stamp[s]=++car_tick_ctr;if(okOut)*okOut=(car_ok[s]!=0);return car_buf[s];}
   if(!mayDecode)return NULL;
   int slot=-1;uint32_t old=0xFFFFFFFF;
   for(int s=0;s<CAR_SLOTS;s++){
@@ -2514,11 +2783,13 @@ static uint16_t* carTile(int gi,bool mayDecode){
   }
   if(slot<0)return NULL;
   car_game[slot]=gi;car_stamp[slot]=++car_tick_ctr;
-  if(!carLoadThumb(gi,car_buf[slot])){                       // fast path: 45 KB raw thumb
-    if(carDecodeTile(gi,car_buf[slot]))carSaveThumb(gi,car_buf[slot]);   // self-heal fallback (rare)
-  }
+  bool got=carLoadThumb(gi,car_buf[slot]);                   // fast path: 45 KB raw thumb, zero decode
+  if(!got&&carDecodeTile(gi,car_buf[slot])){carSaveThumb(gi,car_buf[slot]);got=true;}   // self-heal fallback (rare)
+  car_ok[slot]=got?1:0;
+  if(okOut)*okOut=got;
   return car_buf[slot];
 }
+static uint16_t* carTile(int gi,bool mayDecode){return carTileEx(gi,mayDecode,NULL);}
 // Build ALL cover thumbnails up-front — first launch of a card and RESCAN only
 // (Michael's call: one predictable pass with a progress bar, never live jank).
 // Fresh thumbs are stat-checked and skipped, so a re-run over a built card is
@@ -2537,12 +2808,16 @@ static void ensureCoverFlags(){
   }
   g_cover_flags_ready=true; g_cover_flags_n=(int)g_games.size();
 }
-static void buildThumbs(){
+static void buildThumbs(){ if(!g_covers_on)return;   // 5.9.32-lab2: COVERS=OFF - nothing to decode
   int n=(int)g_games.size(); if(!n)return;
   uint16_t*tmp=(uint16_t*)ps_malloc((size_t)CAR_TILE*CAR_TILE*2);
   if(!tmp)return;
   carMicroInit();                          // 5.9.0: build the resident micro-thumb set in-line with the thumb pass
-  uint32_t lastDraw=0;
+  // 5.9.36-lab6: was every 100ms. Each redraw is a full-screen gfx_flush (~36ms)
+  // PLUS a gLog, which opens/appends/closes /gti.log on the SAME card the build
+  // is reading covers from. Over a 30-minute build that was ~18,000 flushes and
+  // ~18,000 file opens competing with the work. Now every 25 games, with an ETA.
+  uint32_t t0=millis(); int lastShown=-1;
   for(int i=0;i<n;i++){
     auto&g=g_games[i];
     if(!g.jpg_path.length()){String jpg;if(findJPGFor(g_files[g.first_file_idx],jpg))g.jpg_path=jpg;else g.jpg_path="?";}
@@ -2558,20 +2833,21 @@ static void buildThumbs(){
     if(need){ if(carDecodeTile(i,tmp)){carSaveThumb(i,tmp);haveTile=true;} }
     else     { haveTile=carLoadThumb(i,tmp); }
     if(haveTile)carMicroFromTile(i,tmp);
-    uint32_t nowMs=millis();
-    if(nowMs-lastDraw>100||i==n-1){
-      lastDraw=nowMs;
+    if(i-lastShown>=25||i==n-1){
+      lastShown=i;
+      if((i%200)==0||i==n-1)gLog("[thumbs] %d/%d %lums int=%u psram=%u\n",i+1,n,(unsigned long)(millis()-t0),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
       gfx_fillScreen(0x1082);
       gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
-      gLog("[thumbs] %d/%d int=%u psram=%u\n",i+1,n,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
       {const char*s=T(L_BUILDING);int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-50);gfx_print(s);}
       gfx_setTextSize(1);gfx_setTextColor(0x9BD6,0x1082);
       {String m=String(i+1)+" / "+String(n);int tw=gfx_textWidth(m);gfx_setCursor((gW-tw)/2,gH/2-22);gfx_print(m);}
       int bw2=gW-120,bx=60,by=gH/2;
       gfx_drawRect(bx,by,bw2,12,0x4A8A);
       gfx_fillRect(bx+2,by+2,(int)((long)(bw2-4)*(i+1)/n),8,0x07E0);
+      {String e=etaStr(millis()-t0,i+1,n);
+       if(e.length()){gfx_setTextColor(0xFC60,0x1082);int tw=gfx_textWidth(e);gfx_setCursor((gW-tw)/2,gH/2+16);gfx_print(e);}}
       gfx_setTextColor(0x4A8A,0x1082);
-      {const char*s=T(L_ONEOFF);int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2+26);gfx_print(s);}
+      {const char*s=T(L_ONEOFF);int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2+34);gfx_print(s);}
       gfx_flush();
     }
     if((i&7)==0)yield();
@@ -2606,6 +2882,52 @@ static uint32_t carGamesSig(){
     for(unsigned k=0;k<p.length();k++){h^=(uint8_t)p[k]; h*=16777619u;}}
   return h;
 }
+// ── 5.9.31-lab1 .nfocache — the sidecar results, persisted per side ─────────
+// Binary: [magic 'GTN1'][count][sig=carGamesSig()][reserved], then per game in g_games
+// order: [u8 flags][u16 len][len bytes of blurb]. Keyed by the SAME signature as the reel
+// micro cache, so an unchanged library reuses it and a rescan that changes the game set
+// rebuilds it. Warm boots therefore restore every sidecar answer with ZERO card I/O.
+#define NFOCACHE_MAGIC 0x47544E31u
+#define NFOF_MANUAL 0x01
+#define NFOF_HD     0x02
+static String nfoCachePath(){return g_mode==MODE_ADF?"/ADF/.nfocache":g_mode==MODE_DSK?"/DSK/.nfocache":"/GENERIC/.nfocache";}
+static void writeNfoCache(){ if(g_nocache)return;
+  File f=SD_MMC.open(nfoCachePath().c_str(),FILE_WRITE); if(!f)return;
+  uint32_t hdr[4]={NFOCACHE_MAGIC,(uint32_t)g_games.size(),carGamesSig(),0};
+  f.write((uint8_t*)hdr,16);
+  for(auto&g:g_games){
+    uint8_t fl=(g.has_manual?NFOF_MANUAL:0)|(g.is_hd?NFOF_HD:0);
+    uint32_t bl=g.blurb.length(); if(bl>(uint32_t)NFO_BLURB_MAX)bl=NFO_BLURB_MAX;
+    uint16_t L=(uint16_t)bl;
+    f.write(&fl,1); f.write((uint8_t*)&L,2); if(L)f.write((const uint8_t*)g.blurb.c_str(),L);
+  }
+  f.close();
+  gLog("[nfocache] wrote %d entries sig=%08X\n",(int)g_games.size(),(unsigned)carGamesSig());
+}
+static void writeNfoCacheIfChanged(){   // the signature guard: an unchanged library is not rewritten
+  File f=SD_MMC.open(nfoCachePath().c_str(),FILE_READ);
+  if(f){uint32_t hdr[4]; bool ok=(f.read((uint8_t*)hdr,16)==16); f.close();
+    if(ok&&hdr[0]==NFOCACHE_MAGIC&&(int)hdr[1]==(int)g_games.size()&&hdr[2]==carGamesSig())return;}
+  writeNfoCache();
+}
+static bool loadNfoCache(){ if(g_nocache)return false;
+  File f=SD_MMC.open(nfoCachePath().c_str(),FILE_READ); if(!f)return false;
+  uint32_t hdr[4]; if(f.read((uint8_t*)hdr,16)!=16){f.close();return false;}
+  if(hdr[0]!=NFOCACHE_MAGIC||(int)hdr[1]!=(int)g_games.size()||hdr[2]!=carGamesSig()){f.close();
+    gLog("[nfocache] stale/mismatched - sidecars fall back to on-demand reads\n"); return false;}
+  std::vector<char>buf(NFO_BLURB_MAX+1);
+  for(auto&g:g_games){
+    uint8_t fl=0; uint16_t L=0;
+    if(f.read(&fl,1)!=1||f.read((uint8_t*)&L,2)!=2){f.close();return false;}
+    if(L>(uint16_t)NFO_BLURB_MAX){f.close();return false;}
+    if(L){ int r=f.read((uint8_t*)buf.data(),L); if(r!=(int)L){f.close();return false;} buf[L]=0; g.blurb=String(buf.data()); }
+    else g.blurb="";
+    g.has_manual=(fl&NFOF_MANUAL)!=0; g.is_hd=(fl&NFOF_HD)!=0; g.nfo_done=true;
+  }
+  f.close();
+  gLog("[nfocache] loaded %d entries - zero sidecar I/O this boot\n",(int)g_games.size());
+  return true;
+}
 static void carMicroFree(){ if(car_micro_block){free(car_micro_block);car_micro_block=NULL;} g_car_micro_dim=0; g_car_micro_n=0; }
 static void carMicroInit(){
   carMicroFree();
@@ -2628,7 +2950,7 @@ static inline uint16_t* carMicro(int gi){
   if(!car_micro_block||gi<0||gi>=g_car_micro_n)return NULL;
   return car_micro_block+(size_t)gi*g_car_micro_dim*g_car_micro_dim;
 }
-static bool carMicroLoad(){
+static bool carMicroLoad(){ if(g_nocache)return false;
   if(!car_micro_block)return false;
   File f=SD_MMC.open("/.gti_micro.pk","r"); if(!f)return false;
   uint32_t hdr[4]; if(f.read((uint8_t*)hdr,16)!=16){f.close();return false;}
@@ -2637,7 +2959,7 @@ static bool carMicroLoad(){
   size_t got=f.read((uint8_t*)car_micro_block,want); f.close();
   return got==want;
 }
-static void carMicroSave(){
+static void carMicroSave(){ if(g_nocache)return;
   if(!car_micro_block)return;
   File f=SD_MMC.open("/.gti_micro.pk",FILE_WRITE); if(!f)return;
   uint32_t hdr[4]={0x47544D31u,(uint32_t)g_car_micro_dim,(uint32_t)g_car_micro_n,carGamesSig()};
@@ -2648,20 +2970,23 @@ static void carMicroSave(){
 static void carMicroBuild(){
   int n=g_car_micro_n; if(!n||!car_micro_block)return;
   uint16_t*tmp=(uint16_t*)ps_malloc((size_t)CAR_TILE*CAR_TILE*2); if(!tmp)return;
-  uint32_t lastDraw=0;
+  uint32_t t0=millis(); int lastShown=-1;        // 5.9.36-lab6: count-driven, was every 120ms
   for(int i=0;i<n;i++){
     SD_LOCK();
     bool ok=carLoadThumb(i,tmp); if(!ok)ok=carDecodeTile(i,tmp);
     SD_UNLOCK();
     if(ok)carMicroFromTile(i,tmp);
-    uint32_t nowMs=millis();
-    if(nowMs-lastDraw>120||i==n-1){ lastDraw=nowMs;
+    if(i-lastShown>=25||i==n-1){ lastShown=i;
       gfx_fillScreen(0x1082);
       gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
       {const char*s="Preparing covers";int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-40);gfx_print(s);}
+      gfx_setTextSize(1);gfx_setTextColor(0x9BD6,0x1082);
+      {String m=String(i+1)+" / "+String(n);int tw=gfx_textWidth(m);gfx_setCursor((gW-tw)/2,gH/2-16);gfx_print(m);}
       int bw2=gW-120,bx=60,by=gH/2;
       gfx_drawRect(bx,by,bw2,12,0x4A8A);
       gfx_fillRect(bx+2,by+2,(int)((long)(bw2-4)*(i+1)/n),8,0x07E0);
+      {String e=etaStr(millis()-t0,i+1,n);
+       if(e.length()){gfx_setTextColor(0xFC60,0x1082);int tw=gfx_textWidth(e);gfx_setCursor((gW-tw)/2,gH/2+20);gfx_print(e);}}
       gfx_flush();
     }
     if((i&15)==0)yield();
@@ -2677,11 +3002,64 @@ static void carMicroEnsure(){
   if(!hit)carMicroBuild();
 }
 
+// 5.9.33-lab3 — THE reel bottleneck, and it has nothing to do with covers.
+//
+// The old body did, for EVERY pixel: two 32-bit divides, a call to gfx_drawPixel,
+// four clip compares, a call to fb_setPixel, a rotation switch, a swap16 and a
+// store. ~46,000 of those per frame (150x150 centre + four side tiles). Worse: in
+// the default landscape rotation a virtual ROW maps to a framebuffer COLUMN, so
+// consecutive writes were 640 bytes apart in a 307 KB PSRAM framebuffer — a cache
+// line fetched, two bytes written, evicted, and never reused. A miss on literally
+// every pixel, every frame, whether the tile held artwork or flat grey.
+//
+// Now: the two axis maps are built once (w+h divides instead of w*h*2), and the
+// INNER loop walks whichever axis is contiguous in the physical framebuffer for
+// the current rotation, writing straight into the row. Same pixels, same output.
+static int g_cb_sxm[CAR_TILE+8],g_cb_sym[CAR_TILE+8];   // UI core only — drawCarousel is never re-entered
 static void carBlit(uint16_t*tile,int srcDim,int cx,int cy,int w,int h,int dim){
+  if(w<=0||h<=0||srcDim<=0)return;
   int x0=cx-w/2,y0=cy-h/2;
-  for(int dy=0;dy<h;dy++){int sy=dy*srcDim/h;
-    for(int dx=0;dx<w;dx++){int sx=dx*srcDim/w;
-      gfx_drawPixel(x0+dx,y0+dy,carDim(tile?tile[sy*srcDim+sx]:COL_BAR,dim));}}
+  if(w>CAR_TILE+8||h>CAR_TILE+8||!framebuffer){          // paranoia fallback: the old, slow, always-correct path
+    for(int dy=0;dy<h;dy++){int sy=dy*srcDim/h;
+      for(int dx=0;dx<w;dx++){int sx=dx*srcDim/w;
+        gfx_drawPixel(x0+dx,y0+dy,carDim(tile?tile[sy*srcDim+sx]:COL_BAR,dim));}}
+    return;
+  }
+  int dx0=max(0,g_clip_x0-x0),dx1=min(w,g_clip_x1-x0);   // clip once, in virtual space
+  int dy0=max(0,g_clip_y0-y0),dy1=min(h,g_clip_y1-y0);
+  if(dx0>=dx1||dy0>=dy1)return;
+  for(int dx=dx0;dx<dx1;dx++)g_cb_sxm[dx]=(dx*srcDim)/w;
+  for(int dy=dy0;dy<dy1;dy++)g_cb_sym[dy]=(dy*srcDim)/h;
+  const uint16_t flat=swap16(carDim(COL_BAR,dim));
+  if(g_rot==0||g_rot==2){                                // landscape: virtual Y is the contiguous axis
+    for(int dx=dx0;dx<dx1;dx++){
+      int vx=x0+dx,sx=g_cb_sxm[dx];
+      int py=(g_rot==0)?(LCD_HEIGHT-1-vx):vx;
+      if((unsigned)py>=(unsigned)LCD_HEIGHT)continue;
+      uint16_t*row=&framebuffer[(size_t)py*LCD_WIDTH];
+      if(!tile){ for(int dy=dy0;dy<dy1;dy++){int vy=y0+dy;int px=(g_rot==0)?vy:(LCD_WIDTH-1-vy);
+                   if((unsigned)px<(unsigned)LCD_WIDTH)row[px]=flat;} continue; }
+      for(int dy=dy0;dy<dy1;dy++){
+        int vy=y0+dy,px=(g_rot==0)?vy:(LCD_WIDTH-1-vy);
+        if((unsigned)px>=(unsigned)LCD_WIDTH)continue;
+        row[px]=swap16(carDim(tile[(size_t)g_cb_sym[dy]*srcDim+sx],dim));
+      }
+    }
+  }else{                                                 // portrait: virtual X is the contiguous axis
+    for(int dy=dy0;dy<dy1;dy++){
+      int vy=y0+dy;size_t so=(size_t)g_cb_sym[dy]*srcDim;
+      int py=(g_rot==1)?vy:(LCD_HEIGHT-1-vy);
+      if((unsigned)py>=(unsigned)LCD_HEIGHT)continue;
+      uint16_t*row=&framebuffer[(size_t)py*LCD_WIDTH];
+      if(!tile){ for(int dx=dx0;dx<dx1;dx++){int vx=x0+dx;int px=(g_rot==1)?vx:(LCD_WIDTH-1-vx);
+                   if((unsigned)px<(unsigned)LCD_WIDTH)row[px]=flat;} continue; }
+      for(int dx=dx0;dx<dx1;dx++){
+        int vx=x0+dx,px=(g_rot==1)?vx:(LCD_WIDTH-1-vx);
+        if((unsigned)px>=(unsigned)LCD_WIDTH)continue;
+        row[px]=swap16(carDim(tile[so+g_cb_sxm[dx]],dim));
+      }
+    }
+  }
 }
 
 // The d6 overlay: pips while rolling, final face at rest — or "23" on the lucky roll.
@@ -2702,8 +3080,19 @@ static void carDrawDie(){
 }
 
 static void drawCarousel(){
+  uint32_t _rp_f0=micros();
+  if(g_reelprof&&g_rp_frames&&millis()-g_rp_t0>=1500){   // 5.9.33-lab3: where did the frame actually go?
+    uint32_t f=g_rp_frames,span=millis()-g_rp_t0;
+    unsigned long fps10=span?(unsigned long)((10000UL*f)/span):0UL;   // tenths - newlib-nano printf may have no %f
+    gLog("[reel] %lu frames/%lums = %lu.%lu fps | frame draw %luus (clear %lu blit %lu sav %lu) + flush %luus\n",
+         (unsigned long)f,(unsigned long)span,fps10/10,fps10%10,
+         (unsigned long)(g_rp_draw/f),(unsigned long)(g_rp_clear/f),(unsigned long)(g_rp_blit/f),
+         (unsigned long)(g_rp_sav/f),(unsigned long)(g_rp_flush/f));
+    g_rp_frames=g_rp_draw=g_rp_clear=g_rp_blit=g_rp_sav=g_rp_flush=0; g_rp_t0=millis();
+  }
+  if(!g_rp_t0)g_rp_t0=millis();
   drawStatusBar();
-  gfx_fillRect(0,STATUS_H,VW,VH-STATUS_H-BOTTOM_H,COL_BG);
+  {uint32_t _c0=micros(); gfx_fillRect(0,STATUS_H,VW,VH-STATUS_H-BOTTOM_H,COL_BG); g_rp_clear+=micros()-_c0;}
   int n=carN();
   int ccx=VW/2, ccy=STATUS_H+12+CAR_TILE/2;              // center cover: y 32..182
   g_car_disk_n=0;                                        // reset reel disk-button rect each frame; set below if multi-disk
@@ -2720,9 +3109,18 @@ static void drawCarousel(){
     bool moving=(g_car_touch&&g_car_moved)||g_car_coast||g_car_spin;
     int maxOff=(n>=5)?2:((n>=2)?1:0);
     // v4.8.0: save-copy badge for the center game (checked once per center change)
+    // 5.9.33-lab3: ...but ONLY when the reel is settled. savExistsFor() is an
+    // SD_MMC.exists() and it almost always MISSES, which on FAT costs a full walk
+    // of that folder — and the centre game changes on nearly every frame of a
+    // flip, so this was one whole directory walk PER FRAME. It is the only piece
+    // of card I/O left in the reel path, and it is why the reel stayed slow with
+    // cover art switched off entirely. The badge now appears when you stop.
     static int carSavSel=-1;static bool g_car_hasSav=false;
-    {int cgi=g_car_list[carWrap(ci)];
-     if(carSavSel!=cgi){carSavSel=cgi;g_car_hasSav=(g_saves_mode==1)&&savExistsFor(g_files[g_games[cgi].first_file_idx]);}}
+    if(!moving){uint32_t _s0=micros();
+     int cgi=g_car_list[carWrap(ci)];
+     if(carSavSel!=cgi){carSavSel=cgi;g_car_hasSav=(g_saves_mode==1)&&savExistsFor(g_files[g_games[cgi].first_file_idx]);}
+     g_rp_sav+=micros()-_s0;}
+    const bool showSav=(!moving)&&g_car_hasSav;
     // Warm the cache CENTER-FIRST when settled (painter's order would decode
     // the side covers before the star of the show — backwards for the eye).
     if(!moving){
@@ -2741,6 +3139,14 @@ static void drawCarousel(){
       float squash=1.0f-ar*0.20f;if(squash<0.55f)squash=0.55f;
       int h=(int)(CAR_TILE*scale),w=(int)(CAR_TILE*scale*squash);
       int dim=(ar<0.5f)?0:((ar<1.6f)?1:2);
+      {uint32_t _b0=micros();
+      if(!g_covers_on){
+        // 5.9.33-lab3: COVERS=OFF now really means OFF. It used to still fetch a
+        // tile (carTile hands back its COL_BAR-prefilled buffer even when the
+        // decode fails) and run the full per-pixel scaler over it — so the reel
+        // paid the entire cover-rendering cost to draw flat grey. A rect is a rect.
+        gfx_fillRect(x-w/2,ccy-h/2,w,h,carDim(COL_BAR,dim));
+      }else{
       uint16_t*tile=carTile(gi,!moving&&ar<1.6f);
       if(tile){ carBlit(tile,CAR_TILE,x,ccy,w,h,dim);
 #if CAR_BENCH
@@ -2751,6 +3157,8 @@ static void drawCarousel(){
         if(m)g_bench_micro++; else g_bench_square++;
 #endif
       }
+      }
+      g_rp_blit+=micros()-_b0;}
       auto&gm=g_games[gi];
       bool isLd=(g_loaded&&g_loaded_game_idx==gi);
       if(g_reelborder){   // MasterTelly CR: REELBORDER=OFF drops the per-cover frame for a clean, frameless reel
@@ -2765,7 +3173,7 @@ static void drawCarousel(){
       // favourite star on the center cover
       if(ar<0.5f&&gm.fav)gfx_fillStar(x+w/2-13,ccy-h/2+13,9.0f,COL_STAR);
       // v4.8.0: floppy icon on the center cover — a save-copy exists for this game
-      if(ar<0.5f&&g_car_hasSav)drawSaveFloppy(x-w/2+4,ccy-h/2+4);
+      if(ar<0.5f&&showSav)drawSaveFloppy(x-w/2+4,ccy-h/2+4);
     }
     // center title + info
     int gi=g_car_list[carWrap(ci)];
@@ -2778,10 +3186,13 @@ static void drawCarousel(){
     gfx_setCursor((VW-gfx_textWidth(t))/2,190);gfx_print(t);
     // lazy NFO blurb (same pattern as the cover panel, keyed to the center game)
     static int carNfoSel=-1;static String carBlurb="";
-    if(carNfoSel!=gi){carNfoSel=gi;carBlurb="";String nfoP,nT,nB;
-      if(findNFOFor(g_files[game.first_file_idx],nfoP)){File nf=SD_MMC.open(nfoP,FILE_READ);
-        if(nf){String txt;while(nf.available()&&txt.length()<512)txt+=(char)nf.read();nf.close();parseNFO(txt,nT,nB);
-          if(nT.length()&&game.name==basenameNoExt(filenameOnly(g_files[game.first_file_idx])))game.name=nT;carBlurb=nB;}}}
+    if(carNfoSel!=gi){carNfoSel=gi;carBlurb="";
+      if(game.nfo_done)carBlurb=game.blurb;   // 5.9.31-lab1: straight out of PSRAM
+      else{String nfoP,nT,nB;
+        if(findNFOFor(g_files[game.first_file_idx],nfoP)){File nf=SD_MMC.open(nfoP,FILE_READ);
+          if(nf){char _nb[513];int _nr=nf.read((uint8_t*)_nb,512);if(_nr<0)_nr=0;_nb[_nr]=0;nf.close();String txt(_nb);parseNFO(txt,nT,nB);
+            if(nT.length()&&game.name==basenameNoExt(filenameOnly(g_files[game.first_file_idx])))game.name=nT;carBlurb=nB;}}
+        game.blurb=carBlurb;game.nfo_done=true;}}
     if(game.disk_count>1){
       // v5.7.x: reel disk buttons — pick a disk (unloaded) or clean-swap to it (loaded), without leaving the reel.
       int nd=game.disk_count, dh=20, dy=VH-BOTTOM_H-42-26;
@@ -2868,6 +3279,7 @@ static void drawCarousel(){
     gfx_setCursor(sx+ds+4,y+(BOTTOM_H-16)/2);gfx_print(T(L_ROLL)); }
   }
   if(g_car_dieShow&&carN()>0)carDrawDie();   // dice overlay rides on top of everything
+  g_rp_draw+=micros()-_rp_f0; g_rp_frames++;
 }
 
 // v4.8.6: remember the last view for CAROUSEL=LAST — a tiny 1-char file beside
@@ -3197,6 +3609,8 @@ static bool doLoadSelected(const String&adfPath){
     gfx_setTextColor(COL_LIT,COL_PANEL);
     gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB");
     gfx_setCursor(6,STATUS_H+44);gfx_print(T(L_MAX_DD));
+    gfx_setTextColor(COL_DIM,COL_PANEL);
+    gfx_setCursor(6,STATUS_H+58);gfx_print("raise DISKMAXKB in CONFIG.TXT");   // 5.9.35
     gfx_flush();delay(1800);drawFullUI();gfx_flush();return false;
   }
   if(g_mode==MODE_GEN){String gon=filenameOnly(adfPath);build_volume(gon.c_str(),fsz);}   // v5.2: keep the real name+ext so FlashFloppy detects the format
@@ -3775,7 +4189,10 @@ static void doRescan(){
   { bool wl=g_wireless_mode; selfHealConfig(); loadConfig(); g_wireless_mode=wl; relayout(); }
   // Rescan with animation
   g_files.clear();g_games.clear();
-  heap_caps_malloc_extmem_enable(16);listImages(SD_MMC,g_files);buildGameList();buildThumbs();heap_caps_malloc_extmem_enable(4096);applyStats();buildActiveLetters();scanScreensaver();
+  heap_caps_malloc_extmem_enable(16);listImages(SD_MMC,g_files);buildGameList();buildThumbs();
+  writeNfoCacheIfChanged();   // 5.9.31-lab1: persist the freshly harvested sidecars
+  g_nfoharvest.clear();g_nfoharvest.shrink_to_fit();g_manualset.clear();g_manualset.shrink_to_fit();g_hdset.clear();g_hdset.shrink_to_fit();
+  heap_caps_malloc_extmem_enable(4096);applyStats();buildActiveLetters();scanScreensaver();
   g_sel=0;g_scroll=0;g_disk_sel=0;g_disk_page=0;g_scrollPx=0;g_az_page=0;g_inertia_on=false;
   if(!g_games.empty())setActiveLetter(bucketOf(g_games[0].name));
   drawFullUI();gfx_flush();
@@ -4720,8 +5137,8 @@ void setup(){
   Serial.printf("[BOOT] rst=%d magic=%08X sdAccess=%d\n",(int)esp_reset_reason(),(unsigned)g_sdaccess_magic,(int)sdAccessReq);
   applyTheme(0);displayInit();touchInit();
   gfx_fillScreen(TFT_BLACK);gfx_flush();
-  g_disk=(uint8_t*)ps_malloc(TOTAL_SECTORS*512);if(!g_disk){gfx_setTextColor(TFT_RED,TFT_BLACK);gfx_setCursor(8,160);gfx_print("RAM ALLOC FAILED");gfx_flush();while(1)delay(1000);}
-  build_volume(getOutputFilename(),g_mode==MODE_ADF?ADF_DEFAULT_SIZE:64);
+  // 5.9.35: the RAM disk is allocated AFTER the config is read (see below) so
+  // DISKMAXKB= can size it. Nothing between here and there touches g_disk.
   SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0);delay(100);
   bool sdok=SD_MMC.begin("/sdcard",true,false,20000);if(!sdok){delay(200);sdok=SD_MMC.begin("/sdcard",true,false,20000);}
   if(sdok){
@@ -4737,19 +5154,36 @@ void setup(){
     }
     espnowSetScanCap(g_dongle_cap);
     relayout();                 // apply ROTATE/COMPACT from config before first draw
+    gLog("[panel] strips=%d (cap %d) flushdelay=%dus  [lab3: STRIPROWS= / FLUSHUS=]\n",g_strip_rows,g_strip_cap,g_flush_us);
     gLog("\n=== BOOT %s === reset=%d boot=%u int=%u psram=%u ===\n",FW_VERSION,(int)esp_reset_reason(),(unsigned)g_bootCount,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
     heap_caps_malloc_extmem_enable(16);   // 5.8.9: library index/list onto idle PSRAM, off the ~180KB internal SRAM
     uint32_t _tscan=millis();
     listImages(SD_MMC,g_files);
+    uint32_t _tscanned=millis();
+    gLog("[boot] scan %lums for %d files\n",(unsigned long)(_tscanned-_tscan),(int)g_files.size());
     if(!readGameCache()){buildGameList();buildThumbs();}   // fresh card: build reel thumbs up-front
+    // 5.9.31-lab1 sidecars. Walked the SD this boot? the harvest is authoritative: fold it in and
+    // persist (the sig guard skips an unchanged rewrite). buildGameList already folded on the cold
+    // path; this also covers warm-gamecache-but-index-rebuilt. No walk -> restore from .nfocache.
+    if(g_sidecars_harvested){ if(assignSidecarsFromHarvest())writeGameCache(); writeNfoCacheIfChanged(); }
+    else loadNfoCache();
+    g_nfoharvest.clear(); g_nfoharvest.shrink_to_fit();   // harvest has done its job — give the PSRAM back
+    g_manualset.clear();  g_manualset.shrink_to_fit();
+    g_hdset.clear();      g_hdset.shrink_to_fit();
     heap_caps_malloc_extmem_enable(4096);   // restore: runtime allocations back to internal (fast UI)
-    gLog("[boot] scan+build %lums int=%u psram=%u\n",(unsigned long)(millis()-_tscan),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+    gLog("[boot] build %lums | scan+build %lums int=%u psram=%u\n",(unsigned long)(millis()-_tscanned),(unsigned long)(millis()-_tscan),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
     applyStats();
     buildActiveLetters();
     if(!g_games.empty())setActiveLetter(bucketOf(g_games[0].name));
     if(g_lastused)restoreLastUsed();   // LASTUSED=ON: jump the selection back to the game loaded before power-off
     scanScreensaver();
   } else {gfx_setTextColor(TFT_RED,TFT_BLACK);gfx_setCursor(8,200);gfx_print(T(L_SD_MOUNT_FAIL));gfx_flush();delay(2000);relayout();}   // no card: still init layout so INFO/LOAD DIAG work
+  // 5.9.35: RAM disk sized from DISKMAXKB (default when there is no card to read).
+  if(!diskAlloc()){gfx_setTextColor(TFT_RED,TFT_BLACK);gfx_setCursor(8,160);gfx_print("RAM ALLOC FAILED");gfx_flush();while(1)delay(1000);}
+  gLog("[ramdisk] max image %luKB -> %lu sectors, %u sec/clus, %lu bytes PSRAM (free %u)\n",
+       (unsigned long)g_img_max_kb,(unsigned long)TOTAL_SECTORS,(unsigned)SECTORS_PER_CLUSTER,
+       (unsigned long)TOTAL_SECTORS*512UL,(unsigned)ESP.getFreePsram());
+  build_volume(getOutputFilename(),g_mode==MODE_ADF?ADF_DEFAULT_SIZE:64);
   if(g_wireless_mode && !g_link_home && !sdAccessReq){espnowBegin();g_espnow_started=true;}   // v5.1: don't arm the radio when booting into SD access — no stray FATFS writes while the PC holds the card
   if(g_cracktro>=0)drawCracktro(g_cracktro);   // CRACKTRO=OFF/NONE (-1) skips the boot demo entirely
   USB.onEvent(usbEventCB);
@@ -4999,7 +5433,13 @@ static void infoAction(uint8_t act){
       drawInfoFull(); break;
     case IA_DIAGDISP: g_diagdisp=!g_diagdisp; saveConfigKey("DIAGDISP", g_diagdisp?"ON":"OFF"); drawInfoFull(); break;   // live diagnostic overlay ON/OFF
     case IA_REELBORDER: g_reelborder=!g_reelborder; saveConfigKey("REELBORDER", g_reelborder?"ON":"OFF"); drawInfoFull(); break;   // MasterTelly CR: reel cover frame ON/OFF (applies next reel draw)
-    case IA_LASTUSED: g_lastused=!g_lastused; saveConfigKey("LASTUSED", g_lastused?"ON":"OFF"); drawInfoFull(); break;   // restore last-loaded game on boot ON/OFF
+    case IA_LASTUSED: g_lastused=!g_lastused; saveConfigKey("LASTUSED", g_lastused?"ON":"OFF"); drawInfoFull(); break;
+    case IA_NOCACHE: g_nocache=!g_nocache; saveConfigKey("NOCACHE", g_nocache?"ON":"OFF"); drawInfoFull(); break;   // takes effect on the next boot/rescan
+    case IA_COVERS:  g_covers_on=!g_covers_on; saveConfigKey("COVERS", g_covers_on?"ON":"OFF"); drawInfoFull(); break;
+    case IA_REELPROF: g_reelprof=!g_reelprof; saveConfigKey("REELPROF", g_reelprof?"ON":"OFF");
+                      g_rp_frames=g_rp_draw=g_rp_clear=g_rp_blit=g_rp_sav=g_rp_flush=0; g_rp_t0=millis();
+                      drawInfoFull(); break;   // 5.9.33-lab3: live frame breakdown into /gti.log
+    case IA_LISTTILE: g_listtile=!g_listtile; saveConfigKey("LISTTILE", g_listtile?"ON":"OFF"); drawInfoFull(); break;   // 5.9.34-lab4: list cover from the reel tile vs a fresh JPEG decode
     case IA_SSMODE:
       if(g_ss_slides){ g_ss_slides=false; g_ss_matrix=false; saveConfigKey("SSMODE","BOUNCE"); }
       else if(!g_ss_matrix){ g_ss_matrix=true; g_ss_slides=false; saveConfigKey("SSMODE","MATRIX"); }
