@@ -35,7 +35,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.36-lab6-JC3248"
+#define FW_VERSION "5.9.37-lab7-JC3248"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -592,7 +592,334 @@ static void fat12_set(uint8_t*fat,uint16_t cl,uint16_t v){uint32_t i=(cl*3)/2;if
 static void build_fat(uint8_t*fat,uint32_t fsz){memset(fat,0,SECTORS_PER_FAT*512);fat[0]=0xF8;fat[1]=0xFF;fat[2]=0xFF;uint32_t clb=(uint32_t)SECTORS_PER_CLUSTER*512;uint32_t need=(fsz+clb-1)/clb;for(uint32_t i=0;i<need;i++)fat12_set(fat,2+i,i==need-1?0x0FFF:3+i);}
 static void build_root(uint8_t*root,const char*name,uint32_t fsz){memset(root,0,ROOT_DIR_SECTORS*512);char n[8],e[3];memset(n,' ',8);memset(e,' ',3);char tmp[32];size_t L=strlen(name);if(L>31)L=31;memcpy(tmp,name,L);tmp[L]=0;for(size_t i=0;i<L;i++)tmp[i]=toupper(tmp[i]);const char*dot=strrchr(tmp,'.');size_t nl=dot?(dot-tmp):strlen(tmp);size_t el=dot?strlen(dot+1):0;for(size_t i=0;i<nl&&i<8;i++)n[i]=tmp[i];for(size_t i=0;i<el&&i<3;i++)e[i]=dot[1+i];memcpy(root,n,8);memcpy(root+8,e,3);root[11]=0x20;wr16(root,26,2);wr32(root,28,fsz);}
 static void build_volume(const char*outName,uint32_t fsz){if(fsz>MAX_FILE_BYTES)fsz=MAX_FILE_BYTES;memset(g_disk,0,TOTAL_SECTORS*512);build_boot_sector(g_disk);build_fat(g_disk+RESERVED_SECTORS*512,fsz);build_root(g_disk+(RESERVED_SECTORS+SECTORS_PER_FAT)*512,outName,fsz);}
-static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n){uint32_t s=lba*512+off;if(s+n>TOTAL_SECTORS*512)return 0;memcpy(buf,g_disk+s,n);return n;}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ALIAS DISK — present an SD file to the Gotek without copying it (5.9.37)
+// ────────────────────────────────────────────────────────────────────────────
+// The RAM disk can only ever hold DISKMAXKB, so anything larger used to be
+// refused outright ("TOO BIG"). Instead we now build ONLY the FAT12 metadata in
+// RAM and remap every read past DATA_LBA to the file's own sectors on the card,
+// via its cluster chain. Nothing is copied, so the image size stops mattering.
+//
+// This is a block-level remap — a loop device, not a symlink. FAT has no such
+// concept; we are lying to the host about where the data area lives.
+//
+// Proven on hardware in firmware/GTi_AliasTest: the mapped image hashed
+// byte-identical to the original (SHA-256 vs certutil), 5,000+ operations with
+// zero errors while the card was concurrently being walked, on FAT16 and FAT32.
+//
+// WRITES ARE REFUSED while aliased. The image is not ours to modify — saving
+// needs the RAM-disk scratch, which is what DISKMAXKB now really bounds.
+// ════════════════════════════════════════════════════════════════════════════
+
+#define AL_SEC 512
+static uint8_t g_sbuf[AL_SEC];                 // one-sector scratch for FS parsing
+
+struct FsInfo {
+  bool     ok=false;
+  bool     exfat=false;                     // detected but not supported in this build
+  uint32_t part_lba=0;
+  uint16_t sec_per_clus=0;
+  uint32_t fat_lba=0, data_lba=0, root_clus=0;
+  uint32_t sec_per_fat=0;
+  uint8_t  num_fats=0;
+  uint8_t  fat_type=0;                      // 12 / 16 / 32
+  uint16_t root_ents=0;                     // FAT12/16 only
+  uint32_t root_lba=0, root_secs=0;         // FAT12/16 fixed root area
+  uint32_t clusters=0;                      // decides the type - see fsMount
+  char     type[10]={0};
+};
+static FsInfo g_fs;
+// Declared here, with the parser, because pathResolve() below is the first user.
+// (They were down in PART 2 next to the volume state, which is AFTER this point.)
+static String   g_fail_seg="";      // which path component pathResolve choked on
+
+static inline uint16_t rd16(const uint8_t*b,int o){return (uint16_t)(b[o]|(b[o+1]<<8));}
+static inline uint32_t rd32(const uint8_t*b,int o){return (uint32_t)b[o]|((uint32_t)b[o+1]<<8)|((uint32_t)b[o+2]<<16)|((uint32_t)b[o+3]<<24);}
+
+// Sector 0: either an MBR (partition table) or the BPB itself on a superfloppy card.
+static bool mbrFind(uint32_t*partLba){
+  if(!SD_MMC.readRAW(g_sbuf,0))return false;
+  if(g_sbuf[510]!=0x55||g_sbuf[511]!=0xAA)return false;
+  // A BPB in sector 0 starts with a jump instruction; a partition table does not.
+  // ORDER MATTERS: a real MBR never begins with a jump instruction, but a BPB
+  // always does. Checking the partition table first would happily read boot code
+  // at offset 446 as a bogus partition entry on an unpartitioned card.
+  if(g_sbuf[0]==0xEB||g_sbuf[0]==0xE9){*partLba=0;return true;}   // superfloppy
+  for(int i=0;i<4;i++){
+    const uint8_t*e=g_sbuf+446+16*i;
+    if(e[4]==0)continue;                    // empty partition slot
+    uint32_t lba=rd32(e,8);
+    if(lba){*partLba=lba;return true;}
+  }
+  return false;
+}
+
+static bool fsMount(){
+  g_fs=FsInfo();
+  uint32_t p=0;
+  if(!mbrFind(&p))return false;
+  g_fs.part_lba=p;
+  if(!SD_MMC.readRAW(g_sbuf,p))return false;
+  if(!memcmp(g_sbuf+3,"EXFAT   ",8)){ g_fs.exfat=true; strcpy(g_fs.type,"exFAT"); return false; }
+  uint16_t bps=rd16(g_sbuf,11);
+  if(bps!=AL_SEC)return false;                 // 4K-sector cards are out of scope here
+  g_fs.sec_per_clus=g_sbuf[13];
+  uint16_t reserved=rd16(g_sbuf,14);
+  g_fs.num_fats=g_sbuf[16];
+  uint16_t spf16=rd16(g_sbuf,22);
+  g_fs.sec_per_fat=spf16?spf16:rd32(g_sbuf,36);
+  g_fs.root_ents=rd16(g_sbuf,17);
+  uint16_t tot16=rd16(g_sbuf,19);
+  uint32_t totSec=tot16?tot16:rd32(g_sbuf,32);
+  if(!g_fs.sec_per_clus||!g_fs.sec_per_fat||!totSec||!g_fs.num_fats)return false;
+  g_fs.fat_lba  = p+reserved;
+  g_fs.root_secs= ((uint32_t)g_fs.root_ents*32+AL_SEC-1)/AL_SEC;
+  g_fs.root_lba = g_fs.fat_lba+(uint32_t)g_fs.num_fats*g_fs.sec_per_fat;   // FAT12/16 fixed root
+  g_fs.data_lba = g_fs.root_lba+g_fs.root_secs;                            // FAT32: root_secs==0
+  // The ONLY correct way to tell FAT12/16/32 apart is the cluster count. Every
+  // other method (the "FAT16   " string in the BPB, the partition type byte) is
+  // documented as unreliable and is wrong on real cards.
+  uint32_t dataSec=totSec-(reserved+(uint32_t)g_fs.num_fats*g_fs.sec_per_fat+g_fs.root_secs);
+  g_fs.clusters=dataSec/g_fs.sec_per_clus;
+  g_fs.fat_type=(g_fs.clusters<4085)?12:((g_fs.clusters<65525)?16:32);
+  if(g_fs.fat_type==32){
+    g_fs.root_clus=rd32(g_sbuf,44);
+    if(g_fs.root_clus<2)return false;
+    strcpy(g_fs.type,"FAT32");
+  }else{
+    g_fs.root_clus=0;                        // 0 means "the fixed root area", not "invalid"
+    strcpy(g_fs.type,g_fs.fat_type==16?"FAT16":"FAT12");
+  }
+  g_fs.ok=true;
+  return true;
+}
+
+static inline uint32_t clusLba(uint32_t c){ return g_fs.data_lba+(c-2)*g_fs.sec_per_clus; }
+static inline bool isEoc(uint32_t c){
+  return (g_fs.fat_type==32)?(c>=0x0FFFFFF8u):((g_fs.fat_type==16)?(c>=0xFFF8u):(c>=0x0FF8u));
+}
+// Next cluster in the chain, for whichever FAT width this card uses.
+static uint32_t fatNext(uint32_t c){
+  if(g_fs.fat_type==32){
+    uint32_t off=c*4, lba=g_fs.fat_lba+off/AL_SEC;
+    if(!SD_MMC.readRAW(g_sbuf,lba))return 0x0FFFFFFF;
+    return rd32(g_sbuf,off%AL_SEC)&0x0FFFFFFF;
+  }
+  if(g_fs.fat_type==16){
+    uint32_t off=c*2, lba=g_fs.fat_lba+off/AL_SEC;
+    if(!SD_MMC.readRAW(g_sbuf,lba))return 0xFFFFu;
+    return rd16(g_sbuf,off%AL_SEC);
+  }
+  // FAT12: entries are 1.5 bytes and can STRADDLE a sector boundary, so read two.
+  static uint8_t two[AL_SEC*2];
+  uint32_t off=c+(c>>1), lba=g_fs.fat_lba+off/AL_SEC, so=off%AL_SEC;
+  if(!SD_MMC.readRAW(two,lba))return 0x0FFFu;
+  if(!SD_MMC.readRAW(two+AL_SEC,lba+1))memset(two+AL_SEC,0,AL_SEC);
+  uint16_t v=(uint16_t)(two[so]|(two[so+1]<<8));
+  return (c&1)?(uint32_t)(v>>4):(uint32_t)(v&0x0FFFu);
+}
+// Walk a directory one sector at a time, hiding the FAT32-chain vs FAT12/16-fixed
+// -root difference. dirClus==0 means the fixed root area. Returns 0 at the end.
+static uint32_t dirNextSector(uint32_t dirClus,uint32_t*clus,uint32_t*secInClus,uint32_t*rootLeft){
+  if(dirClus==0){
+    if(*rootLeft==0)return 0;
+    uint32_t lba=g_fs.root_lba+(g_fs.root_secs-*rootLeft);
+    (*rootLeft)--;
+    return lba;
+  }
+  if(*clus<2||isEoc(*clus))return 0;
+  uint32_t lba=clusLba(*clus)+*secInClus;
+  (*secInClus)++;
+  if(*secInClus>=g_fs.sec_per_clus){ *secInClus=0; *clus=fatNext(*clus); }
+  return lba;
+}
+
+// ── long-filename reconstruction ────────────────────────────────────────────
+// SD_MMC hands us long names, so matching on the 8.3 short name is not enough.
+// LFN entries precede their short entry in reverse order, 13 UTF-16 chars each.
+static void lfnChars(const uint8_t*e,char*out13){
+  static const int offs[13]={1,3,5,7,9,14,16,18,20,22,24,28,30};
+  for(int i=0;i<13;i++){ uint16_t w=rd16(e,offs[i]); out13[i]=(w==0||w==0xFFFF)?0:(w<128?(char)w:'?'); }
+}
+
+// Find `want` inside the directory that starts at cluster `dirClus`
+// (dirClus==0 means the FAT16 fixed root, which this build does not walk).
+// NOTE: plain out-params, NOT a struct. Arduino auto-generates prototypes and
+// injects them ABOVE our declarations, so a user type in a free function's
+// signature fails to compile ("'DirHit' has not been declared"). Project rule.
+static bool dirFind(uint32_t dirClus,const String&want,
+                    uint32_t*outFirstClus,uint32_t*outSize,bool*outIsDir){
+  // dirClus==0 is the FAT12/16 FIXED ROOT, not an error. Only FAT32 roots are chains.
+  if(!g_fs.ok)return false;
+  if(dirClus==0&&g_fs.fat_type==32)return false;
+  String w=want; w.toUpperCase();
+  char lfn[261]; int lfnLen=0; bool haveLfn=false;
+  uint32_t c=dirClus, sic=0, rl=(dirClus?0:g_fs.root_secs), lba;
+  {
+    {
+      while((lba=dirNextSector(dirClus,&c,&sic,&rl))!=0){
+      if(!SD_MMC.readRAW(g_sbuf,lba))return false;
+      uint8_t sect[AL_SEC]; memcpy(sect,g_sbuf,AL_SEC);          // fatNext() reuses g_sbuf
+      for(int o=0;o<AL_SEC;o+=32){
+        const uint8_t*e=sect+o;
+        if(e[0]==0x00)return false;                        // end of directory
+        if(e[0]==0xE5){haveLfn=false;continue;}            // deleted
+        if((e[11]&0x0F)==0x0F){                            // LFN fragment
+          int seq=e[0]&0x1F; char part[13]; lfnChars(e,part);
+          if(seq>=1&&seq<=20){
+            int base=(seq-1)*13;
+            for(int i=0;i<13;i++) if(base+i<260) lfn[base+i]=part[i];
+            if(e[0]&0x40){ lfnLen=base+13; while(lfnLen>0&&lfn[lfnLen-1]==0)lfnLen--; lfn[lfnLen]=0; }
+            haveLfn=true;
+          }
+          continue;
+        }
+        if(e[11]&0x08){haveLfn=false;continue;}            // volume label
+        String nm;
+        if(haveLfn&&lfnLen>0){ nm=String(lfn); }
+        else {
+          char n[13];int k=0;
+          for(int i=0;i<8&&e[i]!=' ';i++)n[k++]=e[i];
+          if(e[8]!=' '){n[k++]='.';for(int i=8;i<11&&e[i]!=' ';i++)n[k++]=e[i];}
+          n[k]=0; nm=String(n);
+        }
+        haveLfn=false;
+        String u=nm; u.toUpperCase();
+        if(u==w){
+          *outFirstClus=((uint32_t)rd16(e,20)<<16)|rd16(e,26);
+          *outSize=rd32(e,28);
+          *outIsDir=(e[11]&0x10)!=0;
+          return true;
+        }
+      }
+      }
+    }
+  }
+  return false;
+}
+
+// "/GENERIC/Game/Game.hfe" -> first cluster + size
+static bool pathResolve(const String&path,uint32_t*firstClus,uint32_t*size){
+  if(!g_fs.ok)return false;
+  uint32_t clus=g_fs.root_clus;
+  int i=0;
+  while(i<(int)path.length()){
+    while(i<(int)path.length()&&path[i]=='/')i++;
+    if(i>=(int)path.length())break;
+    int j=path.indexOf('/',i); if(j<0)j=path.length();
+    String seg=path.substring(i,j);
+    g_fail_seg=seg;
+    uint32_t hClus=0,hSize=0; bool hDir=false;
+    if(!dirFind(clus,seg,&hClus,&hSize,&hDir))return false;
+    if(j>=(int)path.length()){
+      if(hDir)return false;
+      *firstClus=hClus; *size=hSize; return true;
+    }
+    if(!hDir)return false;
+    clus=hClus; i=j+1;
+  }
+  return false;
+}
+
+// ── cluster chain -> runs of contiguous card sectors ────────────────────────
+struct Extent { uint32_t lba; uint32_t sectors; };
+static std::vector<Extent> g_ext;
+
+static bool chainToExtents(uint32_t firstClus,uint32_t size){
+  g_ext.clear();
+  if(firstClus<2)return false;
+  uint32_t c=firstClus, runStart=firstClus, runLen=1;
+  uint32_t guard=0;
+  while(++guard<200000){
+    uint32_t n=fatNext(c);
+    if(n==c+1){ runLen++; c=n; continue; }
+    g_ext.push_back({clusLba(runStart),runLen*g_fs.sec_per_clus});
+    if(isEoc(n)||n<2)break;
+    runStart=n; runLen=1; c=n;
+  }
+  // trim the last run so the map covers exactly the file, not the cluster slack
+  uint32_t need=(size+AL_SEC-1)/AL_SEC, acc=0;
+  for(size_t k=0;k<g_ext.size();k++){
+    if(acc>=need){ g_ext.resize(k); break; }
+    uint32_t take=g_ext[k].sectors; if(take>need-acc)take=need-acc;
+    g_ext[k].sectors=take; acc+=take;
+  }
+  return acc>=need;
+}
+static inline uint32_t mapSector(uint32_t fsec,bool*ok){
+  uint32_t acc=0;
+  for(size_t i=0;i<g_ext.size();i++){
+    if(fsec<acc+g_ext[i].sectors){*ok=true;return g_ext[i].lba+(fsec-acc);}
+    acc+=g_ext[i].sectors;
+  }
+  *ok=false; return 0;
+}
+
+static int32_t onWrite(uint32_t lba,uint32_t off,uint8_t*buf,uint32_t n);   // fwd: mscAnnounce re-registers it
+static void hardDetach();                                                     // fwd: mscAnnounce detaches before re-declaring capacity
+// ── alias mount state ───────────────────────────────────────────────────────
+static bool     g_alias=false;          // this mount is served from the card
+static uint32_t g_alias_img=0;          // image size in bytes
+static uint32_t g_alias_sectors=0;      // presented volume size while aliased
+static uint8_t  g_alias_spc=0;          // its cluster size
+static uint8_t  g_alias_tmp[512];       // static: the MSC callback runs on the USB task's stack
+static uint32_t g_usb_announced=0;      // capacity USB currently believes
+
+static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n);    // fwd: defined after the dirty map it consults
+// Re-declare capacity to USB. Only ever called when the size actually CHANGES,
+// so a user who never loads an oversized image never exercises this path and
+// their USB behaviour is bit-for-bit what it was before 5.9.37.
+static void mscAnnounce(uint32_t sectors){
+  if(sectors==g_usb_announced) return;
+  if(g_usb_online) hardDetach();                 // never change capacity under a live host (FORCESWAP)
+  MSC.end();
+  MSC.vendorID("ESP32");MSC.productID("RAMDISK");MSC.productRevision("1.0");
+  MSC.onRead(onRead);MSC.onWrite(onWrite);MSC.mediaPresent(true);
+  MSC.begin(sectors,512);
+  g_usb_announced=sectors;
+}
+// Pick a presented volume that holds exactly this image. Same routine the RAM
+// disk uses, so the FAT12 rules (2730 entries in our fixed 8-sector FAT, 4084
+// cluster ceiling, cluster up to 128 sectors) are applied identically.
+// BPB_TotSec16 is 16 bits, which puts a hard 32 MB ceiling on what we can present.
+static bool aliasGeom(uint32_t fsz,uint32_t*secOut,uint8_t*spcOut){
+  uint32_t kb=(fsz+1023)/1024, sectors=kb*2+DATA_LBA;
+  uint8_t spc=4; uint32_t mx=0;
+  for(int g=0;g<64;g++){ diskGeomFor(sectors,&spc,&mx); if(mx>=fsz)break; sectors+=spc; }
+  if(sectors>65535u) return false;
+  *secOut=sectors; *spcOut=spc; return true;
+}
+// Mount `path` by reference. errOut is a plain out-param on purpose: a
+// user-defined type in a free function's signature inside an .ino trips
+// Arduino's auto-prototype generator.
+static bool aliasMount(const String&path,uint32_t fsz,const char*volName,
+                       uint32_t presentSectors,uint8_t presentSpc,String*errOut){
+  g_alias=false;
+  g_alias_sectors=presentSectors; g_alias_spc=presentSpc;
+  if(!g_fs.ok && !fsMount()){
+    if(errOut)*errOut=g_fs.exfat?String("card is exFAT"):String("cannot read card FS");
+    return false;
+  }
+  uint32_t clus=0,sz=0;
+  if(!pathResolve(path,&clus,&sz)){
+    if(errOut)*errOut="not found: "+g_fail_seg; return false;
+  }
+  if(!chainToExtents(clus,sz)){ if(errOut)*errOut="cluster chain broken"; return false; }
+  // Build ONLY the metadata, at the alias geometry. build_volume() is not usable
+  // here: it memsets TOTAL_SECTORS*512, which for an aliased volume is far more
+  // than g_disk actually is. Same metadata-only pattern the wireless path uses.
+  uint32_t savT=TOTAL_SECTORS; uint8_t savS=SECTORS_PER_CLUSTER;
+  TOTAL_SECTORS=g_alias_sectors; SECTORS_PER_CLUSTER=g_alias_spc;
+  memset(g_disk,0,DATA_LBA*512);
+  build_boot_sector(g_disk);
+  build_fat(g_disk+RESERVED_SECTORS*512,fsz);
+  build_root(g_disk+(RESERVED_SECTORS+SECTORS_PER_FAT)*512,volName,fsz);
+  TOTAL_SECTORS=savT; SECTORS_PER_CLUSTER=savS;   // the RAM disk keeps its own geometry
+  g_alias_img=fsz; g_alias=true;
+  return true;                                    // caller disables save tracking
+}
+
 // ── Save-game persistence state (v4.8.0) ────────────────────────────────────
 // STANDALONE: the Amiga writes to OUR RAM disk (we are the USB drive) — onWrite
 // below ticks the dirty map; a settle timer + eject flush persist to .sav.adf.
@@ -613,7 +940,46 @@ static inline void svSet(uint8_t*m,uint32_t i){m[i>>3]|=(uint8_t)(1u<<(i&7));}
 static void svDirtyReset(){memset(g_sv_dirty,0,sizeof(g_sv_dirty));g_sv_dirty_count=0;g_sv_last_write=0;}
 static uint32_t g_sv_img_size=0;                         // bytes of the mounted image (standalone tracking)
 
-static int32_t onWrite(uint32_t lba,uint32_t off,uint8_t*buf,uint32_t n){uint32_t s=lba*512+off;if(s+n>TOTAL_SECTORS*512)return 0;memcpy(g_disk+s,buf,n);
+// ── the read path (5.9.37) ──────────────────────────────────────────────────
+// Standalone mounts are ALIASED: the FAT12 metadata is in g_disk, the data area
+// is the file on the card. g_disk's data region is a WRITE OVERLAY — any sector
+// the host has written (dirty map set) is served from there, so the Amiga sees
+// its own saves; everything else comes straight off the card via the extents.
+// Wireless and diag mounts still copy into g_disk and take the old path.
+static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n){
+  uint32_t vol = g_alias ? g_alias_sectors : TOTAL_SECTORS;
+  uint64_t s=(uint64_t)lba*512+off;
+  if(s+n>(uint64_t)vol*512)return 0;
+  if(!g_alias){ memcpy(buf,g_disk+(size_t)s,n); return (int32_t)n; }   // RAM-disk copy (wireless/diag)
+  uint8_t*out=(uint8_t*)buf; uint32_t done=0;
+  const uint64_t metaEnd=(uint64_t)DATA_LBA*512;
+  while(done<n && s+done<metaEnd){                       // boot sector / FAT / root: RAM
+    uint32_t c=(uint32_t)((n-done)<(metaEnd-(s+done))?(n-done):(metaEnd-(s+done)));
+    memcpy(out+done,g_disk+(size_t)(s+done),c); done+=c;
+  }
+  while(done<n){                                          // data area
+    uint64_t fo=(s+done)-metaEnd;
+    if(fo>=g_alias_img){memset(out+done,0,n-done);done=n;break;}   // cluster slack past EOF
+    uint32_t fsec=(uint32_t)(fo/512), so=(uint32_t)(fo%512);
+    uint32_t c=512-so; if(c>n-done)c=n-done;
+    if((uint64_t)c>g_alias_img-fo)c=(uint32_t)(g_alias_img-fo);
+    if(fsec<SV_IMG_MAX_SECTORS && svGet(g_sv_dirty,fsec)){          // host wrote this sector: overlay wins
+      memcpy(out+done,g_disk+(size_t)(DATA_LBA+fsec)*512+so,c); done+=c; continue;
+    }
+    bool ok=false; uint32_t card=mapSector(fsec,&ok);
+    if(!ok){memset(out+done,0,n-done);done=n;break;}
+    if(!SD_MMC.readRAW(g_alias_tmp,card))return (int32_t)done;
+    memcpy(out+done,g_alias_tmp+so,c); done+=c;
+  }
+  return (int32_t)done;
+}
+
+static int32_t onWrite(uint32_t lba,uint32_t off,uint8_t*buf,uint32_t n){
+  // 5.9.37: under an alias mount this is the WRITE OVERLAY. The bound below is
+  // now the scratch size (DISKMAXKB), not the image size: a write inside it is
+  // captured and served back by onRead; one beyond it is refused, so the host
+  // sees a write error — "mounts fine, too big to save".
+  uint32_t s=lba*512+off;if(s+n>TOTAL_SECTORS*512)return 0;memcpy(g_disk+s,buf,n);
   // v4.8.0: tick the dirty scorecard for every image sector this write touches
   // (assignment form, not ++ — C++20 deprecates ++ on volatile)
   g_sv_total_writes=g_sv_total_writes+1;
@@ -3601,25 +3967,66 @@ static bool doLoadSelected(const String&adfPath){
   struct stat stLoad;
   if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
   uint32_t fsz=(uint32_t)stLoad.st_size;
-  if(fsz>MAX_FILE_BYTES){
+  uint32_t copied=0;
+  if(g_wireless_mode){
+    // ── WIRELESS: unchanged. The dongle receives the image bytes out of
+    //    g_disk (espnowSendDisk reads from it), so it has to be copied there,
+    //    and DISKMAXKB remains the hard ceiling for anything sent by radio.
+    if(fsz>MAX_FILE_BYTES){
+      f.close();
+      gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
+      gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
+      gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_TOO_BIG));
+      gfx_setTextColor(COL_LIT,COL_PANEL);
+      gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB");
+      gfx_setCursor(6,STATUS_H+44);gfx_print(T(L_HD_NO_WIRELESS));
+      gfx_setTextColor(COL_DIM,COL_PANEL);
+      gfx_setCursor(6,STATUS_H+58);gfx_print(T(L_USE_CABLE));
+      gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
+    }
+    g_alias=false;
+    if(g_mode==MODE_GEN){String gon=filenameOnly(adfPath);build_volume(gon.c_str(),fsz);}   // v5.2: keep the real name+ext so FlashFloppy detects the format
+    else build_volume(getOutputFilename(),fsz);
+    uint8_t*dst=g_disk+DATA_LBA*512;uint8_t*buf=(uint8_t*)malloc(16384);uint32_t remain=fsz;
+    while(remain&&buf){size_t n=remain>16384?16384:remain;int rd=f.read(buf,n);if(rd<=0)break;memcpy(dst+copied,buf,rd);remain-=rd;copied+=rd;}
+    if(buf)free(buf);f.close();
+    // v4.8.0: fresh disk in the RAM disk = fresh save tracking
+    g_sv_img_size=(g_mode==MODE_GEN)?0:fsz;svDirtyReset();   // v5.2: GEN has no Amiga save-writeback (0 = no dirty tracking)
+  } else {
+    // ── STANDALONE: ALIAS, always, any size (5.9.37). Nothing is copied; the
+    //    data area IS the file on the card. g_disk holds the FAT12 metadata and
+    //    acts as the write overlay for saves (see onRead / onWrite).
     f.close();
-    gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
-    gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
-    gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_TOO_BIG));
-    gfx_setTextColor(COL_LIT,COL_PANEL);
-    gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB");
-    gfx_setCursor(6,STATUS_H+44);gfx_print(T(L_MAX_DD));
-    gfx_setTextColor(COL_DIM,COL_PANEL);
-    gfx_setCursor(6,STATUS_H+58);gfx_print("raise DISKMAXKB in CONFIG.TXT");   // 5.9.35
-    gfx_flush();delay(1800);drawFullUI();gfx_flush();return false;
+    // Presented geometry: an image that fits the RAM disk is presented at the
+    // RAM disk's OWN geometry, so the volume the Gotek sees is byte-identical to
+    // 5.9.36 — same size, same cluster size, same file — just served from the
+    // card. Only an oversized image gets a volume sized to itself.
+    uint32_t pS=TOTAL_SECTORS; uint8_t pC=SECTORS_PER_CLUSTER;
+    String aerr;
+    bool geomOk = (fsz<=MAX_FILE_BYTES) ? true : aliasGeom(fsz,&pS,&pC);
+    if(!geomOk) aerr="over 32MB (FAT12 limit)";
+    // Held in a named String: .c_str() on a temporary would dangle the moment
+    // the full expression ended. GEN keeps the real name+ext so FlashFloppy can
+    // detect the format, exactly as the RAM-disk path does.
+    String vn = (g_mode==MODE_GEN) ? filenameOnly(adfPath) : String(getOutputFilename());
+    if(!geomOk || !aliasMount(loadPath,fsz,vn.c_str(),pS,pC,&aerr)){
+      g_alias=false;
+      gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
+      gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
+      gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_FAILED));
+      gfx_setTextColor(COL_LIT,COL_PANEL);
+      gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB");
+      gfx_setTextColor(COL_DIM,COL_PANEL);
+      gfx_setCursor(6,STATUS_H+44);gfx_print(aerr);
+      gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
+    }
+    copied=fsz;
+    // Save tracking is LIVE under alias: the dirty map is what makes the overlay
+    // work, and svFlushStandalone patches those sectors into GameName.sav.<ext>
+    // exactly as before. GEN still has no writeback.
+    g_sv_img_size=(g_mode==MODE_GEN)?0:fsz;svDirtyReset();
   }
-  if(g_mode==MODE_GEN){String gon=filenameOnly(adfPath);build_volume(gon.c_str(),fsz);}   // v5.2: keep the real name+ext so FlashFloppy detects the format
-  else build_volume(getOutputFilename(),fsz);
-  uint8_t*dst=g_disk+DATA_LBA*512;uint8_t*buf=(uint8_t*)malloc(16384);uint32_t copied=0,remain=fsz;
-  while(remain&&buf){size_t n=remain>16384?16384:remain;int rd=f.read(buf,n);if(rd<=0)break;memcpy(dst+copied,buf,rd);remain-=rd;copied+=rd;}
-  if(buf)free(buf);f.close();
-  // v4.8.0: fresh disk in the RAM disk = fresh save tracking
-  g_sv_img_size=(g_mode==MODE_GEN)?0:fsz;svDirtyReset();   // v5.2: GEN has no Amiga save-writeback (0 = no dirty tracking)
+  mscAnnounce(g_alias?g_alias_sectors:TOTAL_SECTORS);
   hardAttach();g_loaded=true;g_loaded_name=basenameNoExt(filenameOnly(adfPath));g_loaded_path=loadPath;g_loaded_game_idx=g_sel;g_loaded_disk_idx=g_disk_sel;
   if(g_lastused&&g_loaded_game_idx>=0&&g_loaded_game_idx<(int)g_games.size())writeLastUsed(g_files[g_games[g_loaded_game_idx].first_file_idx]);   // remember this game for next boot
   if(g_sel>=0&&g_sel<(int)g_games.size()){if(g_games[g_sel].plays<65535)g_games[g_sel].plays++;saveStats();}
@@ -3711,7 +4118,7 @@ static void doUnload(){
   // (v4.8.1: own-disk flush in any mode)
   if(g_sv_dirty_count)svFlushStandalone();
   if(g_wireless_mode&&g_espnow_started&&g_espnow_dirty)svFetchWireless();
-  hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();
+  hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();g_alias=false;   // 5.9.37: drop any alias mapping
   if(g_wireless_mode&&g_espnow_started&&espnowIsPaired())espnowSendEject();drawStatusBar();drawListAndCover();gfx_flush();}
 
 // Expand the zero-RLE embedded ADF straight into the RAM-disk data area. No SD needed.
@@ -3728,6 +4135,7 @@ static void doLoadDiag(){
   gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_setCursor(6,STATUS_H+16);gfx_print("AMIGA TEST KIT");
   gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(6,STATUS_H+28);gfx_print(T(L_LOADING_DIAG));gfx_flush();
   if(g_loaded && !g_forceswap) hardDetach();
+  g_alias=false;mscAnnounce(TOTAL_SECTORS);               // 5.9.37: diag disk is a RAM-disk mount
   build_volume("DISK.ADF",DIAG_ADF_SIZE);                 // force an .ADF image regardless of MODE
   diagInflate(DIAG_RLE,DIAG_RLE_LEN,g_disk+DATA_LBA*512);
   hardAttach();
@@ -5190,7 +5598,7 @@ void setup(){
   if(sdAccessReq){runSDAccessBoot(sdok);}   // v5.1: SD-access boot mode — never returns (reboots to normal)
   MSC.vendorID("ESP32");MSC.productID("RAMDISK");MSC.productRevision("1.0");
   MSC.onRead(onRead);MSC.onWrite(onWrite);MSC.mediaPresent(true);
-  MSC.begin(TOTAL_SECTORS,512);USB.begin();hardDetach();
+  MSC.begin(TOTAL_SECTORS,512);g_usb_announced=TOTAL_SECTORS;USB.begin();hardDetach();
   bool bootCar=(g_car_bootmode==1)||(g_car_bootmode==2&&readLastView()==1);   // v4.8.6: CAROUSEL= 0=list / 1=reel / LAST=restore
   if(bootCar&&!g_games.empty())carEnter();else{drawFullUI();gfx_flush();}
   esp_ota_mark_app_valid_cancel_rollback();   // v5.3: confirm this image booted OK (satisfies the A/B rollback handshake; harmless no-op on non-rollback bootloaders)

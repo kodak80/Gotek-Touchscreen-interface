@@ -19,11 +19,11 @@
     "appOffset": 65536,
     "builds": [
       {
-        "v": "5.9.36",
+        "v": "5.9.37",
         "ch": "lab",
-        "date": "2026-09-20",
-        "app": "firmware/jc3248-lab/GTi-JC35-5.9.36-update.bin",
-        "note": "LAB BUILD - experimental, for testers. Boot-time rework: the scan and cover-build progress screens redrew 10-12 times a second, and every redraw was a FULL-SCREEN panel push (~36ms) plus a write to /gti.log on the same card the build was reading - roughly half the scan time and a third of the build time spent drawing progress. Now count-driven (every 50 files / 25 games) with a live ETA on the cover build. Also carries the 5.9.31-35 lab work: sidecar .nfocache, fast reel blit, list covers from the cached tile, DISKMAXKB image sizing, and CONFIG.TXT switches NOCACHE / COVERS / REELPROF / LISTTILE / STRIPROWS / FLUSHUS. Not a stable channel build.",
+        "date": "2026-09-21",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.37-update.bin",
+        "note": "DIRECT SD ACCESS (standalone): disk images are no longer copied into the RAM disk - the volume the Gotek sees is mapped straight onto the file on the card, so ANY size .adf/.dsk/.hfe/.st/.img mounts (up to 32MB). Saves still work: writes land in the RAM disk as an overlay and are written back as GameName.sav.<ext> exactly as before; DISKMAXKB now bounds how much of an image can be SAVED, not loaded. Wireless is unchanged (dongle RAM disk, DISKMAXKB ceiling). exFAT cards not supported. Also 5.9.36's boot-progress rework.",
         "latest": false
       },
       {
