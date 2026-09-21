@@ -19,6 +19,14 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.38",
+        "ch": "lab",
+        "date": "2026-09-21",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.38-update.bin",
+        "note": "5.9.37's direct SD access (any-size images, saves via RAM-disk overlay) PLUS: an exFAT or NTFS card (the Windows default for 64GB+) is now detected at boot instead of 'SD MOUNT FAILED', and the GTi offers to format it as FAT32 itself - no third-party tools. Two confirmations, RED NO / GREEN YES, 1s arming delay. Quick format (boot sector + FATs); ERASES THE CARD. Reboots into a fresh /ADF /DSK /GENERIC layout.",
+        "latest": false
+      },
+      {
         "v": "5.9.37",
         "ch": "lab",
         "date": "2026-09-21",

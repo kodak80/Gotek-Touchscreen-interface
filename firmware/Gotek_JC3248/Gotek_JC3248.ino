@@ -12,6 +12,9 @@
 #include "../shared/webdav_client.h"
 #include <FS.h>
 #include <SD_MMC.h>
+#include "driver/sdmmc_host.h"     // 5.9.38: raw sector-0 peek when the card will not mount
+#include "driver/sdmmc_defs.h"
+#include "sdmmc_cmd.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
@@ -35,7 +38,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.37-lab7-JC3248"
+#define FW_VERSION "5.9.38-lab8-JC3248"
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -5536,6 +5539,118 @@ static void doFirmwareUpdate(){
   gfx_fillScreen(COL_BG);fwupMsg(VH/2-8,"UPDATE OK - REBOOTING",COL_GREEN,COL_BG,2);gfx_flush();delay(900);ESP.restart();
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// 5.9.38 — exFAT / NTFS CARD DETECTION + ON-DEVICE FAT32 FORMAT
+// ────────────────────────────────────────────────────────────────────────────
+// Windows formats anything over 32 GB as exFAT (or NTFS) and will not offer
+// FAT32 — that is a limit of the Windows dialog, not of FAT32, which goes to
+// 2 TB. The ESP32 cannot read exFAT (the Arduino core's FatFs is built without
+// it), so such a card simply fails to mount. FlashFloppy has the same rule for
+// its USB stick ("FAT32 — exFAT and NTFS are not supported").
+//
+// Rather than send the user to a third-party formatter, the GTi does it: if the
+// mount fails AND sector 0 positively identifies exFAT or NTFS, offer to format
+// the card as FAT32 — behind two confirmations, with a 1 s arming delay on the
+// second so a bounced tap cannot get through. FatFs f_mkfs is a QUICK format:
+// partition table, boot sector, the two FATs and the root cluster. The data
+// area is never touched, but nothing points at it any more.
+// ════════════════════════════════════════════════════════════════════════════
+// Returns 1 = exFAT, 2 = NTFS, 0 = something else (FAT or unknown), -1 = no card.
+// Only ever called AFTER SD_MMC.begin() has failed and released the host.
+static int sdPeekForeignFs(){
+  sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+  host.flags = SDMMC_HOST_FLAG_1BIT;
+  host.max_freq_khz = 20000;
+  sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+  slot.width = 1;
+  slot.clk=(gpio_num_t)SD_CLK; slot.cmd=(gpio_num_t)SD_CMD; slot.d0=(gpio_num_t)SD_D0;
+  slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+  if(sdmmc_host_init()!=ESP_OK) return -1;
+  if(sdmmc_host_init_slot(SDMMC_HOST_SLOT_1,&slot)!=ESP_OK){ sdmmc_host_deinit(); return -1; }
+  sdmmc_card_t card; int r=-1;
+  if(sdmmc_card_init(&host,&card)==ESP_OK){
+    uint8_t* b=(uint8_t*)heap_caps_malloc(512,MALLOC_CAP_DMA);
+    if(b && sdmmc_read_sectors(&card,b,0,1)==ESP_OK){
+      r=0;
+      // superfloppy layouts put the boot sector at 0 ...
+      if(!memcmp(b+3,"EXFAT   ",8)) r=1;
+      else if(!memcmp(b+3,"NTFS    ",8)) r=2;
+      // ... but Windows puts an MBR at 0 and the volume in partition 1.
+      else if(b[510]==0x55&&b[511]==0xAA){
+        uint8_t ptype=b[446+4]; uint32_t plba=rd32(b,446+8);
+        if((ptype==0x07||ptype==0x0F||ptype==0x0B||ptype==0x0C) && plba && plba<0x0FFFFFFF
+           && sdmmc_read_sectors(&card,b,plba,1)==ESP_OK){
+          if(!memcmp(b+3,"EXFAT   ",8)) r=1;
+          else if(!memcmp(b+3,"NTFS    ",8)) r=2;
+        }
+      }
+    }
+    if(b) free(b);
+  }
+  sdmmc_host_deinit();
+  return r;
+}
+// Two-wall confirm. Returns true only if the user passed both screens.
+static bool sdOfferFormat(int kind){
+  const char* fsn = (kind==2) ? "NTFS" : "exFAT";
+  // ── wall 1 ──
+  gfx_fillScreen(COL_BG);
+  fwupMsg(22,"CARD NOT COMPATIBLE",COL_ORANGE,COL_BG,2);
+  {char l[64];snprintf(l,sizeof l,"This card is formatted %s.",fsn);fwupMsg(52,l,COL_LIT,COL_BG,1);}
+  fwupMsg(66,"The GTi (and the Gotek) need FAT32.",COL_LIT,COL_BG,1);
+  fwupMsg(80,"Windows won't make FAT32 above 32GB,",COL_DIM,COL_BG,1);
+  fwupMsg(94,"but the GTi can - a quick format.",COL_DIM,COL_BG,1);
+  fwupMsg(118,"EVERYTHING ON THIS CARD WILL BE LOST.",COL_ORANGE,COL_BG,1);
+  fwupMsg(132,"Copy off anything you want first.",COL_ORANGE,COL_BG,1);
+  int bw=124,bbh=42,gap=22,by=VH-64,lx=VW/2-bw-gap/2,rx=VW/2+gap/2;
+  gfx_fillRoundRect(lx,by,bw,bbh,8,COL_BAR);gfx_setTextColor(COL_LIT,COL_BAR);gfx_setTextSize(2);gfx_setCursor(lx+(bw-gfx_textWidth("CANCEL"))/2,by+13);gfx_print("CANCEL");
+  gfx_fillRoundRect(rx,by,bw,bbh,8,COL_ORANGE);gfx_setTextColor(TFT_BLACK,COL_ORANGE);gfx_setTextSize(2);gfx_setCursor(rx+(bw-gfx_textWidth("FORMAT"))/2,by+13);gfx_print("FORMAT");
+  gfx_flush();
+  { uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<800) delay(10); }   // require a release first
+  bool go=false;
+  while(true){uint16_t tx,ty;if(Touch_ReadFrame()&&getTouchXY(&tx,&ty)){
+    if(ty>=(uint16_t)(by-8)&&ty<(uint16_t)(by+bbh+8)){
+      if(tx>=(uint16_t)(lx-8)&&tx<(uint16_t)(lx+bw+8)){go=false;break;}
+      if(tx>=(uint16_t)(rx-8)&&tx<(uint16_t)(rx+bw+8)){go=true;break;}}}
+    delay(25);}
+  if(!go) return false;
+  // ── wall 2: RED = NO, GREEN = YES, armed only after 1 s ──
+  gfx_fillScreen(COL_BG);
+  fwupMsg(VH/2-60,"ARE YOU SURE?",COL_LIT,COL_BG,2);
+  fwupMsg(VH/2-30,"This erases the whole card.",COL_ORANGE,COL_BG,1);
+  fwupMsg(VH/2-16,"There is no undo.",COL_ORANGE,COL_BG,1);
+  gfx_fillRoundRect(lx,by,bw,bbh,8,TFT_RED);  gfx_setTextColor(TFT_WHITE,TFT_RED);  gfx_setTextSize(2);gfx_setCursor(lx+(bw-gfx_textWidth("NO"))/2,by+13); gfx_print("NO");
+  gfx_fillRoundRect(rx,by,bw,bbh,8,COL_GREEN);gfx_setTextColor(TFT_BLACK,COL_GREEN);gfx_setTextSize(2);gfx_setCursor(rx+(bw-gfx_textWidth("YES"))/2,by+13);gfx_print("YES");
+  gfx_flush();
+  { uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<800) delay(10); }   // release the finger that hit FORMAT
+  uint32_t armed=millis()+1000;                                                     // 1 s: a bounced double-tap lands here and is ignored
+  bool yes=false;
+  while(true){uint16_t tx,ty;
+    if(Touch_ReadFrame()&&getTouchXY(&tx,&ty)){
+      if((int32_t)(millis()-armed)<0){ delay(25); continue; }                       // not armed yet: swallow it
+      if(ty>=(uint16_t)(by-8)&&ty<(uint16_t)(by+bbh+8)){
+        if(tx>=(uint16_t)(lx-8)&&tx<(uint16_t)(lx+bw+8)){yes=false;break;}
+        if(tx>=(uint16_t)(rx-8)&&tx<(uint16_t)(rx+bw+8)){yes=true;break;}}}
+    delay(25);}
+  return yes;
+}
+// Format via FatFs (SD_MMC.begin with format_if_mount_failed), then reboot into a
+// normal blank-card boot, which creates /ADF /DSK /GENERIC and the sample folder.
+static void sdFormatFat32AndReboot(){
+  gfx_fillScreen(COL_BG);
+  fwupMsg(VH/2-20,"FORMATTING - DO NOT REMOVE",COL_AMBER,COL_BG,2);
+  fwupMsg(VH/2+10,"about a minute on a big card",COL_DIM,COL_BG,1);
+  gfx_flush();
+  SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0);delay(100);
+  bool ok=SD_MMC.begin("/sdcard",true,/*format_if_mount_failed=*/true,20000);
+  gfx_fillScreen(COL_BG);
+  if(ok){ SD_MMC.end(); fwupMsg(VH/2-8,"FORMATTED - RESTARTING",COL_GREEN,COL_BG,2); gfx_flush(); delay(1500); ESP.restart(); }
+  fwupMsg(VH/2-14,"FORMAT FAILED",COL_ORANGE,COL_BG,2);
+  fwupMsg(VH/2+12,"card may be locked or faulty",COL_DIM,COL_BG,1);
+  fwupMsg(VH-22,"tap to continue",COL_MID,COL_BG,1);
+  gfx_flush(); fwupWait();
+}
+
 void setup(){
   Serial.begin(115200);delay(200);
   // v5.1: SD-access is requested only when our NOINIT flag survived a *software* restart
@@ -5549,6 +5664,14 @@ void setup(){
   // DISKMAXKB= can size it. Nothing between here and there touches g_disk.
   SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0);delay(100);
   bool sdok=SD_MMC.begin("/sdcard",true,false,20000);if(!sdok){delay(200);sdok=SD_MMC.begin("/sdcard",true,false,20000);}
+  if(!sdok && !sdAccessReq){                          // 5.9.38: is it an exFAT/NTFS card rather than no card?
+    int fk=sdPeekForeignFs();
+    if(fk==1||fk==2){
+      Serial.printf("[sd] card present but %s - offering FAT32 format\n",fk==2?"NTFS":"exFAT");
+      if(sdOfferFormat(fk)) sdFormatFat32AndReboot();   // reboots on success
+      gfx_fillScreen(TFT_BLACK);                       // declined: carry on to the normal no-card path
+    }
+  }
   if(sdok){
     if(!SD_MMC.exists("/ADF")){SD_MMC.mkdir("/ADF");ensureSampleFolder();SD_MMC.mkdir("/screensaver");}   // blank card: SAMPLE example + arm the screensaver by default (v4.8.5 — DELETE /screensaver to disable it; empty = the bouncing starburst, drop in JPGs for a gallery)
     if(!SD_MMC.exists("/DSK"))SD_MMC.mkdir("/DSK");
