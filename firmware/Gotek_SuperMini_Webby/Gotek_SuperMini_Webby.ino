@@ -47,7 +47,7 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.3"
+#define FW_VERSION     "Webby-1.6.4"
 #define ESPNOW_CHANNEL 6
 //  Board profile 
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -340,15 +340,16 @@ static uint32_t g_enroll_until = 0;
 
 // ESP-NOW receive queue
 #define RX_PKT_SIZE 250
-struct RxPkt { uint8_t data[RX_PKT_SIZE]; int len; };
+struct RxPkt { uint8_t data[RX_PKT_SIZE]; int len; uint8_t src[6]; };   // 1.6.4 (#24): src = the REAL sender MAC (radio header), not the payload claim
 static QueueHandle_t _rxQueue = nullptr;
-static void queuePacket(const uint8_t* data, int len) {
+static void queuePacket(const uint8_t* data, int len, const uint8_t* src) {
   if (!_rxQueue) return;
   RxPkt pkt; int n = min(len, RX_PKT_SIZE);
   memcpy(pkt.data, data, n); pkt.len = n;
+  if (src) memcpy(pkt.src, src, 6); else memset(pkt.src, 0, 6);   // 1.6.4: sender from the radio header
   xQueueSendFromISR(_rxQueue, &pkt, nullptr);
 }
-static void handleESPNOW(const uint8_t* data, int len);
+static void handleESPNOW(const uint8_t* data, int len, const uint8_t* src);
 
 class XiaoPeer : public ESP_NOW_Peer {
 public:
@@ -357,7 +358,7 @@ public:
   ~XiaoPeer() { remove(); }
   bool add_peer() { return add(); }
   bool send_pkt(const uint8_t* d, size_t l) { return send(d, l); }
-  void onReceive(const uint8_t* d, size_t l, bool b) override { queuePacket(d, (int)l); }
+  void onReceive(const uint8_t* d, size_t l, bool b) override { queuePacket(d, (int)l, addr()); }   // 1.6.4: sender = this peer
   void onSent(bool) override {}
 };
 static XiaoPeer* _bcastPeer = nullptr;
@@ -390,11 +391,19 @@ static void wipeOwners(){
   oledStatus("Gotek OMEGA " FW_VERSION,"** WIPED **","All owners cleared","Hold BOOT to pair");
 }
 
-static void handleESPNOW(const uint8_t* data, int len) {
+static void handleESPNOW(const uint8_t* data, int len, const uint8_t* src) {
   if (len < 1) return;
   uint8_t type = data[0];
+  // 1.6.4 (#24): owner decisions use the REAL sender (src, from the radio header),
+  // never p->mac (a payload field anyone can fill in). The panel sends from its STA
+  // interface and puts WiFi.macAddress() in p->mac, so for a genuine GTi the two are
+  // equal and existing pairings carry over unchanged.
+  static const uint8_t ZERO6[6] = {0,0,0,0,0,0};
+  const bool haveSrc = src && memcmp(src, ZERO6, 6) != 0;
   if (type == PKT_PAIR_HELLO) {
-    const PktHello* p = (const PktHello*)data;
+    PktHello hp = {}; memcpy(&hp, data, min((size_t)len, sizeof(hp)));   // copy, then overwrite the claimed MAC with the real one
+    if (haveSrc) memcpy(hp.mac, src, 6);
+    const PktHello* p = &hp;
     // WEBBY note: Webby ships unlocked, so with no enrolled owners any GTi may pair
     // (g_enroll_open is forced true at boot in ESPNOW mode when _owner_count==0).
     bool known = isOwner(p->mac);
@@ -416,7 +425,9 @@ static void handleESPNOW(const uint8_t* data, int len) {
     return;
   }
   if (type == PKT_UNPAIR) {
-    const PktHello* p = (const PktHello*)data;
+    PktHello up = {}; memcpy(&up, data, min((size_t)len, sizeof(up)));
+    if (haveSrc) memcpy(up.mac, src, 6);   // 1.6.4: a screen can only unpair ITSELF
+    const PktHello* p = &up;
     if (removeOwner(p->mac)) {
       saveOwners();
       if (memcmp(_wave_mac, p->mac, 6)==0) {
@@ -429,13 +440,15 @@ static void handleESPNOW(const uint8_t* data, int len) {
     return;
   }
   if (type == PKT_DISK_EJECT) {
+    // 1.6.4 (#24): an unclaimed dongle stays open (JFW); once an owner exists, only an owner may eject.
+    if (_owner_count > 0 && !(haveSrc && isOwner(src))) return;
     if (g_disk_loaded) { hardDetach(); g_disk_loaded=false; }
     dirtyReset(); ledBlue(false);
     oledStatus("Gotek OMEGA " FW_VERSION, "Ejected", "", "Ready");
     return;
   }
 }
-static void onNewPeer(const esp_now_recv_info_t* info, const uint8_t* data, int len, void* arg) { queuePacket(data, len); }
+static void onNewPeer(const esp_now_recv_info_t* info, const uint8_t* data, int len, void* arg) { queuePacket(data, len, info ? info->src_addr : nullptr); }   // 1.6.4: keep src_addr
 
 // Owner config load (base)
 static void loadConfig() {
@@ -604,6 +617,10 @@ static void handleTCPClient(WiFiClient& client) {
   // filename+ext via CMD_SET_NAME immediately before the fling; absent that
   // (older panel), fall back to the historic DISK.ADF.
   String fatName = g_next_name.length() ? to83keepext(g_next_name) : String("DISK.ADF");
+  // 1.6.4 (#24): if a disk is already attached, detach FIRST - otherwise the host stays
+  // mounted on a volume we are rewriting underneath it for the whole transfer.
+  // (The browser-upload path already did this; the TCP path now matches.)
+  if (g_disk_loaded) { hardDetach(); g_disk_loaded = false; }
   build_volume(fatName.c_str(), size);
   uint8_t* dst = g_disk + DATA_LBA * SECTOR_SIZE;
   uint32_t received = 0; const size_t BUF = 4096;
@@ -965,9 +982,13 @@ static void apiConfigSave(){
   server.send(200,"application/json","{\"status\":\"ok\"}");
 }
 static void apiReboot(){ server.send(200,"application/json","{\"status\":\"ok\"}"); delay(300); ESP.restart(); }
+static const char* const THEME_NAMES[] = { "AMIGA_WB2","AMIGA_WB13","PAPER_WHITE","MIDNIGHT","PHOSPHOR","OMEGA_DARK" };   // 1.6.4: one list for /list and /activate
+static bool themeKnown(const String& n){ for (auto t : THEME_NAMES) if (n == t) return true; return false; }
 static void apiThemesList(){
   String j = "{\"active\":\""; j += g_active_theme;
-  j += "\",\"themes\":[\"AMIGA_WB2\",\"AMIGA_WB13\",\"PAPER_WHITE\",\"MIDNIGHT\",\"PHOSPHOR\",\"OMEGA_DARK\"]}";
+  j += "\",\"themes\":[";
+  for (size_t i = 0; i < sizeof(THEME_NAMES)/sizeof(THEME_NAMES[0]); i++) { if (i) j += ","; j += "\""; j += THEME_NAMES[i]; j += "\""; }
+  j += "]}";
   server.send(200,"application/json", j);
 }
 
@@ -1100,11 +1121,14 @@ static void startWebServer(){
   // API misses -> clean 404 JSON (SPA tolerates it); everything else -> captive portal to /
   server.onNotFound([](){
     String u = server.uri();
-    // theme gallery activate: /api/themes/<name>/activate  (remember the choice)
+    // theme gallery activate: /api/themes/<name>/activate  - 1.6.4 (#24): POST only + whitelist
+    // (was: any method, any name -> LittleFS write on a GET)
     if (u.startsWith("/api/themes/") && u.endsWith("/activate")) {
+      if (server.method() != HTTP_POST) { server.send(405,"application/json","{\"error\":\"POST only\"}"); return; }
       int a = 12; int b = u.lastIndexOf("/activate");   // 12 = strlen("/api/themes/")
-      if (b > a) g_active_theme = u.substring(a, b);
-      saveTheme(g_active_theme);   // PANEL: remember across reboots
+      String nm = (b > a) ? u.substring(a, b) : String("");
+      if (!themeKnown(nm)) { server.send(400,"application/json","{\"error\":\"unknown theme\"}"); return; }
+      g_active_theme = nm; saveTheme(g_active_theme);   // PANEL: remember across reboots
       server.send(200,"application/json","{\"status\":\"ok\"}"); return;
     }
     if (u.startsWith("/api/")) { server.send(404,"application/json","{\"error\":\"not found\"}"); return; }
@@ -1211,7 +1235,7 @@ static void startEspnowApMode(){
     strncpy(hello.ip, AP_IP, 15); hello.pad[0] = SAVE_PROTO_VER;
     if (_bcastPeer) _bcastPeer->send_pkt((uint8_t*)&hello, sizeof(hello));
     if (_wavePeer)  _wavePeer->send_pkt((uint8_t*)&hello, sizeof(hello));
-    RxPkt pkt; while (xQueueReceive(_rxQueue, &pkt, 0) == pdTRUE) handleESPNOW(pkt.data, pkt.len);
+    RxPkt pkt; while (xQueueReceive(_rxQueue, &pkt, 0) == pdTRUE) handleESPNOW(pkt.data, pkt.len, pkt.src);
     WiFiClient c = _tcpServer.accept(); if (c) handleTCPClient(c);
     server.handleClient(); dnsServer.processNextRequest();
     delay(120);
@@ -1286,7 +1310,7 @@ void loop() {
   if (g_dns_up) dnsServer.processNextRequest();
 
   // ESP-NOW control queue (only meaningful in AP/ESP-NOW mode; harmless otherwise)
-  RxPkt pkt; while (xQueueReceive(_rxQueue, &pkt, 0) == pdTRUE) handleESPNOW(pkt.data, pkt.len);
+  RxPkt pkt; while (xQueueReceive(_rxQueue, &pkt, 0) == pdTRUE) handleESPNOW(pkt.data, pkt.len, pkt.src);
 
   // TCP app transfers (begun in both modes)
   WiFiClient client = _tcpServer.accept();

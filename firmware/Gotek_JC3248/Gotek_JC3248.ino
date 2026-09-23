@@ -1,9 +1,11 @@
 // ESP32-S3 (Guition JC3248W535C) — USB MSC RAM Disk + ADF/DSK Browser
 // Full port of Waveshare 7" firmware v3.4.7 (Mez UI) onto Dimi's hardware layer
 // Board: ESP32S3 Dev Module | USB-OTG (TinyUSB) | CDC DISABLED | OPI PSRAM
-// N16R8: Flash 16MB QIO 80MHz | PSRAM OPI (Octal 8MB) | Partition: sketch-local partitions.csv = 6.9MB APP x2 (dual-OTA for SD-update) + 2.8MB SPIFFS — maximises the 16MB | 240MHz
+// N16R8: Flash 16MB QIO 80MHz | PSRAM OPI (Octal 8MB) | Partition: sketch-local partitions.csv = 4MB APP x2 (dual-OTA for SD-update) + 4.25MB "doom" WAD + 3.7MB SPIFFS (lab13) | 240MHz
+// lab13: src/doom = PrBoom (GPL-2) - a JC3248 binary built with it is distributed under the GPL-2 (see src/doom/README_GTi.md)
 
 #include <Arduino.h>
+#include <new>             // lab13: placement new for the heap-built decoders
 #include "USB.h"
 #include "USBMSC.h"
 // Merge step 1: the shared WebDAV client (see firmware/shared/README.md).
@@ -38,12 +40,27 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#define FW_VERSION "5.9.38-lab8-JC3248"
+#define FW_VERSION "5.9.41-lab13e-JC3248"  // lab13: DOOM easter egg (CRACKTRO=666, tap top-left during the cracktro); lab13b: FLUSHUS=0 ping-pong push + DIAGDISP in Doom; lab13c: Doom crash reporting; lab13d: PrBoom lumps built in (CRBRICK fix); lab13e: tap-the-menu touch controls, no auto-yes
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
 #include <Update.h>            // v5.3: self-flash an app image off the SD (OTA)
 #include "esp_ota_ops.h"       // v5.3: OTA slot query + rollback-validate handshake
+#include "esp_partition.h"     // lab13: the "doom" WAD partition
+// ── lab13: DOOM easter egg ──────────────────────────────────────────────────
+// PrBoom (GPL-2, src/doom/) is compiled into this firmware. Armed ONLY by the hidden
+// CONFIG.TXT value CRACKTRO=666: the boot cracktro then plays as normal, and a tap in
+// its top-left corner reboots into Doom. The WAD (shareware doom1.wad, 4,196,020 B) is
+// installed once from the card root (/doom1.wad) into the 4.25 MB "doom" flash partition
+// (partitions.csv, type 0x40 / subtype 0x06). The Doom boot is a one-shot RTC flag, so a
+// crash or any reset lands back in the GTi. Hold the top-left corner 2 s in Doom to quit.
+extern "C" int doom_main(int argc, char const * const *argv);
+extern "C" int gti_doom_alloc(void);   // src/doom/gti_doom_alloc.c: the engine's big tables, heap not .bss
+#define DOOM_MAGIC 0xD00D1993u
+#define DOOM_PART_TYPE    ((esp_partition_type_t)0x40)
+#define DOOM_PART_SUBTYPE ((esp_partition_subtype_t)0x06)
+static bool g_doom_egg=false;          // CRACKTRO=666
+static void doomLaunch();              // fwd: defined just above setup()
 #include "esp_log.h"           // 5.9.29: capture IDF OTA/image log lines into /gti.log
 
 extern "C" { bool tud_mounted(void); void tud_disconnect(void); void tud_connect(void); void* ps_malloc(size_t size); }
@@ -192,8 +209,21 @@ static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static uint16_t *framebuffer = NULL;
 static uint16_t *dma_buffer = NULL;
-static JPEGDEC jpegdec;
-static PNG     pngdec;   // v4.8.4 PNG cover support
+// lab13: the decoders were static objects - 17.9 KB (JPEGDEC) + 45.6 KB (PNG) of .bss in the
+// scarce internal DRAM, whether or not a cover was ever decoded. They are now built at boot
+// in PSRAM by decodersInit() (never on a Doom boot). Net: the GTi has MORE internal RAM free
+// than 5.9.41 even with Doom linked in; cost is a slower one-off cover decode. Every existing jpegdec./pngdec. use is
+// unchanged via the two macros.
+static JPEGDEC* g_jpegdec=nullptr;
+static PNG*     g_pngdec=nullptr;
+#define jpegdec (*g_jpegdec)
+#define pngdec  (*g_pngdec)
+static void decodersInit(){
+  // PSRAM first: internal DRAM is what WiFi/TLS/USB need, and covers are decoded rarely now
+  // (the reel and the LIST panel read pre-built .tnl tiles). Internal only as a fallback.
+  if(!g_jpegdec){ void*m=ps_malloc(sizeof(JPEGDEC)); if(!m)m=heap_caps_malloc(sizeof(JPEGDEC),MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT); g_jpegdec=new(m) JPEGDEC(); }
+  if(!g_pngdec){ void*m=ps_malloc(sizeof(PNG)); if(!m)m=heap_caps_malloc(sizeof(PNG),MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT); g_pngdec=new(m) PNG(); }
+}
 
 static inline uint16_t swap16(uint16_t c){return(c>>8)|(c<<8);}
 static inline void fb_setPixel(int vx,int vy,uint16_t color){
@@ -305,11 +335,29 @@ static void gfx_flush(){
   uint32_t _fl_t0=micros();
   { uint32_t now=millis(); if(g_diag_last){ float dt=(float)(now-g_diag_last); if(dt>0){ float f=1000.0f/dt; g_diag_fps = g_diag_fps>0 ? g_diag_fps*0.85f+f*0.15f : f; } } g_diag_last=now; }
   if(g_diagdisp) drawDiagOverlay();
-  for(int sy=0;sy<LCD_HEIGHT;sy+=g_strip_rows){
-    int rows=min(g_strip_rows,LCD_HEIGHT-sy);
-    memcpy(dma_buffer,&framebuffer[sy*LCD_WIDTH],LCD_WIDTH*rows*2);
-    esp_lcd_panel_draw_bitmap(panel_handle,0,sy,LCD_WIDTH,sy+rows,dma_buffer);
-    if(g_flush_us>0)delayMicroseconds(g_flush_us);
+  if(g_flush_us>0){                                  // unchanged path (defaults 10 rows / 500 us)
+    for(int sy=0;sy<LCD_HEIGHT;sy+=g_strip_rows){
+      int rows=min(g_strip_rows,LCD_HEIGHT-sy);
+      memcpy(dma_buffer,&framebuffer[sy*LCD_WIDTH],LCD_WIDTH*rows*2);
+      esp_lcd_panel_draw_bitmap(panel_handle,0,sy,LCD_WIDTH,sy+rows,dma_buffer);
+      delayMicroseconds(g_flush_us);
+    }
+  } else {
+    // lab13b: FLUSHUS=0. draw_bitmap only QUEUES the DMA, so the old loop's next memcpy
+    // overwrote a strip still being sent (garbled bands). Split the DMA buffer into two
+    // halves and alternate: we fill one half while the other is on the wire. Each
+    // draw_bitmap waits for the previous transfer before queuing (esp_lcd SPI io,
+    // queue depth 1), so a half is never refilled while it is still in flight.
+    // The toggle persists across calls because the last strip may still be sending.
+    static int half=0;
+    const int slot=max(1,min(g_strip_rows,g_strip_cap/2));
+    for(int sy=0;sy<LCD_HEIGHT;sy+=slot){
+      int rows=min(slot,LCD_HEIGHT-sy);
+      uint16_t* buf=dma_buffer+(size_t)half*slot*LCD_WIDTH;
+      memcpy(buf,&framebuffer[sy*LCD_WIDTH],LCD_WIDTH*rows*2);
+      esp_lcd_panel_draw_bitmap(panel_handle,0,sy,LCD_WIDTH,sy+rows,buf);
+      half^=1;
+    }
   }
   g_rp_flush+=micros()-_fl_t0;
 }
@@ -1016,6 +1064,14 @@ RTC_NOINIT_ATTR uint32_t g_sdaccess_magic;           // NOINIT (not DATA): DATA 
 // probe pulsing DTR/RTS). Logged at boot; harmless at a Gotek.
 RTC_NOINIT_ATTR uint32_t g_bootMagic;
 RTC_NOINIT_ATTR uint32_t g_bootCount;
+RTC_NOINIT_ATTR uint32_t g_doom_magic;   // lab13: == DOOM_MAGIC -> this software restart boots Doom
+RTC_NOINIT_ATTR uint32_t g_doom_rot;     // lab13: landscape orientation to use in Doom (0 or 2)
+// lab13c: crash forensics. The Doom boot has no SD card, so it leaves breadcrumbs in RTC memory
+// (survives a panic/watchdog reset) and the next normal GTi boot shows + logs them.
+RTC_NOINIT_ATTR uint32_t g_doom_trace;   // 0xD00D00ss = Doom boot reached stage ss; 0 = clean
+extern "C" { RTC_NOINIT_ATTR char g_doom_lastmsg[128]; }   // tail of Doom's console output (lprintf.c)
+static char g_doom_report[224]={0};
+static inline void doomStage(int s){ g_doom_trace=0xD00D0000u|(uint32_t)s; }
 #define SDACCESS_MAGIC 0x5DACCE55u
 static uint32_t g_sd_sectors=0;                       // real card size, set at SD-access boot
 static volatile uint32_t g_sd_rd=0,g_sd_wr=0;        // sector-op tallies for the activity readout
@@ -2186,7 +2242,7 @@ static void loadConfig(){
     else if(k=="SSTIME"){uint32_t s=(uint32_t)v.toInt(); if(s<2)s=2; if(s>120)s=120; g_ss_time_ms=s*1000UL;}
     else if(k=="SSFAV"){g_ss_fav=(v!="OFF"&&v!="0");}
     else if(k=="CAP"){int c=v.toInt(); if(c>=1&&c<=64)g_dongle_cap=c;}
-    else if(k=="CRACKTRO"){String cu=v;cu.trim();cu.toUpperCase(); if(cu=="OFF"||cu=="NONE")g_cracktro=-1; else if(cu=="OMEGA"||cu=="OMEGAWARE")g_cracktro=7; else if(cu=="DENISE")g_cracktro=8; else if(cu=="WRANGLER")g_cracktro=9; else if(cu=="RETRONAUT")g_cracktro=10; else{int c=v.toInt(); if(c>=0&&c<=7)g_cracktro=c; /* 7=OMEGAWARE; DENISE/WRANGLER/RETRONAUT are hidden, name-only */}}
+    else if(k=="CRACKTRO"){String cu=v;cu.trim();cu.toUpperCase(); if(cu=="OFF"||cu=="NONE")g_cracktro=-1; else if(cu=="OMEGA"||cu=="OMEGAWARE")g_cracktro=7; else if(cu=="DENISE")g_cracktro=8; else if(cu=="WRANGLER")g_cracktro=9; else if(cu=="RETRONAUT")g_cracktro=10; else{int c=v.toInt(); if(c==666){g_doom_egg=true;g_cracktro=0;} /* lab13: hidden - random cracktro + Doom trigger */ else if(c>=0&&c<=7)g_cracktro=c; /* 7=OMEGAWARE; DENISE/WRANGLER/RETRONAUT are hidden, name-only */}}
     else if(k=="SAVES"){v.toUpperCase(); g_saves_mode=(v=="OVERWRITE")?2:(v=="OFF"||v=="0")?0:1;}
     else if(k=="SDSPEED"){int hz=v.toInt(); g_sd_freq=(hz>=40||hz>=40000)?40000:20000;}
     else if(k=="LOG"){String lu=v;lu.toUpperCase();g_log_enabled=(lu!="OFF"&&lu!="0");}
@@ -2559,7 +2615,10 @@ static void drawCracktro(int style){
   unsigned long startMs=millis();
   gfx_fillScreen(TFT_BLACK);gfx_flush();
   while(true){
-    if(Touch_ReadFrame()){unsigned long t0=millis();while(Touch_ReadFrame()&&millis()-t0<500)delay(10);break;}
+    if(Touch_ReadFrame()){
+      uint16_t _tx=0,_ty=0; getTouchXY(&_tx,&_ty);
+      if(g_doom_egg && _tx<60 && _ty<60) doomLaunch();   // lab13: only returns if Doom could not start
+      unsigned long t0=millis();while(Touch_ReadFrame()&&millis()-t0<500)delay(10);break;}
     if(!g_loop_cracktro&&millis()-startMs>=6000)break;
     float t=(float)(millis()-startMs);
     if(omega)crkOmega(t);
@@ -5651,8 +5710,183 @@ static void sdFormatFat32AndReboot(){
   gfx_flush(); fwupWait();
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// lab13: DOOM — bridge for src/doom (C), WAD installer, one-shot boot
+// ═════════════════════════════════════════════════════════════════════════════
+extern "C" unsigned long gti_millis(void){ return millis(); }
+
+// Scale Doom's 320x240 8-bit frame onto the 480x320 landscape canvas (x*1.5, y*4/3) and push.
+// The JC3248 framebuffer is portrait-native 320x480 holding byte-swapped RGB565; lcdpal is
+// already byte-swapped, so this is one table lookup per pixel, written row-contiguously.
+extern "C" void gti_doom_present(const unsigned char* src,const unsigned short* pal,int w,int h){
+  static int16_t syOff[LCD_WIDTH]; static bool init=false; static int initRot=-1;
+  static bool firstFrame=true; if(firstFrame){ firstFrame=false; doomStage(7); }   // lab13c: engine is drawing
+  const bool flip=(g_rot==2);
+  if(!init||initRot!=g_rot){
+    for(int px=0;px<LCD_WIDTH;px++){ int vy=flip?(LCD_WIDTH-1-px):px; int sy=vy*h/LCD_WIDTH; if(sy>=h)sy=h-1; syOff[px]=(int16_t)sy; }
+    init=true; initRot=g_rot;
+  }
+  for(int py=0;py<LCD_HEIGHT;py++){
+    int vx=flip?py:(LCD_HEIGHT-1-py);
+    int sx=vx*w/LCD_HEIGHT; if(sx>=w)sx=w-1;
+    const unsigned char* col=src+sx;
+    uint16_t* row=&framebuffer[(size_t)py*LCD_WIDTH];
+    for(int px=0;px<LCD_WIDTH;px++) row[px]=pal[col[syOff[px]*w]];
+  }
+  gfx_flush();
+  vTaskDelay(1);   // let the idle task breathe (task watchdog) - costs ~1 ms a frame
+}
+
+// 1 = finger down, coordinates on the 480x320 canvas. Rides out up to 3 dropped
+// touch frames so a held d-pad does not stutter key-up/key-down.
+extern "C" int gti_doom_touch(int* x,int* y){
+  static int lx=0,ly=0,miss=99;
+  if(Touch_ReadFrame()){ uint16_t tx=0,ty=0; if(getTouchXY(&tx,&ty)){ lx=tx; ly=ty; miss=0; } }
+  else if(miss<99) miss++;
+  if(miss<=3){ *x=lx; *y=ly; return 1; }
+  return 0;
+}
+
+extern "C" void gti_doom_exit(void){
+  g_doom_magic=0; g_doom_trace=0;   // lab13c: a clean exit leaves nothing to report
+  gfx_fillScreen(TFT_BLACK); gfx_flush();
+  delay(100); ESP.restart();
+}
+
+static void doomMsg(const char* a,const char* b,uint16_t col){
+  gfx_fillScreen(TFT_BLACK);
+  gfx_setTextSize(3); gfx_setTextColor(0xF800,TFT_BLACK);
+  {const char*t="DOOM"; gfx_setCursor((gW-gfx_textWidth(t))/2,gH/2-50); gfx_print(t);}
+  gfx_setTextSize(1); gfx_setTextColor(col,TFT_BLACK);
+  if(a){gfx_setCursor((gW-gfx_textWidth(a))/2,gH/2); gfx_print(a);}
+  if(b){gfx_setCursor((gW-gfx_textWidth(b))/2,gH/2+14); gfx_print(b);}
+  gfx_flush();
+}
+
+// lab13c: I_Error (via I_SafeExit) lands here instead of exit(), which on the ESP32 is a silent
+// abort + reboot. Show the engine's last words on the panel, then go back to the GTi.
+extern "C" void gti_doom_fatal(int rc){
+  g_doom_trace=0; g_diagdisp=false;
+  g_doom_lastmsg[sizeof(g_doom_lastmsg)-1]=0;
+  gfx_fillScreen(TFT_BLACK);
+  gfx_setTextSize(2); gfx_setTextColor(0xF800,TFT_BLACK); gfx_setCursor(8,10); gfx_print("DOOM STOPPED");
+  gfx_setTextSize(1); gfx_setTextColor(TFT_WHITE,TFT_BLACK);
+  { const char* m=g_doom_lastmsg; int y=44; char line[80];
+    while(*m && y<gH-40){ int n=0; while(m[n] && n<76) n++; memcpy(line,m,n); line[n]=0; gfx_setCursor(8,y); gfx_print(line); m+=n; y+=12; } }
+  gfx_setTextColor(0xFD20,TFT_BLACK); gfx_setCursor(8,gH-20); gfx_print("Photo this screen for Claude - tap to return to the GTi");
+  gfx_flush();
+  Serial.printf("[doom] FATAL rc=%d: %s\n",rc,g_doom_lastmsg);
+  uint32_t t0=millis(); delay(800);
+  while(millis()-t0<60000){ if(Touch_ReadFrame()) break; delay(30); }
+  gti_doom_exit();
+}
+
+static const char* rstName(int r){
+  switch(r){ case ESP_RST_POWERON:return "power-on"; case ESP_RST_SW:return "software"; case ESP_RST_PANIC:return "PANIC (crash)";
+    case ESP_RST_INT_WDT:return "interrupt watchdog"; case ESP_RST_TASK_WDT:return "task watchdog"; case ESP_RST_WDT:return "watchdog";
+    case ESP_RST_BROWNOUT:return "BROWNOUT (power dip)"; default:return "other"; }
+}
+static const char* doomStageName(int s){
+  switch(s){ case 1:return "boot entered"; case 2:return "panel+touch up"; case 3:return "WAD found"; case 4:return "task started";
+    case 5:return "tables allocated"; case 6:return "engine starting (doom_main)"; case 7:return "in game (drawing frames)"; default:return "?"; }
+}
+
+static const esp_partition_t* doomPart(){ return esp_partition_find_first(DOOM_PART_TYPE,DOOM_PART_SUBTYPE,NULL); }
+
+// A WAD is "installed" when the partition starts with IWAD and its directory lies inside it.
+static bool doomWadInstalled(const esp_partition_t* p){
+  uint8_t h[12]; if(esp_partition_read(p,0,h,12)!=ESP_OK) return false;
+  if(memcmp(h,"IWAD",4)!=0) return false;
+  uint32_t n=h[4]|(h[5]<<8)|(h[6]<<16)|((uint32_t)h[7]<<24), ofs=h[8]|(h[9]<<8)|(h[10]<<16)|((uint32_t)h[11]<<24);
+  return n>0 && n<10000 && ofs>12 && (uint64_t)ofs+(uint64_t)n*16<=p->size;
+}
+
+// Copy /doom1.wad from the card into the partition (erase, write in 4 KB blocks, read-back compare).
+static bool doomInstallWad(const esp_partition_t* p){
+  File f=SD_MMC.open("/doom1.wad",FILE_READ);
+  if(!f){ doomMsg("No WAD installed.","Put the shareware doom1.wad in the card root.",0xFD20); delay(3500); return false; }
+  size_t sz=f.size();
+  uint8_t hdr[4]={0}; f.read(hdr,4); f.seek(0);
+  if(memcmp(hdr,"IWAD",4)!=0){ f.close(); doomMsg("doom1.wad is not an IWAD.",NULL,0xF800); delay(3000); return false; }
+  if(sz>p->size){ f.close(); doomMsg("That WAD does not fit.","Only the shareware doom1.wad (4.2 MB) is supported.",0xF800); delay(3500); return false; }
+  doomMsg("Installing doom1.wad into flash...","Erasing - do not power off",0x07FF);
+  size_t er=(sz+0xFFF)&~(size_t)0xFFF;
+  if(esp_partition_erase_range(p,0,er)!=ESP_OK){ f.close(); doomMsg("Flash erase failed.",NULL,0xF800); delay(3000); return false; }
+  uint8_t* buf=(uint8_t*)heap_caps_malloc(4096,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+  uint8_t* chk=(uint8_t*)heap_caps_malloc(4096,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+  if(!buf||!chk){ if(buf)free(buf); if(chk)free(chk); f.close(); return false; }
+  bool ok=true; size_t done=0; int lastPct=-1;
+  while(done<sz){
+    size_t n=sz-done; if(n>4096)n=4096;
+    if(f.read(buf,n)!=(int)n){ ok=false; break; }
+    if(esp_partition_write(p,done,buf,n)!=ESP_OK){ ok=false; break; }
+    if(esp_partition_read(p,done,chk,n)!=ESP_OK||memcmp(buf,chk,n)!=0){ ok=false; break; }
+    done+=n;
+    int pct=(int)(done*100/sz);
+    if(pct!=lastPct&&(pct%2==0)){ lastPct=pct;
+      int bw=gW-80, bx=40, by=gH/2+34;
+      gfx_drawRect(bx-1,by-1,bw+2,12,0x07FF); gfx_fillRect(bx,by,bw*pct/100,10,0x07FF);
+      gfx_fillRect(bx,by+14,bw,10,TFT_BLACK); gfx_setTextSize(1); gfx_setTextColor(TFT_WHITE,TFT_BLACK);
+      String t=String(pct)+"%"; gfx_setCursor((gW-gfx_textWidth(t))/2,by+14); gfx_print(t); gfx_flush(); }
+  }
+  free(buf); free(chk); f.close();
+  if(!ok){ esp_partition_erase_range(p,0,4096); doomMsg("Install failed - try again.",NULL,0xF800); delay(3000); return false; }
+  return doomWadInstalled(p);
+}
+
+// Called from the cracktro when armed and the top-left corner is tapped. Returns only on failure.
+static void doomLaunch(){
+  const esp_partition_t* p=doomPart();
+  if(!p){ doomMsg("This firmware's partition table has no Doom space.","Flash it once over USB (full erase) to add it.",0xFD20); delay(3500); return; }
+  if(!doomWadInstalled(p) && !doomInstallWad(p)) return;
+  doomMsg("Rise and shine...",NULL,0x07E0);
+  g_doom_rot=((g_rot==2)?2:0)|(g_diagdisp?0x100:0); g_doom_magic=DOOM_MAGIC;   // lab13b: bit 8 carries DIAGDISP into Doom
+  delay(600); ESP.restart();
+}
+
+static void doomTask(void*){
+  static const char* argv[]={"doom","-cout","ICWEFDA",NULL};
+  doomStage(4);
+  if(!gti_doom_alloc()){ doomMsg("Not enough memory for Doom.",NULL,0xF800); delay(2500); gti_doom_exit(); }
+  doomStage(5);
+  Serial.printf("[doom] tables up: int=%u psram=%u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+  doomStage(6);
+  doom_main(3,argv);
+  gti_doom_exit();   // D_DoomLoop never returns; this is belt and braces
+}
+
+// The Doom boot: no card, no USB, no radio, no scan - just the panel, touch and the engine.
+static void doomBoot(){
+  g_doom_lastmsg[0]=0; doomStage(1);                // lab13c: breadcrumbs start
+  g_rot=((g_doom_rot&3)==2)?2:0; gW=480; gH=320;
+  g_diagdisp=(g_doom_rot&0x100)!=0;                 // lab13b: FPS/RAM overlay in Doom when DIAGDISP=ON
+  applyTheme(0); displayInit(); touchInit();
+  g_strip_rows=g_strip_cap; g_flush_us=0;          // ping-pong push in gfx_flush (lab13b), no sleeps
+  gfx_fillScreen(TFT_BLACK); gfx_flush();
+  doomStage(2);
+  const esp_partition_t* p=doomPart();
+  if(!p||!doomWadInstalled(p)){ doomMsg("No WAD in flash.",NULL,0xF800); delay(2500); gti_doom_exit(); }
+  doomStage(3);
+  doomMsg("Loading...",NULL,0x07E0);               // lab13c: something on screen while the engine initialises
+  heap_caps_malloc_extmem_enable(64);               // zone/level data to PSRAM; internal RAM keeps the screen + stack
+  Serial.printf("[doom] int=%u psram=%u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+  xTaskCreatePinnedToCore(doomTask,"doom",24576,NULL,5,NULL,1);   // Espressif ran it in 22.5 KB
+  vTaskDelete(NULL);                                 // retire the Arduino loop task; Doom owns the board now
+}
+
 void setup(){
   Serial.begin(115200);delay(200);
+  // lab13c: did the last Doom boot die? (trace survives panic/WDT resets; never trusted after power-on)
+  if((g_doom_trace&0xFFFF0000u)==0xD00D0000u && esp_reset_reason()!=ESP_RST_POWERON){
+    int st=(int)(g_doom_trace&0xFF), rr=(int)esp_reset_reason();
+    g_doom_lastmsg[sizeof(g_doom_lastmsg)-1]=0;
+    for(char*q=g_doom_lastmsg;*q;q++) if(*q<32||*q>126)*q='?';
+    snprintf(g_doom_report,sizeof g_doom_report,"[doom] died at stage %d (%s), reset %d (%s), last: %s",st,doomStageName(st),rr,rstName(rr),g_doom_lastmsg);
+  }
+  g_doom_trace=0;
+  if(g_doom_magic==DOOM_MAGIC && esp_reset_reason()==ESP_RST_SW){ g_doom_magic=0; doomBoot(); }   // lab13: one-shot
+  g_doom_magic=0;
+  decodersInit();   // lab13: cover decoders from the internal heap (not a Doom boot)
   // v5.1: SD-access is requested only when our NOINIT flag survived a *software* restart
   // (cold power-on => reset reason POWERON => never a false trigger from RTC garbage).
   bool sdAccessReq=(g_sdaccess_magic==SDACCESS_MAGIC && esp_reset_reason()==ESP_RST_SW);
@@ -5660,6 +5894,17 @@ void setup(){
   Serial.printf("[BOOT] rst=%d magic=%08X sdAccess=%d\n",(int)esp_reset_reason(),(unsigned)g_sdaccess_magic,(int)sdAccessReq);
   applyTheme(0);displayInit();touchInit();
   gfx_fillScreen(TFT_BLACK);gfx_flush();
+  if(g_doom_report[0]){                               // lab13c: show why Doom did not make it
+    Serial.println(g_doom_report);
+    gfx_setTextSize(2); gfx_setTextColor(0xF800,TFT_BLACK); gfx_setCursor(8,10); gfx_print("DOOM CRASHED");
+    gfx_setTextSize(1); gfx_setTextColor(TFT_WHITE,TFT_BLACK);
+    { const char* m=g_doom_report+7; int y=44; char line[64];
+      while(*m && y<gH-40){ int n=0; while(m[n] && n<50) n++; memcpy(line,m,n); line[n]=0; gfx_setCursor(8,y); gfx_print(line); m+=n; y+=12; } }
+    gfx_setTextColor(0xFD20,TFT_BLACK); gfx_setCursor(8,gH-20); gfx_print("Photo this for Claude - tap to continue");
+    gfx_flush();
+    { uint32_t t0=millis(); delay(800); while(millis()-t0<30000){ if(Touch_ReadFrame()) break; delay(30); } }
+    gfx_fillScreen(TFT_BLACK);gfx_flush();
+  }
   // 5.9.35: the RAM disk is allocated AFTER the config is read (see below) so
   // DISKMAXKB= can size it. Nothing between here and there touches g_disk.
   SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0);delay(100);
@@ -5687,6 +5932,7 @@ void setup(){
     relayout();                 // apply ROTATE/COMPACT from config before first draw
     gLog("[panel] strips=%d (cap %d) flushdelay=%dus  [lab3: STRIPROWS= / FLUSHUS=]\n",g_strip_rows,g_strip_cap,g_flush_us);
     gLog("\n=== BOOT %s === reset=%d boot=%u int=%u psram=%u ===\n",FW_VERSION,(int)esp_reset_reason(),(unsigned)g_bootCount,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+    if(g_doom_report[0]){ gLog("%s\n",g_doom_report); }   // lab13c
     heap_caps_malloc_extmem_enable(16);   // 5.8.9: library index/list onto idle PSRAM, off the ~180KB internal SRAM
     uint32_t _tscan=millis();
     listImages(SD_MMC,g_files);

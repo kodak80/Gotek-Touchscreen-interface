@@ -119,7 +119,7 @@ static void hSysInfo() {
   j += "\"game_count\":0,\"file_count\":0,";
   j += "\"loaded_game\":\"" + wpJsonEscape(g_loaded ? g_loaded_name : String("none")) + "\",";
   j += "\"mode\":\"" + String(g_mode == MODE_ADF ? "ADF" : g_mode == MODE_DSK ? "DSK" : "GEN") + "\",";
-  j += "\"theme\":\"GTI\",";
+  j += "\"theme\":\"OMEGA_DARK\",";   // 5.9.39: name a preset the shared SPA knows, so it paints OMEGAWARE dark blue from the first request (was "GTI" = unknown = Workbench grey)
   j += "\"wifi_clients\":0,";
   j += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
   j += "\"internet\":" + String(sta ? "true" : "false") + ",";
@@ -139,13 +139,15 @@ static void hConfigGet() {
   String j = "{";
   j += "\"WIFI_CLIENT_ENABLED\":\"1\",";
   j += "\"WIFI_CLIENT_SSID\":\"" + wpJsonEscape(g_home_ssid) + "\",";
-  j += "\"WIFI_CLIENT_PASS\":\"" + wpJsonEscape(g_home_pass) + "\",";
+  j += "\"WIFI_CLIENT_PASS\":\"\",";                                       // 5.9.39 (#24): never echo secrets to the LAN; the form shows blank = unchanged
+  j += "\"HAS_WIFI_PASS\":\"" + String(g_home_pass.length() ? "1" : "0") + "\",";
   j += "\"DAV_ENABLED\":\"" + String(g_dav_on ? "1" : "0") + "\",";
   j += "\"DAV_HOST\":\"" + wpJsonEscape(g_dav_host) + "\",";
   j += "\"DAV_PORT\":\"" + String(g_dav_port) + "\",";
   j += "\"DAV_HTTPS\":\"" + String(g_dav_https ? "1" : "0") + "\",";
   j += "\"DAV_USER\":\"" + wpJsonEscape(g_dav_user) + "\",";
-  j += "\"DAV_PASS\":\"" + wpJsonEscape(g_dav_pass) + "\",";
+  j += "\"DAV_PASS\":\"\",";                                               // 5.9.39 (#24): masked, see above
+  j += "\"HAS_DAV_PASS\":\"" + String(g_dav_pass.length() ? "1" : "0") + "\",";
   j += "\"DAV_PATH\":\"" + wpJsonEscape(g_dav_path) + "\",";
   j += "\"CAROUSEL\":\"" + String(g_car_bootmode == 2 ? "LAST" : g_car_bootmode == 1 ? "ON" : "OFF") + "\",";
   j += "\"SCREENSAVER\":\"" + String(g_ss_enabled ? "ON" : "OFF") + "\",";
@@ -164,7 +166,7 @@ static void hConfigGet() {
   j += "\"NESTING\":\"" + String(g_nesting ? "ON" : "OFF") + "\",";
   j += "\"HIVEMIND\":\"" + String(g_hivemind ? "ON" : "OFF") + "\",";
   j += "\"CAP\":\"" + String(g_dongle_cap) + "\",";
-  j += "\"CRACKTRO\":\"" + String(g_cracktro) + "\",";
+  j += "\"CRACKTRO\":\"" + (g_cracktro < 0 ? String("OFF") : String(g_cracktro)) + "\",";   // 5.9.41: OFF is a real value (-1); the page has a dropdown for it now
   j += "\"LOOP\":\"" + String(g_loop_cracktro ? "1" : "0") + "\"";
   j += "}";
   webPanelHttp.send(200, "application/json", j);
@@ -178,7 +180,10 @@ static void hConfigPost() {
     { "DAV_PATH", "DAV_PATH", &g_dav_path },
   };
   for (auto &f : sv) {
-    if (webPanelHttp.hasArg(f.form)) { *f.dst = webPanelHttp.arg(f.form); saveConfigKey(f.cfg, *f.dst); }
+    if (!webPanelHttp.hasArg(f.form)) continue;
+    const String v = webPanelHttp.arg(f.form);
+    if (f.dst == &g_dav_pass && v.length() == 0) continue;   // 5.9.39: GET masks the password, so a blank re-submit means "keep it"
+    *f.dst = v; saveConfigKey(f.cfg, *f.dst);
   }
   if (webPanelHttp.hasArg("DAV_PORT")) {
     const int p = webPanelHttp.arg("DAV_PORT").toInt();
@@ -643,6 +648,10 @@ static void webPanelRegister() {
   webPanelHttp.on("/api/sd/delete",  HTTP_POST, hSdDelete);
   webPanelHttp.on("/api/sd/mkdir",   HTTP_POST, hSdMkdir);
   webPanelHttp.on("/files",          HTTP_GET,  hFiles);
+  // 5.9.39: the shared SPA polls /api/fleet every 15 s (loadFleet) and toasts any non-200 as
+  // "Error: Not available on this device". The panel has no fleet roster (that is the GTI_FLEET
+  // build), so answer with an empty roster and the SPA simply hides the bar.
+  webPanelHttp.on("/api/fleet",      HTTP_GET,  []() { webPanelHttp.send(200, "application/json", "{\"devices\":[]}"); });
 #endif
   webPanelHttp.onNotFound([]() { webPanelHttp.send(404, "application/json", "{\"error\":\"Not available on this device\"}"); });
 }
