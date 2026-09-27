@@ -19,6 +19,14 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.41-lab15h",
+        "ch": "beta",
+        "date": "2026-09-27",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15h-update.bin",
+        "note": "Testing build. Replaces lab15e and lab15f (loading a disk froze them). Game saves over the cable for ADF, DSK and GENERIC (HFE, ST, IMG ...) - SAVES=COPY (default) writes 'Game.sav.<ext>' beside the game, OVERWRITE writes into the image; the GTi's card writes and the Gotek's reads take turns, so saving can't damage the card's folders (the lab15c problem). For HFE saves set BIGDISK=ON. Big libraries: compact game list (tested with 20,000 games) and fast loading (20,000 games boot in ~3 s from the cache). One LIBRARY button on the list cycles ADF/DSK/GEN (Settings keeps LIBRARY); a library switch no longer loses its descriptions.",
+        "latest": false
+      },
+      {
         "v": "5.9.41-lab15f",
         "ch": "beta",
         "date": "2026-09-27",
