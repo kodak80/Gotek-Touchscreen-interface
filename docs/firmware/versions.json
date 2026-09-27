@@ -23,7 +23,7 @@
         "ch": "beta",
         "date": "2026-09-27",
         "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15f-update.bin",
-        "note": "Testing build. Everything in lab15e (safe cable saves for ADF, DSK and GENERIC/HFE/ST, compact game list - tested with 20,000 games) PLUS faster loading of big libraries: the cache files are read and written in large blocks (same files on the card), a card with no covers skips the per-game cover search, and the cover-building screens redraw once a second instead of every 25 games.",
+        "note": "Testing build. Everything in lab15e (safe cable saves for ADF, DSK and GENERIC/HFE/ST, compact game list - tested with 20,000 games) PLUS faster loading of big libraries: the cache files are read and written in large blocks (same files on the card), a card with no covers skips the per-game cover search, and the cover-building screens redraw once a second instead of every 25 games. KNOWN ISSUE: loading a disk over the cable freezes the GTi (the Gotek/PC never sees the disk, EJECT locks the screen) - do not use; use 5.9.41-lab15h.",
         "latest": false
       },
       {
@@ -31,7 +31,7 @@
         "ch": "beta",
         "date": "2026-09-27",
         "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15e-update.bin",
-        "note": "Testing build. Replaces lab15c. Game saves over the cable for ADF, DSK and GENERIC (HFE, ST, IMG ...) - SAVES=COPY (default) writes 'Game.sav.<ext>' beside the game, OVERWRITE writes into the image. FIX: the GTi's card writes (saves, log, settings) and the Gotek's reads now take turns - in lab15c a save made while the Gotek was reading could damage the card's folders. A failed save is retried once and says why in GTI/gti.log; a save copy that can't be completed is thrown away. Files the GTi writes get a real date. For HFE saves set BIGDISK=ON. Also: compact game list - big libraries use about half the memory.",
+        "note": "Testing build. Replaces lab15c. Game saves over the cable for ADF, DSK and GENERIC (HFE, ST, IMG ...) - SAVES=COPY (default) writes 'Game.sav.<ext>' beside the game, OVERWRITE writes into the image. FIX: the GTi's card writes (saves, log, settings) and the Gotek's reads now take turns - in lab15c a save made while the Gotek was reading could damage the card's folders. A failed save is retried once and says why in GTI/gti.log; a save copy that can't be completed is thrown away. Files the GTi writes get a real date. For HFE saves set BIGDISK=ON. Also: compact game list - big libraries use about half the memory. KNOWN ISSUE: loading a disk over the cable freezes the GTi (the Gotek/PC never sees the disk, EJECT locks the screen) - do not use; use 5.9.41-lab15h.",
         "latest": false
       },
       {

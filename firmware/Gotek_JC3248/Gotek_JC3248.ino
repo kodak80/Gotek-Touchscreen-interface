@@ -49,7 +49,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15f-JC3248"  // lab15f: cache files (.index/.gamecache/.nfocache) read + written in 16 KB blocks instead of a character/field at a time (same formats); cover pass skips all lookups when the scan found no covers and redraws its progress once a second; includes lab15b-e
+#define FW_VERSION "5.9.41-lab15h-JC3248"  // lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -981,8 +981,9 @@ static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n);    // fwd:
 // write command, then status polls while the card programs, and a read slipped in between lands while
 // the card is busy. kodak80's gti.log, 27 Sep: a 2 MB .sav.hfe copy made while the Gotek was reading
 // gave 16 metadata writes that read back different, one that never did - and that game's folder showed
-// up EMPTY on the PC. Now every FatFs transfer (sgLowRead/sgLowWrite, under the SD guard) and every
-// Gotek read hold this lock for the length of the transfer, so they queue instead of interleaving.
+// up EMPTY on the PC. Now every FatFs transfer (sgLowRead/sgLowWrite, under the SD guard) holds this
+// lock for the length of the transfer, so they queue instead of interleaving. The Gotek's reads are
+// among them: SD_MMC.readRAW() is disk_read() on the guarded drive (lab15h - never lock around it).
 static SemaphoreHandle_t g_sdlock=nullptr;
 static inline void sdLock(){ if(g_sdlock) xSemaphoreTake(g_sdlock,portMAX_DELAY); }
 static inline void sdUnlock(){ if(g_sdlock) xSemaphoreGive(g_sdlock); }
@@ -1099,8 +1100,11 @@ static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n){
     }
     bool ok=false; uint32_t card=mapSector(fsec,&ok);
     if(!ok){memset(out+done,0,n-done);done=n;break;}
-    sdLock(); bool rok=SD_MMC.readRAW(g_alias_tmp,card); sdUnlock();   // lab15e
-    if(!rok)return (int32_t)done;
+    // lab15h: NO sdLock() here. SD_MMC.readRAW() is disk_read() on the card's FatFs drive, which is our
+    // guard driver -> sgLowRead(), and that already holds the SD lock for the transfer. Taking it here as
+    // well (lab15e-g) locked the non-recursive mutex twice in the USB task: the Gotek's first read of a
+    // mounted disk never returned (kodak80: "insert does not mount", then EJECT froze the screen).
+    if(!SD_MMC.readRAW(g_alias_tmp,card))return (int32_t)done;
     memcpy(out+done,g_alias_tmp+so,c); done+=c;
   }
   return (int32_t)done;
@@ -1760,7 +1764,13 @@ static bool listImages(fs::FS&fs,PathList&out){
   // lab14b: the .index alone is not enough. Without a .gamecache the game list is rebuilt, and
   // that needs this boot's walk harvest (covers, blurbs, HD) - otherwise every game falls back to
   // per-game SD_MMC.exists() probes (hours on a big card). The one-pass walk is cheap; do it.
-  if(SD_MMC.exists(gameCachePath().c_str())&&readIndexCache(out)){savSetLoad();return!out.empty();}   // lab14i: no walk -> the save list from the card
+  if(SD_MMC.exists(gameCachePath().c_str())&&readIndexCache(out)){
+    // lab15g: NO walk this time, so nothing gathered by an earlier walk (another library's, e.g. an empty DSK
+    // folder scanned a minute ago) may be taken as this library's truth: that made every ADF game "no
+    // description" and "no cover" after a DSK -> ADF switch. Back to "not walked": descriptions come from
+    // .nfocache and covers from the .gamecache / a one-folder listing, exactly as on a warm boot.
+    g_sidecars_harvested=false; g_coverset.clear(); g_nfoharvest.clear(); g_manualset.clear(); g_hdset.clear();
+    savSetLoad();return!out.empty();}   // lab14i: no walk -> the save list from the card
   scanImagesAnimated(out);writeIndexCache(out);return!out.empty();
 }
 
@@ -3668,10 +3678,12 @@ static void drawModeBar(){
   if(g_categories){   // v5.6.0: mode moved to INFO; this slot becomes the Categories button
     gfx_fillRoundRect(LIST_X+4,STATUS_H+2,104,14,7,COL_AMBER);gfx_setTextColor(TFT_BLACK,COL_AMBER);gfx_setCursor(LIST_X+10,STATUS_H+6);gfx_print(g_libpath.length()?"< CATEGORY":"CATEGORIES");
   } else {
-  bool isA=g_mode==MODE_ADF,isD=g_mode==MODE_DSK,isG=g_mode==MODE_GEN;   // v5.2: three library modes
-  gfx_fillRoundRect(LIST_X+4,STATUS_H+2,32,14,7,isA?COL_ACCENT:COL_BG);gfx_setTextColor(isA?COL_AMBER:COL_DIM,isA?COL_ACCENT:COL_BG);gfx_setCursor(LIST_X+9,STATUS_H+6);gfx_print("ADF");
-  gfx_fillRoundRect(LIST_X+40,STATUS_H+2,32,14,7,isD?COL_ACCENT:COL_BG);gfx_setTextColor(isD?COL_AMBER:COL_DIM,isD?COL_ACCENT:COL_BG);gfx_setCursor(LIST_X+45,STATUS_H+6);gfx_print("DSK");
-  gfx_fillRoundRect(LIST_X+76,STATUS_H+2,32,14,7,isG?COL_ACCENT:COL_BG);gfx_setTextColor(isG?COL_AMBER:COL_DIM,isG?COL_ACCENT:COL_BG);gfx_setCursor(LIST_X+81,STATUS_H+6);gfx_print("GEN");   // v5.2 generic/any-machine
+  // lab15g: ONE library button (Mez: "just put 1 button and change modes between it"). Tapping it cycles
+  // ADF -> DSK -> GEN; Settings -> LIBRARY stays the main place to pick one. Same 104 px the three
+  // 32 px pills used to share, so the whole slot is one target.
+  { const char* nm=g_mode==MODE_ADF?"LIBRARY: ADF":g_mode==MODE_DSK?"LIBRARY: DSK":"LIBRARY: GEN";
+    gfx_fillRoundRect(LIST_X+4,STATUS_H+2,104,14,7,COL_ACCENT);gfx_setTextColor(COL_AMBER,COL_ACCENT);
+    gfx_setCursor(LIST_X+4+(104-gfx_textWidth(nm))/2,STATUS_H+6);gfx_print(nm); }
   }
   gfx_fillRoundRect(LIST_X+112,STATUS_H+2,62,14,7,COL_BLUE);gfx_setTextColor(TFT_WHITE,COL_BLUE);gfx_setCursor(LIST_X+118,STATUS_H+6);gfx_print("USR-DSK");   // v4.9.7 user-disk manager
   gfx_setTextColor(COL_MID,COL_BAR);String gt=String(g_games.size())+" games";gfx_setCursor(mbR-gfx_textWidth(gt)-6,STATUS_H+6);gfx_print(gt);
@@ -7031,6 +7043,11 @@ static void doCategoryBrowse(){
 
 // v5.2: switch the browser to a library mode (ADF / DSK / GEN) — reload list, rebuild games, redraw.
 static void switchLib(int m){   // int, not DiskMode: Arduino auto-generates this prototype ABOVE the enum decl, so an enum param won't compile
+  { // lab15g: say so AT ONCE - on a big card the load takes seconds and a silent screen reads as a missed tap
+    const char* t=m==MODE_ADF?"Loading ADF library...":m==MODE_DSK?"Loading DSK library...":"Loading GEN library...";
+    gfx_setTextSize(2); int tw=gfx_textWidth(t), bw=tw+32, bh=40, bx=(gW-bw)/2, by=(gH-bh)/2;
+    gfx_fillRoundRect(bx,by,bw,bh,10,COL_ACCENT); gfx_setTextColor(TFT_WHITE,COL_ACCENT);
+    gfx_setCursor(bx+16,by+12); gfx_print(t); gfx_flush(); }
   g_mode=(DiskMode)m;g_libpath="";
   if(g_categories){reloadLevel();}
   else{g_files.release();gamesClear();   // lab14n: free the old library first (clear() kept the games + the vector's block)
@@ -7183,9 +7200,7 @@ static void handleTap(uint16_t px,uint16_t py){
   if(py>=STATUS_H&&py<STATUS_H+MODE_BAR_H&&px>=LIST_X){
     if(g_categories){ if(px<LIST_X+110){ g_libpath=""; reloadLevel(); doCategoryBrowse(); drawFullUI(); gfx_flush(); return; } }   // v5.6.0: Categories button = jump to top + browse
     else{
-    if(px<LIST_X+38){ if(g_mode!=MODE_ADF)switchLib(MODE_ADF); return; }
-    if(px<LIST_X+74){ if(g_mode!=MODE_DSK)switchLib(MODE_DSK); return; }
-    if(px<LIST_X+110){ if(g_mode!=MODE_GEN)switchLib(MODE_GEN); return; }   // v5.2 GEN library
+    if(px<LIST_X+110){ switchLib((g_mode+1)%3); return; }   // lab15g: one button, cycles ADF->DSK->GEN (was three 36 px targets)
     }
     if(px<LIST_X+174){String p=doUserDisks(); if(p.length()){ if(doLoadSelected(p)){g_loaded_game_idx=-1;String nm=p;int s=nm.lastIndexOf('/');if(s>=0)nm=nm.substring(s+1);int d=nm.lastIndexOf('.');if(d>0)nm=nm.substring(0,d);g_loaded_name=nm;} } drawFullUI();gfx_flush();return;}}   // v4.9.7 USR-DSK
 
