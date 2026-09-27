@@ -43,12 +43,13 @@
 #include "gti_fatwalk.h"   // 5.9.41-lab14: read .nfo heads straight off the directory entry (no open-by-name)
 #include "gti_sdguard.h"   // lab14g: FatFs metadata guard between FatFs and the SD driver
 #include "gti_pathlist.h"  // lab15a: the disk-image list, compact (each folder once, each file name once)
+#include "gti_bufio.h"    // lab15f: block reads/writes for the cache files
 #include "gti_gamestore.h" // lab15b: a game record is 36 B with its text packed in one PSRAM arena (was ~177 B with 3-4 heap blocks)
 #include "diskio_impl.h"   // lab14g: ff_diskio_register / ff_diskio_get_drive
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15e-JC3248"  // lab15e: ONE user of the SD card at a time - the Gotek's reads (USB task) and every FatFs transfer (saves, log, covers) take the same lock; a save that fails is retried once, not 5 times; includes lab15b/c/d
+#define FW_VERSION "5.9.41-lab15f-JC3248"  // lab15f: cache files (.index/.gamecache/.nfocache) read + written in 16 KB blocks instead of a character/field at a time (same formats); cover pass skips all lookups when the scan found no covers and redraws its progress once a second; includes lab15b-e
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -1198,13 +1199,21 @@ static bool onStartStopSD(uint8_t,bool start,bool load_eject){if(load_eject&&!st
 // SD + INDEX CACHE
 // ════════════════════════════════════════════════════════════════════════════
 static String indexFilePath(){return g_mode==MODE_ADF?"/ADF/.index":g_mode==MODE_DSK?"/DSK/.index":"/GENERIC/.index";}
-static void writeIndexCache(const PathList&v){ if(g_nocache)return;File f=SD_MMC.open(indexFilePath().c_str(),FILE_WRITE);if(!f)return;f.println("#COUNT="+String(v.size()));for(size_t i=0;i<v.size();i++)f.println(v[i]);f.close();}   // lab15a
+static void writeIndexCache(const PathList&v){ if(g_nocache)return;File f=SD_MMC.open(indexFilePath().c_str(),FILE_WRITE);if(!f)return;
+  { BufWr w(f); w.str("#COUNT="); w.num((long)v.size()); w.nl(); for(size_t i=0;i<v.size();i++){ w.str(v[i].c_str()); w.nl(); } }   // lab15f: 16 KB blocks, same bytes as println
+  f.close();}   // lab15a
 static bool readIndexCache(PathList&out){ if(g_nocache){out.clear();return false;} bcSet(BC_INDEXREAD,0);out.clear();File f=SD_MMC.open(indexFilePath().c_str(),FILE_READ);if(!f){return false;}
-  long declaredCount=-1;
-  while(f.available()){String l=f.readStringUntil('\n');l.trim();if(!l.length())continue;
-    if(l.startsWith("#COUNT=")){declaredCount=l.substring(7).toInt();if(declaredCount>0)out.reserve(declaredCount);continue;}
-    out.push_back(l);}
+  long declaredCount=-1; uint32_t _t0=millis(); bool _cut=false;
+  { BufRd r(f); const size_t LM=1024; char* l=(char*)malloc(LM);    // lab15f: 16 KB block reads, no String per line
+    if(!l){ f.close(); return false; }
+    size_t n; bool cut;
+    while(r.line(l,LM,n,cut)){ if(cut)_cut=true; if(!n)continue;
+      if(!strncmp(l,"#COUNT=",7)){declaredCount=atol(l+7);if(declaredCount>0)out.reserve(declaredCount);continue;}
+      out.push_back(l);}
+    free(l); }
   f.close();
+  if(_cut){ gLog("[index] a path longer than 1023 chars - rebuilding\n"); out.clear(); return false; }
+  gLog("[index] %u paths read in %lums\n",(unsigned)out.size(),(unsigned long)(millis()-_t0));
   out.sort(); out.compact(); out.shrink_to_fit();   // lab15a: the .index is written sorted; pack it (same order)
   // Validate: declared count must match actual lines read (catches partial writes/corruption)
   if(declaredCount>=0&&declaredCount!=(long)out.size()){out.clear();return false;}
@@ -2033,6 +2042,7 @@ static bool lazyDirCovers(const String& d){
   return true;
 }
 static bool findJPGFor(const String&p,String&out){ if(!g_covers_on){out="";return false;}
+  if(g_sidecars_harvested&&g_coverset.empty()){out="";return false;}   // lab15f: this boot's walk found NO covers at all - nothing to look up (was ~2 ms a game building 9 names)
   String b=basenameNoExt(filenameOnly(p)),d=parentDir(p),gb=getGameBaseName(p);
   // 5.3.7: VFAT lookups are case-insensitive, so the upper-case variants were pure
   // redundancy (6 probes -> 3). Name stems tried in priority order: exact, game base
@@ -2143,15 +2153,16 @@ static String gameCachePath(){return g_mode==MODE_ADF?"/ADF/.gamecache":g_mode==
 static bool coverCutDir(int fileIdx){ return g_fw_cutdir.length() && fileIdx>=0 && fileIdx<(int)g_files.size() && parentDir(g_files[fileIdx]).equalsIgnoreCase(g_fw_cutdir); }
 static void writeGameCache(){ if(g_nocache)return;
   File f=SD_MMC.open(gameCachePath().c_str(),FILE_WRITE);if(!f)return;
-  f.println("#V=590");                            // 5.9.0: bump invalidates pre-shard caches -> one clean rebuild into the bucketed .thumbs
-  f.println("#FILES="+String(g_files.size()));  // bind to the index this was built from
-  if(g_covers_on)f.println("#NC=1");            // lab14i: a "?" below is a real "no cover" (found by a scan with covers on) - trusted until the next RESCAN
+  { BufWr w(f);                                   // lab15f: 16 KB blocks - same bytes as the print/println calls it replaces
+  w.str("#V=590"); w.nl();                        // 5.9.0: bump invalidates pre-shard caches -> one clean rebuild into the bucketed .thumbs
+  w.str("#FILES="); w.num((long)g_files.size()); w.nl();   // bind to the index this was built from
+  if(g_covers_on){ w.str("#NC=1"); w.nl(); }      // lab14i: a "?" below is a real "no cover" (found by a scan with covers on) - trusted until the next RESCAN
   for(auto&g:g_games){
-    f.print(g.name);f.print("|");f.print(g.first_file_idx);f.print("|");
-    f.print(g.disk_count);f.print("|");f.print((g.jpg_path=="?"&&coverCutDir(g.first_file_idx))?String(""):g.jpg_path);f.print("|");
-    for(int i=0;i<(int)g.disk_indices.size();i++){if(i>0)f.print(",");f.print(g.disk_indices[i]);}
-    f.println();
-  }
+    w.str(g.name.c_str()); w.str("|"); w.num(g.first_file_idx); w.str("|");
+    w.num(g.disk_count); w.str("|"); if(!(g.jpg_path=="?"&&coverCutDir(g.first_file_idx))) w.str(g.jpg_path.c_str()); w.str("|");
+    for(int i=0;i<(int)g.disk_indices.size();i++){if(i>0)w.str(",");w.num(g.disk_indices[i]);}
+    w.nl();
+  } }
   f.close();
 }
 
@@ -2160,28 +2171,34 @@ static bool readGameCache(){ if(g_nocache){gamesClear();return false;}
   File f=SD_MMC.open(gameCachePath().c_str(),FILE_READ);
   if(!f){return false;}
   long declaredFiles=-1; int cacheVer=-1; bool ncOk=false;   // lab14i: ncOk = this cache's "?" marks are real
-  while(f.available()){
-    String line=f.readStringUntil('\n');line.trim();if(!line.length())continue;
-    if(line.startsWith("#V=")){cacheVer=line.substring(3).toInt();continue;}
-    if(line.startsWith("#FILES=")){declaredFiles=line.substring(7).toInt();continue;}
-    if(line.startsWith("#NC=")){ncOk=(line.substring(4).toInt()==1);continue;}   // lab14i
-    int p1=line.indexOf('|');if(p1<0)continue;
-    int p2=line.indexOf('|',p1+1);if(p2<0)continue;
-    int p3=line.indexOf('|',p2+1);if(p3<0)continue;
-    int p4=line.indexOf('|',p3+1);if(p4<0)continue;
+  uint32_t _t0=millis();
+  const size_t LM=16384; char* line=(char*)malloc(LM);      // lab15f: 16 KB block reads, fields cut in place - no String per line
+  if(!line){ f.close(); return false; }
+  { BufRd r(f); size_t n; bool cut;
+  while(r.line(line,LM,n,cut)){ if(!n)continue;
+    if(cut){ free(line); f.close(); gLog("[games] cache line too long - rebuilding\n"); gamesClear(); return false; }
+    if(!strncmp(line,"#V=",3)){cacheVer=atoi(line+3);continue;}
+    if(!strncmp(line,"#FILES=",7)){declaredFiles=atol(line+7);continue;}
+    if(!strncmp(line,"#NC=",4)){ncOk=(atol(line+4)==1);continue;}   // lab14i
+    char* p1=strchr(line,'|');if(!p1)continue;
+    char* p2=strchr(p1+1,'|');if(!p2)continue;
+    char* p3=strchr(p2+1,'|');if(!p3)continue;
+    char* p4=strchr(p3+1,'|');if(!p4)continue;
     GameEntry e;
-    e.name=line.substring(0,p1);
-    e.first_file_idx=line.substring(p1+1,p2).toInt();
-    e.disk_count=line.substring(p2+1,p3).toInt();
-    e.jpg_path=line.substring(p3+1,p4);
+    e.name.set(line,(size_t)(p1-line));
+    e.first_file_idx=(int)atol(p1+1);
+    e.disk_count=(int)atol(p2+1);
+    e.jpg_path.set(p3+1,(size_t)(p4-p3-1));
     if(e.jpg_path=="?"&&!ncOk)e.jpg_path="";  // lab14i: an old cache's "?" is not trusted; a #NC=1 cache's is (until the next RESCAN) - a warm boot no longer re-searches the card for every cover-less game
     { static std::vector<int> di; di.clear();       // lab15b: parse, then pack into the arena in one piece
-      const char* q=line.c_str()+p4+1; while(*q){ di.push_back(atoi(q)); while(*q&&*q!=',')q++; if(*q==',')q++; }
+      const char* q=p4+1; while(*q){ di.push_back(atoi(q)); while(*q&&*q!=',')q++; if(*q==',')q++; }
       e.disk_indices.set(di.data(),di.size()); }
     if(e.first_file_idx>=0&&e.first_file_idx<(int)g_files.size()) g_games.push_back(e);
-    if(g_gtext.failed()){ f.close(); gLog("[games] cache read: out of PSRAM at %u games - rebuilding\n",(unsigned)g_games.size()); gamesClear(); return false; }   // lab15b: never keep a half-read list
-  }
+    if(g_gtext.failed()){ free(line); f.close(); gLog("[games] cache read: out of PSRAM at %u games - rebuilding\n",(unsigned)g_games.size()); gamesClear(); return false; }   // lab15b: never keep a half-read list
+  } }
+  free(line);
   f.close();
+  gLog("[games] cache: %u games read in %lums\n",(unsigned)g_games.size(),(unsigned long)(millis()-_t0));
   // 5.9.0: a cache without the current version marker predates the sharded .thumbs — force one rebuild
   if(cacheVer!=590){gamesClear();return false;}
   // If the game cache was built from a different-sized index, it's stale — force rebuild
@@ -4016,7 +4033,7 @@ static void buildThumbs(){ if(!g_covers_on){fwLocFree();return;}   // 5.9.32-lab
   // PLUS a gLog, which opens/appends/closes /gti.log on the SAME card the build
   // is reading covers from. Over a 30-minute build that was ~18,000 flushes and
   // ~18,000 file opens competing with the work. Now every 25 games, with an ETA.
-  uint32_t t0=millis(); int lastShown=-1;
+  uint32_t t0=millis(); int lastShown=-1; uint32_t lastDraw=0;
   for(int i=0;i<n;i++){
     auto&g=g_games[i];
     if(!g.jpg_path.length()){String jpg;if(findJPGFor(g_files[g.first_file_idx],jpg))g.jpg_path=jpg;else g.jpg_path="?";}
@@ -4042,10 +4059,10 @@ static void buildThumbs(){ if(!g_covers_on){fwLocFree();return;}   // 5.9.32-lab
     else if(Tl && fwReadAt(Tl,(uint8_t*)tmp,TILE_BYTES)){ haveTile=true; nReused++; }   // lab14f: tile read from its location
     else     { haveTile=carLoadThumb(i,tmp); if(haveTile)nReused++; }
     if(haveTile)carMicroFromTile(i,tmp);
-    if(i-lastShown>=25||i==n-1){
-      lastShown=i;
-      if((i%200)==0||i==n-1){ g_bc_n=(uint32_t)i; g_bc_psram=(uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM); }
-      if((i%200)==0||i==n-1)gLog("[thumbs] %d/%d %lums int=%u psram=%u\n",i+1,n,(unsigned long)(millis()-t0),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+    if((i%200)==0||i==n-1){ g_bc_n=(uint32_t)i; g_bc_psram=(uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM); }
+    if((i%1000)==0||i==n-1)gLog("[thumbs] %d/%d %lums int=%u psram=%u\n",i+1,n,(unsigned long)(millis()-t0),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+    if(millis()-lastDraw>=1000||i==n-1){   // lab15f: redraw once a second (was every 25 games: 800 full-screen flushes, ~29 s, on a 20k card with no covers); log every 1000 (was 200)
+      lastShown=i; lastDraw=millis();
       gfx_fillScreen(0x1082);
       gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
       {const char*s=T(L_BUILDING);int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-50);gfx_print(s);}
@@ -4108,13 +4125,14 @@ static String nfoCachePath(){return g_mode==MODE_ADF?"/ADF/.nfocache":g_mode==MO
 static void writeNfoCache(){ if(g_nocache)return;
   File f=SD_MMC.open(nfoCachePath().c_str(),FILE_WRITE); if(!f)return;
   uint32_t hdr[4]={NFOCACHE_MAGIC,(uint32_t)g_games.size(),carGamesSig(),0};
-  f.write((uint8_t*)hdr,16);
+  { BufWr w(f);                                   // lab15f: 16 KB blocks, same bytes
+  w.write(hdr,16);
   for(auto&g:g_games){
     uint8_t fl=(g.has_manual?NFOF_MANUAL:0)|(g.is_hd?NFOF_HD:0);
     uint32_t bl=g.blurb.length(); if(bl>(uint32_t)NFO_BLURB_MAX)bl=NFO_BLURB_MAX;
     uint16_t L=(uint16_t)bl;
-    f.write(&fl,1); f.write((uint8_t*)&L,2); if(L)f.write((const uint8_t*)g.blurb.c_str(),L);
-  }
+    w.write(&fl,1); w.write(&L,2); if(L)w.write(g.blurb.c_str(),L);
+  } }
   f.close();
   gLog("[nfocache] wrote %d entries sig=%08X\n",(int)g_games.size(),(unsigned)carGamesSig());
 }
@@ -4130,15 +4148,18 @@ static bool loadNfoCache(){ if(g_nocache)return false;
   if(hdr[0]!=NFOCACHE_MAGIC||(int)hdr[1]!=(int)g_games.size()||hdr[2]!=carGamesSig()){f.close();
     gLog("[nfocache] stale/mismatched - sidecars fall back to on-demand reads\n"); return false;}
   std::vector<char>buf(NFO_BLURB_MAX+1);
+  uint32_t _t0=millis();
+  { BufRd r(f);                                   // lab15f: 16 KB block reads instead of three tiny reads per game
   for(auto&g:g_games){
     uint8_t fl=0; uint16_t L=0;
-    if(f.read(&fl,1)!=1||f.read((uint8_t*)&L,2)!=2){f.close();return false;}
+    if(r.read(&fl,1)!=1||r.read((uint8_t*)&L,2)!=2){f.close();return false;}
     if(L>(uint16_t)NFO_BLURB_MAX){f.close();return false;}
-    if(L){ int r=f.read((uint8_t*)buf.data(),L); if(r!=(int)L){f.close();return false;} buf[L]=0; g.blurb=String(buf.data()); }
+    if(L){ size_t got=r.read((uint8_t*)buf.data(),L); if(got!=(size_t)L){f.close();return false;} buf[L]=0; g.blurb.set(buf.data(),strlen(buf.data())); }   // as String(buf): stops at a NUL
     else g.blurb="";
     g.has_manual=(fl&NFOF_MANUAL)!=0; g.is_hd=(fl&NFOF_HD)!=0; g.nfo_done=true;
-  }
+  } }
   f.close();
+  gLog("[nfocache] read in %lums\n",(unsigned long)(millis()-_t0));
   gLog("[nfocache] loaded %d entries - zero sidecar I/O this boot\n",(int)g_games.size());
   return true;
 }
@@ -4200,7 +4221,7 @@ static void carMicroSave(){ if(g_nocache)return;
 static void carMicroBuild(){
   int n=g_car_micro_n; if(!n||!car_micro_block)return;
   uint16_t*tmp=(uint16_t*)ps_malloc((size_t)CAR_TILE*CAR_TILE*2); if(!tmp)return;
-  uint32_t t0=millis(); int lastShown=-1;        // 5.9.36-lab6: count-driven, was every 120ms
+  uint32_t t0=millis(); int lastShown=-1; uint32_t lastDraw=0;   // 5.9.36-lab6: count-driven, was every 120ms; lab15f: once a second
   gLog("[micro] build start: %d games | int=%u largest-int=%u psram=%u\n",n,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
   uint32_t nTile=0,nDec=0,nNone=0;
   for(int i=0;i<n;i++){
@@ -4218,7 +4239,7 @@ static void carMicroBuild(){
     SD_UNLOCK();
     { uint32_t dt=millis()-tg; if(dt>2000) gLog("[micro] game %d took %lums (%s)\n",i,(unsigned long)dt,g_games[i].name.c_str()); }
     if(ok)carMicroFromTile(i,tmp);
-    if(i-lastShown>=25||i==n-1){ lastShown=i;
+    if(millis()-lastDraw>=1000||i==n-1){ lastShown=i; lastDraw=millis();   // lab15f: was every 25 games (a ~36 ms full-screen flush each)
       gfx_fillScreen(0x1082);
       gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
       {const char*s="Preparing covers";int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-40);gfx_print(s);}
