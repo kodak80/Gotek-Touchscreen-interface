@@ -38,6 +38,8 @@
 #include <set>
 #include <ctype.h>
 #include <sys/stat.h>
+#include <sys/time.h>   // lab15d: settimeofday (clock starts at the build time)
+#include <errno.h>      // lab15d: save-failure detail
 #include "gti_fatwalk.h"   // 5.9.41-lab14: read .nfo heads straight off the directory entry (no open-by-name)
 #include "gti_sdguard.h"   // lab14g: FatFs metadata guard between FatFs and the SD driver
 #include "gti_pathlist.h"  // lab15a: the disk-image list, compact (each folder once, each file name once)
@@ -46,7 +48,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15c-JC3248"  // lab15c: cable saves for GENERIC (HFE/ST/IMG...) + the save overlay is kept after a save (the Gotek no longer reads stale data back), existing save files patched in place; includes lab15b
+#define FW_VERSION "5.9.41-lab15e-JC3248"  // lab15e: ONE user of the SD card at a time - the Gotek's reads (USB task) and every FatFs transfer (saves, log, covers) take the same lock; a save that fails is retried once, not 5 times; includes lab15b/c/d
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -972,6 +974,17 @@ static uint8_t  g_alias_tmp[512];       // static: the MSC callback runs on the 
 static uint32_t g_usb_announced=0;      // capacity USB currently believes
 
 static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n);    // fwd: defined after the dirty map it consults
+// lab15e: ONE user of the SD card at a time. Since 5.9.37 a mounted disk is read straight off the card
+// by the USB task (onRead -> readRAW) while the main loop can be writing through FatFs (saves, gti.log,
+// covers, settings). The SD driver keeps single commands apart but NOT a whole write: a write is the
+// write command, then status polls while the card programs, and a read slipped in between lands while
+// the card is busy. kodak80's gti.log, 27 Sep: a 2 MB .sav.hfe copy made while the Gotek was reading
+// gave 16 metadata writes that read back different, one that never did - and that game's folder showed
+// up EMPTY on the PC. Now every FatFs transfer (sgLowRead/sgLowWrite, under the SD guard) and every
+// Gotek read hold this lock for the length of the transfer, so they queue instead of interleaving.
+static SemaphoreHandle_t g_sdlock=nullptr;
+static inline void sdLock(){ if(g_sdlock) xSemaphoreTake(g_sdlock,portMAX_DELAY); }
+static inline void sdUnlock(){ if(g_sdlock) xSemaphoreGive(g_sdlock); }
 // Re-declare capacity to USB. Only ever called when the size actually CHANGES,
 // so a user who never loads an oversized image never exercises this path and
 // their USB behaviour is bit-for-bit what it was before 5.9.37.
@@ -1085,7 +1098,8 @@ static int32_t onRead(uint32_t lba,uint32_t off,void*buf,uint32_t n){
     }
     bool ok=false; uint32_t card=mapSector(fsec,&ok);
     if(!ok){memset(out+done,0,n-done);done=n;break;}
-    if(!SD_MMC.readRAW(g_alias_tmp,card))return (int32_t)done;
+    sdLock(); bool rok=SD_MMC.readRAW(g_alias_tmp,card); sdUnlock();   // lab15e
+    if(!rok)return (int32_t)done;
     memcpy(out+done,g_alias_tmp+so,c); done+=c;
   }
   return (int32_t)done;
@@ -2867,8 +2881,8 @@ static SdGuard g_sdg; static BYTE g_sdg_pdrv=0xFF, g_sdg_lower=0xFF;
 static bool g_sdguard_cfg=true;                  // SDGUARD=OFF (hidden): checks off, straight pass-through
 static bool g_sdpullup_cfg=true;                 // SDPULLUP=OFF (hidden): no internal pull-ups on CMD/D0
 struct SdmmcPeek : public fs::SDMMCFS { static sdmmc_card_t* card(fs::SDMMCFS& f){ return static_cast<SdmmcPeek&>(f)._card; } };
-static DRESULT sgLowRead(BYTE* b,LBA_t s,UINT c){ return disk_read(g_sdg_lower,b,s,c); }
-static DRESULT sgLowWrite(const BYTE* b,LBA_t s,UINT c){ return disk_write(g_sdg_lower,b,s,c); }
+static DRESULT sgLowRead(BYTE* b,LBA_t s,UINT c){ sdLock(); DRESULT r=disk_read(g_sdg_lower,b,s,c); sdUnlock(); return r; }          // lab15e: whole transfer under the SD lock
+static DRESULT sgLowWrite(const BYTE* b,LBA_t s,UINT c){ sdLock(); DRESULT r=disk_write(g_sdg_lower,b,s,c); sdUnlock(); return r; }   // (write + the card's busy polling)
 static DSTATUS sgInit(BYTE){ return disk_initialize(g_sdg_lower); }
 static DSTATUS sgStatus(BYTE){ return disk_status(g_sdg_lower); }
 static DRESULT sgRead(BYTE,BYTE* b,LBA_t s,UINT c){ return sg_read(&g_sdg,b,s,c); }
@@ -4767,22 +4781,31 @@ static bool savBadgeFor(const String&adfPath){
 }
 // Copy base→sav.tmp, patch dirty sectors, atomic rename. Sector source is either
 // `packed` (k-th set bit = k-th 512B block; wireless) or `ram` (g_disk; standalone).
+// lab15d: when a save fails, svErr() says which step and why (errno) - it goes into gti.log.
+static char g_sv_err[96]="";
+static void svErr(const char*step,uint32_t n=0xFFFFFFFFu){ int e=errno;
+  if(n==0xFFFFFFFFu) snprintf(g_sv_err,sizeof g_sv_err,"%s (errno %d %s)",step,e,e?strerror(e):"-");
+  else snprintf(g_sv_err,sizeof g_sv_err,"%s %u (errno %d %s)",step,(unsigned)n,e,e?strerror(e):"-"); }
 static bool svPatchCore(const String&master,const String&sav,const uint8_t*map,uint32_t mapBits,
                         const uint8_t*packed,const uint8_t*ram){
+  g_sv_err[0]=0; errno=0;
   String base=SD_MMC.exists(sav)?sav:master;
   String tmp=sav+".tmp";
   SD_MMC.remove(tmp);
-  {File in=SD_MMC.open(base,FILE_READ);if(!in)return false;
-   File out=SD_MMC.open(tmp,FILE_WRITE);if(!out){in.close();return false;}
-   uint8_t*buf=(uint8_t*)malloc(16384);if(!buf){in.close();out.close();return false;}
-   int rd;while((rd=in.read(buf,16384))>0)out.write(buf,rd);
-   free(buf);in.close();out.close();}
-  File f=SD_MMC.open(tmp,"r+");if(!f)return false;
+  {File in=SD_MMC.open(base,FILE_READ);if(!in){svErr("open image to copy");return false;}
+   File out=SD_MMC.open(tmp,FILE_WRITE);if(!out){in.close();svErr("create .tmp");return false;}
+   uint8_t*buf=(uint8_t*)malloc(16384);if(!buf){in.close();out.close();SD_MMC.remove(tmp);svErr("no 16 KB copy buffer");return false;}
+   int rd; uint32_t tot=0; bool cok=true;
+   while((rd=in.read(buf,16384))>0){ if((int)out.write(buf,rd)!=rd){cok=false;break;} tot+=rd; }   // lab15d: a short write (card full) fails the save instead of patching a cut-off copy
+   free(buf);in.close();out.close();
+   if(!cok){SD_MMC.remove(tmp);svErr("copy short at byte",tot);return false;}}
+  File f=SD_MMC.open(tmp,"r+");if(!f){SD_MMC.remove(tmp);svErr("reopen .tmp");return false;}
   uint32_t k=0;bool ok=true;
   for(uint32_t i=0;i<mapBits;i++){
     if(!((map[i>>3]>>(i&7))&1))continue;
     const uint8_t*src=packed?(packed+(size_t)k*512):(ram+(size_t)(DATA_LBA+i)*512);
-    if(!f.seek(i*512UL)||f.write(src,512)!=512){ok=false;break;}
+    if(!f.seek(i*512UL)){svErr("seek to sector",i);ok=false;break;}
+    if(f.write(src,512)!=512){svErr("write sector",i);ok=false;break;}
     k++;
   }
   f.flush();f.close();
@@ -4790,6 +4813,7 @@ static bool svPatchCore(const String&master,const String&sav,const uint8_t*map,u
   SD_MMC.remove(sav);
   bool _ok=SD_MMC.rename(tmp,sav);
   if(_ok) savSetAdd(sav);   // lab14i: the badge (and next boot's list) know about it straight away
+  else svErr("rename .tmp to the save file");
   return _ok;
 }
 static void svToast(const String&msg){
@@ -4803,13 +4827,15 @@ static void svToast(const String&msg){
 // copy + delete + rename per save (fewer FAT/directory writes). A first save in COPY mode still makes
 // the .sav by copying the image (the mounted image itself is never touched in COPY mode).
 static bool svPatchInPlace(const String&path,const uint8_t*map,uint32_t mapBits,uint32_t fsz,const uint8_t*ram){
-  File f=SD_MMC.open(path,"r+");if(!f)return false;
+  g_sv_err[0]=0; errno=0;
+  File f=SD_MMC.open(path,"r+");if(!f){svErr("open save file for update");return false;}
   bool ok=true;
   for(uint32_t i=0;i<mapBits;i++){
     if(!((map[i>>3]>>(i&7))&1))continue;
     uint32_t off=i*512UL; if(off>=fsz)break;
     uint32_t len=(fsz-off)<512?(fsz-off):512;       // never write past the end - the file keeps its size
-    if(!f.seek(off)||f.write(ram+(size_t)(DATA_LBA+i)*512,len)!=len){ok=false;break;}
+    if(!f.seek(off)){svErr("seek to sector",i);ok=false;break;}
+    if(f.write(ram+(size_t)(DATA_LBA+i)*512,len)!=len){svErr("write sector",i);ok=false;break;}
   }
   f.flush();f.close();
   if(ok) savSetAdd(path);
@@ -4827,12 +4853,13 @@ static void svFlushStandalone(){
   bool inPlace=SD_MMC.exists(sav);
   bool ok=inPlace ? svPatchInPlace(sav,g_sv_dirty,imgSecs,g_sv_img_size,g_disk)
                   : svPatchCore(master,sav,g_sv_dirty,imgSecs,nullptr,g_disk);
-  gLog("[saves] %s %s: %u sectors in the overlay, %s\n",ok?"saved":"FAILED",sav.c_str(),(unsigned)g_sv_dirty_count,inPlace?"patched in place":"new save file");
+  gLog("[saves] %s %s: %u sectors in the overlay, %s%s%s\n",ok?"saved":"FAILED",sav.c_str(),(unsigned)g_sv_dirty_count,inPlace?"patched in place":"new save file",
+       ok?"":" - ",ok?"":(g_sv_err[0]?g_sv_err:"no detail"));   // lab15d: why
   if(ok){
     g_sv_fseq=seq0;g_sv_fail=0;svToast("SAVED: "+g_loaded_name);
   }else{
     g_sv_last_write=millis();                       // back off one settle window, then retry
-    if(++g_sv_fail>=5){g_sv_fseq=g_sv_wseq;g_sv_fail=0;svToast("SAVE FAILED - GAVE UP");}
+    if(++g_sv_fail>=2){g_sv_fseq=g_sv_wseq;g_sv_fail=0;svToast("SAVE FAILED - GAVE UP");}   // lab15e: retry ONCE - a card that fails twice is not helped by more writes (the game still sees its data until eject)
   }
 }
 // Wireless persist callback — runs inside espnowFetchSave, between CRC-verify and ack.
@@ -6657,8 +6684,23 @@ static void sdForeignFsNotice(int kind){
   gfx_flush(); fwupWait();
 }
 
+// lab15d: the GTi has no clock, so every file it wrote (saves, gti.log, caches, tiles) got an invalid
+// date - blank "Date modified" on a PC. Start the clock at this firmware's build time instead: dates are
+// plausible and keep counting up while it runs (each boot starts again from the build time). Tile
+// freshness does not depend on it (tiles take their cover's date via f_utime).
+static void clockFromBuild(){
+  if(time(nullptr)>1600000000) return;              // something already set a real time
+  static const char M[]="JanFebMarAprMayJunJulAugSepOctNovDec";
+  char mon[4]={0}; int d=1,y=2026,H=0,Mi=0,S=0;
+  sscanf(__DATE__,"%3s %d %d",mon,&d,&y); sscanf(__TIME__,"%d:%d:%d",&H,&Mi,&S);
+  const char* p=strstr(M,mon); struct tm t={}; t.tm_year=y-1900; t.tm_mon=p?(int)((p-M)/3):0; t.tm_mday=d; t.tm_hour=H; t.tm_min=Mi; t.tm_sec=S;
+  time_t e=mktime(&t); if(e<=0) return;
+  struct timeval tv={e,0}; settimeofday(&tv,nullptr);
+}
 void setup(){
   Serial.begin(115200);delay(200);
+  clockFromBuild();   // lab15d
+  if(!g_sdlock) g_sdlock=xSemaphoreCreateMutex();   // lab15e: before the SD card or USB start
   // v5.1: SD-access is requested only when our NOINIT flag survived a *software* restart
   // (cold power-on => reset reason POWERON => never a false trigger from RTC garbage).
   bool sdAccessReq=(g_sdaccess_magic==SDACCESS_MAGIC && esp_reset_reason()==ESP_RST_SW);

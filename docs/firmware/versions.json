@@ -19,11 +19,19 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.41-lab15e",
+        "ch": "beta",
+        "date": "2026-09-27",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15e-update.bin",
+        "note": "Testing build. Replaces lab15c. Game saves over the cable for ADF, DSK and GENERIC (HFE, ST, IMG ...) - SAVES=COPY (default) writes 'Game.sav.<ext>' beside the game, OVERWRITE writes into the image. FIX: the GTi's card writes (saves, log, settings) and the Gotek's reads now take turns - in lab15c a save made while the Gotek was reading could damage the card's folders. A failed save is retried once and says why in GTI/gti.log; a save copy that can't be completed is thrown away. Files the GTi writes get a real date. For HFE saves set BIGDISK=ON. Also: compact game list - big libraries use about half the memory.",
+        "latest": false
+      },
+      {
         "v": "5.9.41-lab15c",
         "ch": "beta",
         "date": "2026-09-27",
         "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15c-update.bin",
-        "note": "Testing build (kodak80 edition). Everything in lab14u PLUS: FIX - game saves over the cable now work for GENERIC images (HFE, ST, IMG ...): before, nothing was saved and the game even read its old data back (high scores reverted; reported by kodak80). Saves go to 'Game.sav.<ext>' beside the game (SAVES=COPY, default) or into the image itself (SAVES=OVERWRITE). FIX (all libraries): after a save the Gotek keeps reading its own latest data until eject, and an existing save file is updated in place. For HFE saves set BIGDISK=ON (most Atari HFEs are bigger than 1.76 MB; only the first BIGDISK-size of an image can be saved). Also: compact game list (lab15a/b) - big libraries use about half the memory.",
+        "note": "Testing build (kodak80 edition). Everything in lab14u PLUS: FIX - game saves over the cable now work for GENERIC images (HFE, ST, IMG ...): before, nothing was saved and the game even read its old data back (high scores reverted; reported by kodak80). Saves go to 'Game.sav.<ext>' beside the game (SAVES=COPY, default) or into the image itself (SAVES=OVERWRITE). FIX (all libraries): after a save the Gotek keeps reading its own latest data until eject, and an existing save file is updated in place. For HFE saves set BIGDISK=ON (most Atari HFEs are bigger than 1.76 MB; only the first BIGDISK-size of an image can be saved). Also: compact game list (lab15a/b) - big libraries use about half the memory. KNOWN ISSUE: saving while the Gotek is reading can damage the card's folders (a big first save in COPY mode emptied a game folder for kodak80) - do not use for saving; use 5.9.41-lab15e.",
         "latest": false
       },
       {
