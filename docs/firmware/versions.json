@@ -19,6 +19,14 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.41-lab15c",
+        "ch": "beta",
+        "date": "2026-09-27",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15c-update.bin",
+        "note": "Testing build (kodak80 edition). Everything in lab14u PLUS: FIX - game saves over the cable now work for GENERIC images (HFE, ST, IMG ...): before, nothing was saved and the game even read its old data back (high scores reverted; reported by kodak80). Saves go to 'Game.sav.<ext>' beside the game (SAVES=COPY, default) or into the image itself (SAVES=OVERWRITE). FIX (all libraries): after a save the Gotek keeps reading its own latest data until eject, and an existing save file is updated in place. For HFE saves set BIGDISK=ON (most Atari HFEs are bigger than 1.76 MB; only the first BIGDISK-size of an image can be saved). Also: compact game list (lab15a/b) - big libraries use about half the memory.",
+        "latest": false
+      },
+      {
         "v": "5.9.41-lab14u",
         "ch": "beta",
         "date": "2026-09-26",

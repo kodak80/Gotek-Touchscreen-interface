@@ -40,11 +40,13 @@
 #include <sys/stat.h>
 #include "gti_fatwalk.h"   // 5.9.41-lab14: read .nfo heads straight off the directory entry (no open-by-name)
 #include "gti_sdguard.h"   // lab14g: FatFs metadata guard between FatFs and the SD driver
+#include "gti_pathlist.h"  // lab15a: the disk-image list, compact (each folder once, each file name once)
+#include "gti_gamestore.h" // lab15b: a game record is 36 B with its text packed in one PSRAM arena (was ~177 B with 3-4 heap blocks)
 #include "diskio_impl.h"   // lab14g: ff_diskio_register / ff_diskio_get_drive
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab14u-JC3248"  // lab14u: the dongle take-over check uses TCP command 0x0A (was 0x07, already ENROLL in the fleet wire contract agreed with Dimmy) - pairs with Webby 1.6.7 | lab14t: FIX - after loading an image bigger than the BIGDISK size (most HFEs) the Gotek saw the drive as write-protected until power-off (FlashFloppy FATFS error on that HFE and every image after it) - broken since 5.9.37, hit by most HFEs since lab14m | lab14s: finds a Webby 1.5+ dongle by its own Wi-Fi name (GotekOMEGA-XXXX) so disks reach it; two screens can share a dongle - SHARE lets one more screen pair, the dongle list shows "in use: <screen>", and taking over another screen's dongle asks first (and warns if its saves are not handed back); GTINAME= names this screen | lab14r: wireless sends to a dongle start at the right place again (since 5.9.35 they began 1 KB early, so the Gotek got a shifted disk and the Amiga went back to the Kickstart screen - reported by fabienb) | lab14q: the disk the Gotek sees keeps its extension however long the file name is (32+ char GENERIC names lost letters -> FlashFloppy ERROR 34); LONGNAME=ON gives it the image's full file name (VFAT long name, shown on a FlashFloppy display) | lab14p: DEVMODE=OFF hides Settings -> TEST TOOLS (ON by default); switching LIBRARY loads that library's saved descriptions; every documented key is in its own CONFIG.TXT section | lab14o: LIBLIMIT= documented in CONFIG.TXT (ON by default); built-in data (default CONFIG.TXT, SAMPLE cover) copied to RAM before it is written - it used to reach the card as garbage (first 4 KB of every new CONFIG.TXT blank) | lab14n: CATEGORIES and LIBRARY (ADF/DSK/GEN) free the old library before rebuilding, like RESCAN - a big card no longer rebuilds into an empty list | lab14m: BIGDISK=OFF (default) reserves 1.76 MB for save write-back / wireless sends (was 2.9 MB), BIGDISK=ON = 2.9 MB for big HFEs; DISKMAXKB retired | lab14l: "OMEGAWARE / GTi" shown the moment the card and CONFIG.TXT are read, so a big library's load time is never a black screen | lab14k: Settings -> TEST TOOLS sub-page holds the pure test tools (SD SOAK TEST, REEL PROF, NO-CACHE, DIAG-DISP) | lab14j: the SD guard's totals are written to gti.log on the way into SD ACCESS (so a normal session's card reads show up in the log) | lab14i: "no cover" remembered across restarts until the next RESCAN (a warm boot no longer searches the card for every cover-less game - the reel/list stalls), save badge answered from a list of .sav files made by the scan and kept current when the GTi writes a save, the .nfo fallback is one name lookup (not every file in the folder) and never runs while the reel moves | lab14h: the GTi never formats a card (exFAT/NTFS card -> explains how to format it on a computer, changes nothing), Mac "._" files ignored by the scanner | lab14g: SD guard (FatFs metadata checked on every read/write: bit-shifted sectors re-read, never written back; writes verified), gti.log + state files moved out of the root into /GTI, SD line pull-ups, SD SOAK TEST in Settings, SDSPEED=10 | lab14f: cover-cache build with no name lookups (covers opened from where the scan found them, .thumbs listed once), tiles stamped with their cover's date so a RESCAN only rebuilds changed covers | lab14e: library build keeps small allocations out of internal RAM (the real cause of the big-card panics), RAM disk reserved before the library, LIBLIMIT=OFF loads the rated amount, micro-thumbs sized to what is left (new 8x8 tier), crash breadcrumbs + no boot loops, clearer TOO BIG wording | lab14d: library capacity check - a card too big for this GTi halts with a loud warning + SD ACCESS (LIBLIMIT=OFF to load anyway) | lab14c: g_games is a deque (no 1.2 MB block), grouping retries with fewer images on bad_alloc instead of reboot-looping | lab14b: two-pass scan (all images first, blurbs within a memory budget), .index trusted only with a .gamecache, blurbs moved not copied, allocation-free name sort | lab14: one-pass FatFs scan walker (raw .nfo heads), O(n log n) multi-disk grouping, cover harvest trusted when empty, PSRAM guard
+#define FW_VERSION "5.9.41-lab15c-JC3248"  // lab15c: cable saves for GENERIC (HFE/ST/IMG...) + the save overlay is kept after a save (the Gotek no longer reads stale data back), existing save files patched in place; includes lab15b
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -1044,7 +1046,15 @@ static String   g_sv_wl_path="";                         // SD path of the disk 
 static uint32_t g_sv_wl_loadid=0;                        // dongle load_id it acked with
 static inline bool svGet(const uint8_t*m,uint32_t i){return (m[i>>3]>>(i&7))&1;}
 static inline void svSet(uint8_t*m,uint32_t i){m[i>>3]|=(uint8_t)(1u<<(i&7));}
-static void svDirtyReset(){memset(g_sv_dirty,0,sizeof(g_sv_dirty));g_sv_dirty_count=0;g_sv_last_write=0;}
+// lab15c: g_sv_dirty is the WRITE OVERLAY for the whole time a disk is in - every sector the host wrote
+// stays in RAM and is served from there until eject/next load. Before, a save flush cleared it while the
+// disk was still in, so the Gotek read those sectors back from the card file as they were BEFORE the save
+// (and, after an in-place replace, from clusters that no longer belonged to any file). "Something new to
+// save" is now a write counter instead: onWrite bumps g_sv_wseq, a good flush records it in g_sv_fseq.
+static volatile uint32_t g_sv_wseq=0;
+static uint32_t g_sv_fseq=0;
+static inline bool svPending(){ return g_sv_wseq!=g_sv_fseq; }
+static void svDirtyReset(){memset(g_sv_dirty,0,sizeof(g_sv_dirty));g_sv_dirty_count=0;g_sv_last_write=0;g_sv_wseq=0;g_sv_fseq=0;}
 static uint32_t g_sv_img_size=0;                         // bytes of the mounted image (standalone tracking)
 
 // ── the read path (5.9.37) ──────────────────────────────────────────────────
@@ -1092,10 +1102,13 @@ static int32_t onWrite(uint32_t lba,uint32_t off,uint8_t*buf,uint32_t n){
   g_sv_total_writes=g_sv_total_writes+1;
   uint32_t first=s/512,last=(s+n-1)/512,imgSecs=(g_sv_img_size+511)/512;
   if(imgSecs>SV_IMG_MAX_SECTORS)imgSecs=SV_IMG_MAX_SECTORS;
+  bool img=false;
   for(uint32_t l=first;l<=last;l++){
     if(l<DATA_LBA)continue;uint32_t i=l-DATA_LBA;if(i>=imgSecs)continue;
+    img=true;
     if(!svGet(g_sv_dirty,i)){svSet(g_sv_dirty,i);g_sv_dirty_count=g_sv_dirty_count+1;}
   }
+  if(img)g_sv_wseq=g_sv_wseq+1;   // lab15c: something new for the next save flush
   g_sv_last_write=millis();
   return n;}
 static void usbEventCB(void*,esp_event_base_t,int32_t,void*){}
@@ -1171,13 +1184,14 @@ static bool onStartStopSD(uint8_t,bool start,bool load_eject){if(load_eject&&!st
 // SD + INDEX CACHE
 // ════════════════════════════════════════════════════════════════════════════
 static String indexFilePath(){return g_mode==MODE_ADF?"/ADF/.index":g_mode==MODE_DSK?"/DSK/.index":"/GENERIC/.index";}
-static void writeIndexCache(const std::vector<String>&v){ if(g_nocache)return;File f=SD_MMC.open(indexFilePath().c_str(),FILE_WRITE);if(!f)return;f.println("#COUNT="+String(v.size()));for(auto&p:v)f.println(p);f.close();}
-static bool readIndexCache(std::vector<String>&out){ if(g_nocache){out.clear();return false;} bcSet(BC_INDEXREAD,0);out.clear();File f=SD_MMC.open(indexFilePath().c_str(),FILE_READ);if(!f){return false;}
+static void writeIndexCache(const PathList&v){ if(g_nocache)return;File f=SD_MMC.open(indexFilePath().c_str(),FILE_WRITE);if(!f)return;f.println("#COUNT="+String(v.size()));for(size_t i=0;i<v.size();i++)f.println(v[i]);f.close();}   // lab15a
+static bool readIndexCache(PathList&out){ if(g_nocache){out.clear();return false;} bcSet(BC_INDEXREAD,0);out.clear();File f=SD_MMC.open(indexFilePath().c_str(),FILE_READ);if(!f){return false;}
   long declaredCount=-1;
   while(f.available()){String l=f.readStringUntil('\n');l.trim();if(!l.length())continue;
     if(l.startsWith("#COUNT=")){declaredCount=l.substring(7).toInt();if(declaredCount>0)out.reserve(declaredCount);continue;}
     out.push_back(l);}
   f.close();
+  out.sort(); out.compact(); out.shrink_to_fit();   // lab15a: the .index is written sorted; pack it (same order)
   // Validate: declared count must match actual lines read (catches partial writes/corruption)
   if(declaredCount>=0&&declaredCount!=(long)out.size()){out.clear();return false;}
   return!out.empty();}
@@ -1331,7 +1345,7 @@ static std::vector<String> g_fw_nfodirs;        // folders with .nfo files, in w
 static uint32_t g_fw_disk2=0,g_fw_nfo_budget=0; // images that are disk 2+ (no game of their own); blurbs dropped for memory
 static size_t   g_fw_floor=0;                   // pass 2: keep at least this much PSRAM free
 // PSRAM that grouping + the UI will need for `files` images making `games` games: grouping
-// scratch (~24 B/image), one GameEntry + name + disk list per game (~180 B), plus 1.5 MB for the
+// scratch (~24 B/image), one GameEntry + name + disk list per game (GAME_BYTES, lab15b), plus 1.5 MB for the
 // RAM disk's minimum (1 MB) and the tile cache. During the walk the game count is estimated at
 // half the images (the bulk card is 0.46); after the walk it is counted exactly.
 // lab14e: PSRAM the running GTi needs AFTER the library: reel tiles, cover decode, screensaver,
@@ -1349,10 +1363,14 @@ static String   g_fw_cutdir;                    // lab14i: the folder where a to
 static uint32_t g_fw_xtra=0,g_fw_xtra2=0;          // images (and disk-2+ images) counted but not listed
 static std::vector<std::pair<String,uint32_t>> g_fw_xtra_per;   // counted-only images per top-level folder
 static std::vector<uint64_t> g_fw_xkeys; static uint32_t g_fw_xsingles=0;   // counted-only: game keys (8 B each) -> exact game count
-static inline size_t fwNeedAfter(size_t files,size_t games){ return files*24+games*180+g_fw_rt_reserve; }
-static size_t fwCountGames(const std::vector<String>& v){   // same key as buildGameList's grouping
+// lab15b: what one game costs once grouped: a 36 B record + its name (TOSEC names average ~55 chars)
+// + its cover path when it has one + a multi-disk set's disk list, all packed in the game arena.
+// Was 180 (measured 177 B on Mez's card before lab15b, cover paths not included).
+#define GAME_BYTES 120
+static inline size_t fwNeedAfter(size_t files,size_t games){ return files*24+games*GAME_BYTES+g_fw_rt_reserve; }
+static size_t fwCountGames(const PathList& v){   // same key as buildGameList's grouping
   std::vector<uint64_t> keys; size_t singles=0;
-  for(const auto& f: v){ if(getDiskNumber(f)>0){ String k=parentDir(f)+"\x01"+getGameBaseName(f); keys.push_back(coverHash(k)); } else singles++; }
+  for(size_t i=0;i<v.size();i++){ const String f=v[i]; if(getDiskNumber(f)>0){ String k=parentDir(f)+"\x01"+getGameBaseName(f); keys.push_back(coverHash(k)); } else singles++; }
   std::sort(keys.begin(),keys.end());
   return singles+(size_t)(std::unique(keys.begin(),keys.end())-keys.begin());
 }
@@ -1367,14 +1385,14 @@ static int fwFindDrive(const String& vdir){
 static bool fwMemOk(size_t outSize,size_t outCap){
   size_t freeP=heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   if(freeP<fwNeedAfter(outSize,outSize/2)) return false;   // lab14b: reserve scales with the library found so far
-  size_t need=0;
-  if(outSize+1>=outCap) need=outCap*2*sizeof(String);
+  size_t need=PathList::CHUNK;                                  // lab15a: the next 32 KB text block
+  if(outSize+1>=outCap) need=std::max(need,(size_t)(outCap?outCap*2:1024)*8);   // the 8-byte entry table doubling
   if(g_nfoharvest.size()+1>=g_nfoharvest.capacity()) need=std::max(need,g_nfoharvest.capacity()*2*sizeof(NfoRec));
   if(need && heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)<need+65536) return false;
   return true;
 }
 // One entry of folder `pdir` (VFS path, e.g. "/ADF/A"), exactly as scanDirInto's loops treat it.
-static void fwEntry(const String& pdir, FF_DIR* dp, FILINFO* fi, std::vector<String>& out, const String& ext, int& count){
+static void fwEntry(const String& pdir, FF_DIR* dp, FILINFO* fi, PathList& out, const String& ext, int& count){
   if(fi->fname[0]=='.'&&fi->fname[1]=='_') return;   // lab14h: macOS "._name" metadata files - never a game, cover or blurb
   String fn=fi->fname; String u=fn; u.toUpperCase();
   g_fw_entries++;
@@ -1433,7 +1451,7 @@ static void fwNfoDir(const String& pdir,int count){
   }
   f_closedir(d); free(d); free(fi);
 }
-static void scanDirFast(const String& dir, std::vector<String>& out, const String& ext, int depth, int& count){
+static void scanDirFast(const String& dir, PathList& out, const String& ext, int depth, int& count){
   if(depth>5||g_fw_lowmem) return;                                  // safety cap against pathological trees
   FF_DIR* d=(FF_DIR*)malloc(sizeof(FF_DIR)); FILINFO* fi=(FILINFO*)malloc(sizeof(FILINFO));
   FF_DIR* d2=(FF_DIR*)malloc(sizeof(FF_DIR)); FILINFO* f2=(FILINFO*)malloc(sizeof(FILINFO));
@@ -1468,7 +1486,7 @@ static void scanDirFast(const String& dir, std::vector<String>& out, const Strin
 // browsable bucket (g_cats); otherwise we recurse into it so games nested under
 // letter/label folders (ADF/A/<game>/, ADF/Games/<game>/) still surface in the flat
 // list — the card can be organised, the screen looks exactly the same.
-static void scanDirInto(const String& dir, std::vector<String>& out, const String& ext,
+static void scanDirInto(const String& dir, PathList& out, const String& ext,
                         int depth, int& count){
   if(depth>5) return;                                   // safety cap against pathological trees
   File root=SD_MMC.open(dir.c_str());
@@ -1517,11 +1535,11 @@ static void scanDirInto(const String& dir, std::vector<String>& out, const Strin
 // The card holds more games than this GTi's memory can list (with the RAM disk at its
 // configured size). Say so loudly, change nothing, write a report to the card, and offer
 // SD ACCESS so it can be trimmed from a PC. Never returns: SD ACCESS or RESCAN restart.
-static void capReport(const std::vector<String>& files,uint32_t images,uint32_t games,uint32_t fit,uint32_t pct){
+static void capReport(const PathList& files,uint32_t images,uint32_t games,uint32_t fit,uint32_t pct){
   const bool atLeast=false;
   std::vector<std::pair<String,int>> per;                 // disk images per top-level folder (listed + counted-only)
   auto add=[&per](const String& top,int n){ for(auto&p:per) if(p.first==top){p.second+=n;return;} per.push_back({top,n}); };
-  for(const auto& f: files){ int a=f.indexOf('/',1); int b=a>=0?f.indexOf('/',a+1):-1; String top=(a>=0&&b>a)?f.substring(a+1,b):String("(top level)");
+  for(size_t fi_=0;fi_<files.size();fi_++){ const String f=files[fi_]; int a=f.indexOf('/',1); int b=a>=0?f.indexOf('/',a+1):-1; String top=(a>=0&&b>a)?f.substring(a+1,b):String("(top level)");
     if(!per.empty()&&per.back().first==top) per.back().second++; else add(top,1); }
   for(auto&x:g_fw_xtra_per) add(x.first,(int)x.second);
   File r=SD_MMC.open("/GTI_CAPACITY.TXT",FILE_WRITE); if(!r) return;
@@ -1573,7 +1591,7 @@ static void haltScreen(const char* title,const String* lines,int nl,int nt,const
     delay(30);
   }
 }
-static void libTooBig(const std::vector<String>& files,uint32_t images,uint32_t games,uint32_t fit,uint32_t pct){
+static void libTooBig(const PathList& files,uint32_t images,uint32_t games,uint32_t fit,uint32_t pct){
   gLog("[capacity] TOO BIG: %u images, %u games, fits ~%u games, %u%% - halted\n",(unsigned)images,(unsigned)games,(unsigned)fit,(unsigned)pct);
   capReport(files,images,games,fit,pct);
   g_cap_magic=CAP_MAGIC; g_cap_images=images; g_cap_games=games; g_cap_fit=fit; g_cap_pct=pct; g_cap_atleast=0;
@@ -1607,8 +1625,8 @@ static void showCardTooBig(int count){
   {String s2="loading the first "+String(count)+" disk images - the rest are left out";int tw=gfx_textWidth(s2.c_str());gfx_setCursor((gW-tw)/2,gH/2+78);gfx_print(s2.c_str());}
   gfx_flush();delay(4000);
 }
-static std::vector<String> scanImagesAnimated(){
-  std::vector<String>out;out.reserve(4096);   // scan-fix: no vector-growth copy-storm on big cards
+static void scanImagesAnimated(PathList& out){
+  out.clear();out.reserve(4096);   // lab15a: fills the caller's compact list (no String per image)
   g_coverset.clear();g_coverset.reserve(4096);g_cats.clear();
   fwLocFree(); g_fw_fs=nullptr; g_fw_fsid=0;         // lab14f: fresh walk, fresh locations
   g_nfoharvest.clear();g_manualset.clear();g_hdset.clear();g_sidecars_harvested=false;   // 5.9.31-lab1
@@ -1647,6 +1665,8 @@ static std::vector<String> scanImagesAnimated(){
   if(_fw_fast){
     scanDirFast(dir,out,ext,0,count);                        // pass 1: every disk image
     _fw_t1=millis();
+    { size_t b0=out.bytes(); out.sort(); bool ok=out.compact(); out.shrink_to_fit();   // lab15a: sort + pack the names BEFORE sizing the library
+      gLog("[scan] list packed: %u images %u KB -> %u KB%s\n",(unsigned)out.size(),(unsigned)(b0/1024),(unsigned)(out.bytes()/1024),ok?"":" (no room to pack - kept as is)"); }
     // What grouping + UI will need for exactly these images. If the walk's estimate was
     // optimistic (a library with more games per image), drop images from the END of the walk
     // until it fits - a shorter list beats a crash in buildGameList.
@@ -1659,7 +1679,7 @@ static std::vector<String> scanImagesAnimated(){
       size_t gamesAll=games;
       if(g_fw_xtra){ std::sort(g_fw_xkeys.begin(),g_fw_xkeys.end()); gamesAll+=g_fw_xsingles+(size_t)(std::unique(g_fw_xkeys.begin(),g_fw_xkeys.end())-g_fw_xkeys.begin()); std::vector<uint64_t>().swap(g_fw_xkeys); }
       size_t listedAll=out.empty()?0:(size_t)((uint64_t)listed*imgs/out.size());   // list bytes scaled to the whole card
-      size_t core=listedAll+imgs*24+gamesAll*180, full=core+(size_t)g_fw_nfo1*175;
+      size_t core=listedAll+imgs*24+gamesAll*GAME_BYTES, full=core+(size_t)g_fw_nfo1*175;
       uint32_t pctCore=(uint32_t)((uint64_t)core*100/budget), pctFull=(uint32_t)((uint64_t)full*100/budget);
       uint32_t fit=gamesAll?(uint32_t)((uint64_t)gamesAll*budget/(core?core:1)):0;
       gLog("[capacity] %u images, %u games, %u blurbs: list %u%% (+blurbs %u%%) of %u KB, fits ~%u games%s\n",(unsigned)imgs,(unsigned)gamesAll,(unsigned)g_fw_nfo1,
@@ -1676,7 +1696,8 @@ static std::vector<String> scanImagesAnimated(){
     }
     if(!out.empty() && freeP<fwNeedAfter(out.size(),games)){
       size_t n=out.size(); double gpf=(double)games/n;          // games per image
-      double fit=((double)freeP+n*112.0-(double)g_fw_rt_reserve)/(112.0+24.0+180.0*gpf);   // lab14e: same reserve as the budget
+      double per=(double)out.bytes()/n;                        // lab15a: what one image really costs in the list now (was ~112 B)
+      double fit=((double)freeP+n*per-(double)g_fw_rt_reserve)/(per+24.0+(double)GAME_BYTES*gpf);   // lab14e: same reserve as the budget
       size_t keep=fit<0?0:(size_t)fit; if(keep<n){ out.resize(keep); count=(int)keep; g_fw_lowmem=true; games=fwCountGames(out); }
     }
     g_fw_floor=fwNeedAfter(out.size(),games);                // pass 2 keeps this much PSRAM free
@@ -1707,16 +1728,17 @@ static std::vector<String> scanImagesAnimated(){
   // Final count
   drawScanFrame(count);delay(500);
   if(g_fw_lowmem) showCardTooBig(count);            // 5.9.41-lab14: say so instead of crashing later
-  std::sort(out.begin(),out.end());out.shrink_to_fit();return out;   // lab14b: no doubling slack (up to 0.5 MB at 33k)
+  out.sort();out.compact();out.shrink_to_fit();   // lab14b: no doubling slack; lab15a: sorted + packed (no-op if pass 1 did it)
+  gLog("[scan] image list: %u images, %u KB PSRAM (lab15a compact list)\n",(unsigned)out.size(),(unsigned)(out.bytes()/1024));
 }
 
 static String gameCachePath();   // fwd (lab14b)
-static bool listImages(fs::FS&fs,std::vector<String>&out){
+static bool listImages(fs::FS&fs,PathList&out){
   // lab14b: the .index alone is not enough. Without a .gamecache the game list is rebuilt, and
   // that needs this boot's walk harvest (covers, blurbs, HD) - otherwise every game falls back to
   // per-game SD_MMC.exists() probes (hours on a big card). The one-pass walk is cheap; do it.
   if(SD_MMC.exists(gameCachePath().c_str())&&readIndexCache(out)){savSetLoad();return!out.empty();}   // lab14i: no walk -> the save list from the card
-  out=scanImagesAnimated();writeIndexCache(out);return!out.empty();
+  scanImagesAnimated(out);writeIndexCache(out);return!out.empty();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1972,6 +1994,30 @@ static bool findNFOFor(const String&p,String&out){
   String b=basenameNoExt(filenameOnly(p)),d=parentDir(p),gb=getGameBaseName(p);
   if(findInDir(d,b+".nfo",out))return true;if(gb!=b&&findInDir(d,gb+".nfo",out))return true;return false;
 }
+// lab15a4: lazy cover lookups used to probe up to 9 names with SD_MMC.exists(), and every probe
+// reads the WHOLE folder (FAT has no index). In a 3,000-entry letter folder that was 14-44 s per game
+// (gti.log, 26 Sep: the micro-thumb build spent ~20 s on each /ADF/K game - hours for the folder).
+// Now the folder is listed ONCE with f_readdir (one pass, like the scan walker) and its cover names
+// kept as hashes; this and every later lookup in that folder is answered from memory (R7).
+static String g_lz_dir; static std::vector<uint64_t> g_lz_set; static bool g_lz_ok=false;
+static bool lazyDirCovers(const String& d){
+  if(g_lz_ok && g_lz_dir==d) return true;
+  g_lz_ok=false; std::vector<uint64_t>().swap(g_lz_set); g_lz_dir=d;
+  if(g_fw_drv==-2) g_fw_drv=fwFindDrive(d);
+  if(g_fw_drv<0) return false;
+  FF_DIR* dp=(FF_DIR*)malloc(sizeof(FF_DIR)); FILINFO* fi=(FILINFO*)malloc(sizeof(FILINFO));
+  if(!dp||!fi||f_opendir(dp,(String(g_fw_drv)+":"+d).c_str())!=FR_OK){ free(dp); free(fi); return false; }
+  uint32_t t0=millis(), n=0;
+  while(f_readdir(dp,fi)==FR_OK && fi->fname[0]){ n++;
+    if(fi->fattrib&AM_DIR) continue;
+    String u=fi->fname; u.toUpperCase(); if(!isCoverExtU(u)) continue;
+    String ap=d+"/"+fi->fname; ap.toLowerCase(); g_lz_set.push_back(coverHash(ap)); }
+  f_closedir(dp); free(dp); free(fi);
+  std::sort(g_lz_set.begin(),g_lz_set.end());
+  g_lz_ok=true;
+  gLog("[covers] %s listed once for lookups: %u entries, %u covers, %lums\n",d.c_str(),(unsigned)n,(unsigned)g_lz_set.size(),(unsigned long)(millis()-t0));
+  return true;
+}
 static bool findJPGFor(const String&p,String&out){ if(!g_covers_on){out="";return false;}
   String b=basenameNoExt(filenameOnly(p)),d=parentDir(p),gb=getGameBaseName(p);
   // 5.3.7: VFAT lookups are case-insensitive, so the upper-case variants were pure
@@ -1982,9 +2028,11 @@ static bool findJPGFor(const String&p,String&out){ if(!g_covers_on){out="";retur
   String folderName=d;{int ls=folderName.lastIndexOf('/');if(ls>0)folderName=folderName.substring(ls+1);}
   if(folderName.length()&&folderName!=b&&folderName!=gb)stems[ns++]=folderName;
   bool harvested=g_sidecars_harvested||!g_coverset.empty();   // walked this boot (lab14: even if it found NO covers) or set populated -> authoritative, zero card I/O
+  bool lazy=!harvested && lazyDirCovers(d);                    // lab15a4: no walk this boot -> list this folder once
   for(int si=0;si<ns;si++)for(auto e:exts){String c=d+"/"+stems[si]+e;
     if(harvested){String cl=c;cl.toLowerCase();if(std::binary_search(g_coverset.begin(),g_coverset.end(),coverHash(cl))){out=c;return true;}}
-    else if(SD_MMC.exists(c.c_str())){out=c;return true;}}   // fallback: lazy call with no harvest (warm-boot cover-less game)
+    else if(lazy){String cl=c;cl.toLowerCase();if(std::binary_search(g_lz_set.begin(),g_lz_set.end(),coverHash(cl))){out=c;return true;}}
+    else if(SD_MMC.exists(c.c_str())){out=c;return true;}}   // last resort (folder unreadable): the old per-name probe
   return false;
 }
 // v4.9.2: per-game manual (.rtfm) lookup — mirrors findJPGFor. Plain-text "how to play"
@@ -2046,13 +2094,16 @@ static bool g_hotswap=false;    // ON = tapping another disk while loaded swaps 
 static bool g_forceswap=false;  // ON = swap disk bytes in place without the USB eject/re-attach cycle
 static int g_info_x=0,g_info_w=150,g_info_bottom=0;
 static String g_manual_path=""; static int g_manual_bx=0,g_manual_by=0,g_manual_bw=0,g_manual_bh=0;  // v4.9.2 .rtfm book button rect
-struct GameEntry{String name;int first_file_idx;int disk_count;String jpg_path;std::vector<int>disk_indices;bool fav=false;uint16_t plays=0;bool cover_ok=false;String blurb;bool nfo_done=false;bool has_manual=false;bool is_hd=false;};   // 5.9.31-lab1: sidecar results cached in PSRAM (see .nfocache) so selecting a game costs ZERO directory walks
+// lab15b: 36 bytes, no heap blocks of its own - text + multi-disk lists live in g_gtext (gti_gamestore.h)
+struct GameEntry{AStr name;AStr jpg_path;AStr blurb;DiskList disk_indices;int first_file_idx=0;int disk_count=0;uint16_t plays=0;bool fav=false;bool cover_ok=false;bool nfo_done=false;bool has_manual=false;bool is_hd=false;};   // 5.9.31-lab1: sidecar results cached in PSRAM (see .nfocache) so selecting a game costs ZERO directory walks
 // 5.9.41-lab14b: g_games is a deque, not a vector. At 15k games a vector needs ONE 1.2 MB block
 // (80 B x 15k); after tens of thousands of small String allocations PSRAM is too fragmented for
 // that even with 3 MB free, and the failed reserve/grow threw bad_alloc -> reboot loop (seen on the
 // 26 GB card: 15 boots, each dying in buildGameList with psram=2997416). A deque grows in 480 B
 // blocks. Same interface for everything here (index, size, push_back, sort, range-for).
-static std::vector<String>g_files;static std::deque<GameEntry>g_games;
+static PathList g_files;static std::deque<GameEntry>g_games;   // lab15a: g_files is the compact PathList (operator[] returns the path by value)
+// lab15b: the ONLY way to empty g_games - its text lives in g_gtext and goes with it
+static void gamesClear(){ g_games.clear(); g_games.shrink_to_fit(); g_gtext.release(); }
 static int g_sel=0,g_scroll=0,g_disk_sel=0,g_loaded_game_idx=-1,g_loaded_disk_idx=-1;
 static int g_disk_page=0;  // current page of disk selector (6 disks/page)
 #define DISKS_PER_PAGE 6
@@ -2090,8 +2141,8 @@ static void writeGameCache(){ if(g_nocache)return;
   f.close();
 }
 
-static bool readGameCache(){ if(g_nocache){g_games.clear();return false;}
-  g_games.clear(); bcSet(BC_CACHEREAD,(uint32_t)g_files.size());
+static bool readGameCache(){ if(g_nocache){gamesClear();return false;}
+  gamesClear(); bcSet(BC_CACHEREAD,(uint32_t)g_files.size());
   File f=SD_MMC.open(gameCachePath().c_str(),FILE_READ);
   if(!f){return false;}
   long declaredFiles=-1; int cacheVer=-1; bool ncOk=false;   // lab14i: ncOk = this cache's "?" marks are real
@@ -2110,15 +2161,17 @@ static bool readGameCache(){ if(g_nocache){g_games.clear();return false;}
     e.disk_count=line.substring(p2+1,p3).toInt();
     e.jpg_path=line.substring(p3+1,p4);
     if(e.jpg_path=="?"&&!ncOk)e.jpg_path="";  // lab14i: an old cache's "?" is not trusted; a #NC=1 cache's is (until the next RESCAN) - a warm boot no longer re-searches the card for every cover-less game
-    String indices=line.substring(p4+1);
-    if(indices.length()){int pos=0;while(pos<(int)indices.length()){int comma=indices.indexOf(',',pos);if(comma<0)comma=indices.length();e.disk_indices.push_back(indices.substring(pos,comma).toInt());pos=comma+1;}}
+    { static std::vector<int> di; di.clear();       // lab15b: parse, then pack into the arena in one piece
+      const char* q=line.c_str()+p4+1; while(*q){ di.push_back(atoi(q)); while(*q&&*q!=',')q++; if(*q==',')q++; }
+      e.disk_indices.set(di.data(),di.size()); }
     if(e.first_file_idx>=0&&e.first_file_idx<(int)g_files.size()) g_games.push_back(e);
+    if(g_gtext.failed()){ f.close(); gLog("[games] cache read: out of PSRAM at %u games - rebuilding\n",(unsigned)g_games.size()); gamesClear(); return false; }   // lab15b: never keep a half-read list
   }
   f.close();
   // 5.9.0: a cache without the current version marker predates the sharded .thumbs — force one rebuild
-  if(cacheVer!=590){g_games.clear();return false;}
+  if(cacheVer!=590){gamesClear();return false;}
   // If the game cache was built from a different-sized index, it's stale — force rebuild
-  if(declaredFiles>=0&&declaredFiles!=(long)g_files.size()){g_games.clear();return false;}
+  if(declaredFiles>=0&&declaredFiles!=(long)g_files.size()){gamesClear();return false;}
   return!g_games.empty();
 }
 
@@ -2163,8 +2216,8 @@ static bool assignSidecarsFromHarvest(){
       auto it=std::lower_bound(g_nfoharvest.begin(),g_nfoharvest.end(),k,
                                [](const NfoRec&r,uint64_t kk){return r.k<kk;});
       if(it!=g_nfoharvest.end()&&it->k==k){
-        if(it->t.length()&&g.name==raw){ g.name=std::move(it->t); nameChanged=true; }   // lab14b: move, not copy -
-        g.blurb=std::move(it->b); break;                                                // the harvest is freed right after
+        if(it->t.length()&&g.name==raw){ g.name=it->t; nameChanged=true; }   // lab15b: copied into the game arena,
+        g.blurb=it->b; it->t=String(); it->b=String(); break;                // then the harvest's own blocks are freed at once
       }
       if(k2==k1) break;
     }
@@ -2175,8 +2228,20 @@ static bool assignSidecarsFromHarvest(){
   }
   return nameChanged;
 }
+// lab15b: the NFO title a single-disk game will get from the harvest - the same record
+// assignSidecarsFromHarvest picks (exact file name first, then the set's base name). Taking it
+// while grouping stores the display name ONCE; adopting it afterwards left the file name's copy
+// behind in the game arena (~55 B a titled game on a TOSEC card).
+static const String* harvestTitleFor(const String& fp){
+  if(!g_sidecars_harvested||g_nfoharvest.empty()) return nullptr;
+  auto find=[](uint64_t k)->const NfoRec*{ auto it=std::lower_bound(g_nfoharvest.begin(),g_nfoharvest.end(),k,[](const NfoRec&r,uint64_t kk){return r.k<kk;});
+                                            return (it!=g_nfoharvest.end()&&it->k==k)?&*it:nullptr; };
+  uint64_t k1=sideKey(filenameOnly(fp)); const NfoRec* r=find(k1);
+  if(!r){ uint64_t k2=sideKeyRaw(getGameBaseName(fp)); if(k2!=k1) r=find(k2); }   // the set's base name only when the file name has none
+  return (r&&r->t.length())?&r->t:nullptr;
+}
 static void buildGameList(){
-  g_games.clear();
+  gamesClear();
   gLog("[buildGameList] files=%d int=%u psram=%u\n",(int)g_files.size(),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
   uint32_t _bg0=millis();
   bcSet(BC_GROUP,(uint32_t)g_files.size());   // lab14e breadcrumb
@@ -2208,24 +2273,29 @@ static void buildGameList(){
       a=b;
     }
     std::vector<std::pair<uint64_t,int>>().swap(keyed);
+    // lab15b: disks of a numbered set are collected as (game, image) pairs and packed per game at the end
+    std::vector<std::pair<int,int>> mem;
     for(int i=0;i<n;i++){
-      if(dnum[i]>0&&grp[i]!=i){ int gi=-(grp[grp[i]]+2); g_games[gi].disk_count++; g_games[gi].disk_indices.push_back(i); continue; }
-      GameEntry e;e.first_file_idx=i;e.disk_count=1;e.disk_indices.push_back(i);
-      e.name = dnum[i]>0 ? getGameBaseName(g_files[i]) : basenameNoExt(filenameOnly(g_files[i]));
-      if(dnum[i]>0) grp[i]=-((int)g_games.size()+2);  // representative now remembers its game index
+      if(dnum[i]>0&&grp[i]!=i){ int gi=-(grp[grp[i]]+2); g_games[gi].disk_count++; mem.push_back({gi,i}); continue; }
+      GameEntry e;e.first_file_idx=i;e.disk_count=1;e.disk_indices.setOne(i);
+      if(dnum[i]>0) e.name=getGameBaseName(g_files[i]);
+      else { const String fp=g_files[i]; const String* t=harvestTitleFor(fp); if(t) e.name=*t; else e.name=basenameNoExt(filenameOnly(fp)); }   // lab15b: title stored once
+      if(dnum[i]>0){ grp[i]=-((int)g_games.size()+2); mem.push_back({(int)g_games.size(),i}); }  // representative now remembers its game index
       // NO NFO/JPG lookups here — done lazily in drawCoverPanel
       g_games.push_back(e);
     }
-    for(auto&e:g_games){
-      if(dnum[e.first_file_idx]<=0) continue;
-      // Sort disk_indices by disk number so D1,D2,D3 are in order; first_file_idx -> lowest disk (cover/NFO lookup)
-      std::sort(e.disk_indices.begin(),e.disk_indices.end(),[&dnum](int a,int b){return dnum[a]<dnum[b];});
-      e.first_file_idx=e.disk_indices[0];
-    }
+    // Disks in disk-number order (D1,D2,D3); first_file_idx -> lowest disk (cover/NFO lookup)
+    std::sort(mem.begin(),mem.end(),[&dnum](const std::pair<int,int>&a,const std::pair<int,int>&b){
+      if(a.first!=b.first) return a.first<b.first; if(dnum[a.second]!=dnum[b.second]) return dnum[a.second]<dnum[b.second]; return a.second<b.second; });
+    { std::vector<int> run;
+      for(size_t a=0;a<mem.size();){ size_t b=a; run.clear(); while(b<mem.size()&&mem[b].first==mem[a].first){ run.push_back(mem[b].second); b++; }
+        GameEntry& e=g_games[mem[a].first]; e.disk_indices.set(run.data(),run.size()); e.first_file_idx=run[0]; a=b; } }
+    std::vector<std::pair<int,int>>().swap(mem);
     std::vector<int>().swap(dnum); std::vector<int>().swap(grp);
+    if(g_gtext.failed()) throw std::bad_alloc();       // lab15b: a name/disk list didn't fit - same path as any other out-of-PSRAM
       break;
     }catch(...){
-      g_games.clear();
+      gamesClear();
       size_t keep=g_files.size()*85/100;
       gLog("[buildGameList] OUT OF PSRAM grouping %d images (attempt %d) - keeping %u\n",n,attempt+1,(unsigned)keep);
       if(attempt>=5||keep==0){ g_files.clear(); break; }
@@ -2239,6 +2309,9 @@ static void buildGameList(){
   // lab14b: same order as lower-casing both names and comparing, without two String copies per compare
   std::sort(g_games.begin(),g_games.end(),[](const GameEntry&a,const GameEntry&b){return strcasecmp(a.name.c_str(),b.name.c_str())<0;});
   gLog("[buildGameList] done games=%d in %lums int=%u psram=%u\n",(int)g_games.size(),(unsigned long)(millis()-_bg0),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+  gLog("[games] %u records x %u B + arena %u KB (%u KB text/disk lists, %u blocks, %u refused) = %u B a game\n",(unsigned)g_games.size(),(unsigned)sizeof(GameEntry),
+       (unsigned)(g_gtext.bytes()/1024),(unsigned)(g_gtext.used()/1024),(unsigned)g_gtext.blocks(),(unsigned)g_gtext.failed(),
+       (unsigned)(g_games.empty()?0:(g_games.size()*sizeof(GameEntry)+g_gtext.bytes())/g_games.size()));   // lab15b
   bcSet(BC_CACHEWRITE,(uint32_t)g_games.size());
   if(g_libpath.length()==0)writeGameCache();   // v5.6.0: only cache the top level; category sub-levels scan fresh each time
 }
@@ -2296,9 +2369,11 @@ static void applyTheme(int idx){
 }
 
 static void saveConfigKey(const String&key,const String&val){
+  uint32_t _t0=millis();   // lab15a2
   String lines="";bool written=false;File fr=SD_MMC.open("/CONFIG.TXT",FILE_READ);
   if(fr){while(fr.available()){String l=fr.readStringUntil('\n');l.trim();if(l.startsWith(key+"=")){lines+=key+"="+val+"\n";written=true;}else lines+=l+"\n";}fr.close();}
   if(!written)lines+=key+"="+val+"\n";File fw=SD_MMC.open("/CONFIG.TXT",FILE_WRITE);if(fw){fw.print(lines);fw.close();}
+  { uint32_t dt=millis()-_t0; if(dt>300) gLog("[slow] saveConfigKey %s: %lums, CONFIG.TXT %u bytes\n",key.c_str(),(unsigned long)dt,(unsigned)lines.length()); }
 }
 
 // ── Dongle friendly names (touchscreen-side only; keyed to the dongle MAC) ──
@@ -3940,7 +4015,7 @@ static void buildThumbs(){ if(!g_covers_on){fwLocFree();return;}   // 5.9.32-lab
         need = !Tl || Tl->size!=TILE_BYTES || Tl->fdate!=J->fdate || Tl->ftime!=J->ftime;
       } else {                                     // not in the walk: the old by-name checks
         nSlow++;
-        String vT="/sdcard"+tp,vJ="/sdcard"+g.jpg_path;
+        String vT="/sdcard"+tp,vJ=String("/sdcard")+g.jpg_path.c_str();
         struct stat stT,stJ;
         if(stat(vT.c_str(),&stT)!=0)need=true;
         else if(stT.st_size!=(long)((size_t)CAR_TILE*CAR_TILE*2))need=true;
@@ -4112,10 +4187,22 @@ static void carMicroBuild(){
   int n=g_car_micro_n; if(!n||!car_micro_block)return;
   uint16_t*tmp=(uint16_t*)ps_malloc((size_t)CAR_TILE*CAR_TILE*2); if(!tmp)return;
   uint32_t t0=millis(); int lastShown=-1;        // 5.9.36-lab6: count-driven, was every 120ms
+  gLog("[micro] build start: %d games | int=%u largest-int=%u psram=%u\n",n,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
+  uint32_t nTile=0,nDec=0,nNone=0;
   for(int i=0;i<n;i++){
+    uint32_t tg=millis();
+    if(i%1000==0) gLog("[micro] %d/%d at %lus | tiles %u decoded %u none %u | int=%u psram=%u\n",i,n,(unsigned long)((millis()-t0)/1000),(unsigned)nTile,(unsigned)nDec,(unsigned)nNone,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());   // lab15a3
     SD_LOCK();
-    bool ok=carLoadThumb(i,tmp); if(!ok)ok=carDecodeTile(i,tmp);
+    bool ok=carLoadThumb(i,tmp);
+    if(ok) nTile++;
+    else {
+      const String& jp=g_games[i].jpg_path;
+      if(jp.length()&&jp!="?") gLog("[micro] game %d: no tile, decoding %s\n",i,jp.c_str());   // lab15a3: name it BEFORE the decode, so a hang points at the file
+      else if(!jp.length()) gLog("[micro] game %d: cover unknown, searching by name (%s)\n",i,g_games[i].name.c_str());
+      ok=carDecodeTile(i,tmp); if(ok) nDec++; else nNone++;
+    }
     SD_UNLOCK();
+    { uint32_t dt=millis()-tg; if(dt>2000) gLog("[micro] game %d took %lums (%s)\n",i,(unsigned long)dt,g_games[i].name.c_str()); }
     if(ok)carMicroFromTile(i,tmp);
     if(i-lastShown>=25||i==n-1){ lastShown=i;
       gfx_fillScreen(0x1082);
@@ -4133,6 +4220,7 @@ static void carMicroBuild(){
     if((i&15)==0)yield();
   }
   free(tmp);
+  gLog("[micro] build done: %d games in %lus | tiles %u decoded %u none %u\n",n,(unsigned long)((millis()-t0)/1000),(unsigned)nTile,(unsigned)nDec,(unsigned)nNone);   // lab15a3
   SD_LOCK(); carMicroSave(); SD_UNLOCK();
 }
 static void carMicroEnsure(){
@@ -4709,19 +4797,42 @@ static void svToast(const String&msg){
   int tw=gfx_textWidth(msg);gfx_setCursor((VW-tw)/2,6);gfx_print(msg);gfx_flush();
   delay(1200);drawStatusBar();gfx_flush();
 }
-// Standalone flush: persist our own RAM disk's dirty sectors to SD.
+// lab15c: a save file that already exists (COPY: the .sav from an earlier save; OVERWRITE: the image
+// itself) is patched IN PLACE - same file, same clusters, same size, only the written sectors change.
+// So the card file the mounted disk is read from never moves while the disk is in, and there is no
+// copy + delete + rename per save (fewer FAT/directory writes). A first save in COPY mode still makes
+// the .sav by copying the image (the mounted image itself is never touched in COPY mode).
+static bool svPatchInPlace(const String&path,const uint8_t*map,uint32_t mapBits,uint32_t fsz,const uint8_t*ram){
+  File f=SD_MMC.open(path,"r+");if(!f)return false;
+  bool ok=true;
+  for(uint32_t i=0;i<mapBits;i++){
+    if(!((map[i>>3]>>(i&7))&1))continue;
+    uint32_t off=i*512UL; if(off>=fsz)break;
+    uint32_t len=(fsz-off)<512?(fsz-off):512;       // never write past the end - the file keeps its size
+    if(!f.seek(off)||f.write(ram+(size_t)(DATA_LBA+i)*512,len)!=len){ok=false;break;}
+  }
+  f.flush();f.close();
+  if(ok) savSetAdd(path);
+  return ok;
+}
+// Standalone flush: persist our own RAM disk's written sectors to SD.
 static uint8_t g_sv_fail=0;
 static void svFlushStandalone(){
-  if(g_sv_dirty_count==0)return;
-  if(g_saves_mode==0||!g_loaded||!g_loaded_path.length()){svDirtyReset();return;}   // OFF / diag disk: discard
+  if(!svPending())return;
+  if(g_saves_mode==0||!g_loaded||!g_loaded_path.length()){g_sv_fseq=g_sv_wseq;return;}   // OFF / diag disk: nothing written to the card (lab15c: the Gotek still sees its own writes until eject)
+  uint32_t seq0=g_sv_wseq;                          // writes that land during the flush make it pending again
   String master=g_loaded_path;
   String sav=(g_saves_mode==2)?master:savPathFor(master);
   uint32_t imgSecs=(g_sv_img_size+511)/512;if(imgSecs>SV_IMG_MAX_SECTORS)imgSecs=SV_IMG_MAX_SECTORS;
-  if(svPatchCore(master,sav,g_sv_dirty,imgSecs,nullptr,g_disk)){
-    svDirtyReset();g_sv_fail=0;svToast("SAVED: "+g_loaded_name);
+  bool inPlace=SD_MMC.exists(sav);
+  bool ok=inPlace ? svPatchInPlace(sav,g_sv_dirty,imgSecs,g_sv_img_size,g_disk)
+                  : svPatchCore(master,sav,g_sv_dirty,imgSecs,nullptr,g_disk);
+  gLog("[saves] %s %s: %u sectors in the overlay, %s\n",ok?"saved":"FAILED",sav.c_str(),(unsigned)g_sv_dirty_count,inPlace?"patched in place":"new save file");
+  if(ok){
+    g_sv_fseq=seq0;g_sv_fail=0;svToast("SAVED: "+g_loaded_name);
   }else{
     g_sv_last_write=millis();                       // back off one settle window, then retry
-    if(++g_sv_fail>=5){svDirtyReset();g_sv_fail=0;svToast("SAVE FAILED - GAVE UP");}
+    if(++g_sv_fail>=5){g_sv_fseq=g_sv_wseq;g_sv_fail=0;svToast("SAVE FAILED - GAVE UP");}
   }
 }
 // Wireless persist callback — runs inside espnowFetchSave, between CRC-verify and ack.
@@ -4798,7 +4909,7 @@ static bool doLoadSelected(const String&adfPath){
   // v4.8.0 interlocks: pending saves die when the RAM disk is rebuilt — drain first
   // (v4.8.1: own-disk flush runs in ANY mode — a wireless GTi can still be USB-attached)
   if(g_wireless_mode&&g_espnow_started&&g_espnow_dirty)svFetchWireless();
-  if(g_sv_dirty_count&&g_loaded)svFlushStandalone();
+  if(svPending()&&g_loaded)svFlushStandalone();
   // Prefer the save-copy when one exists (COPY mode): saves accumulate in the .sav
   String loadPath=adfPath;
   if(g_saves_mode==1&&savExistsFor(adfPath))loadPath=savPathFor(adfPath);
@@ -4870,8 +4981,9 @@ static bool doLoadSelected(const String&adfPath){
     copied=fsz;
     // Save tracking is LIVE under alias: the dirty map is what makes the overlay
     // work, and svFlushStandalone patches those sectors into GameName.sav.<ext>
-    // exactly as before. GEN still has no writeback.
-    g_sv_img_size=(g_mode==MODE_GEN)?0:fsz;svDirtyReset();
+    // exactly as before. lab15c: GEN saves too (it had no writeback before).
+    if(fsz>SV_IMG_MAX_SECTORS*512UL) gLog("[saves] %s is %u KB - only its first %u KB can be saved (the BIGDISK size; BIGDISK=ON = 2880 KB)\n",loadPath.c_str(),(unsigned)(fsz/1024),(unsigned)(SV_IMG_MAX_SECTORS/2));   // lab15c
+    g_sv_img_size=fsz;svDirtyReset();   // lab15c: GENERIC too (HFE, ST, IMG...) - FlashFloppy writes into the image file itself, so the same sector patching saves it
   }
   mscAnnounce(g_alias?g_alias_sectors:TOTAL_SECTORS);
   hardAttach();g_loaded=true;g_loaded_name=basenameNoExt(filenameOnly(adfPath));g_loaded_path=loadPath;g_loaded_game_idx=g_sel;g_loaded_disk_idx=g_disk_sel;
@@ -4963,7 +5075,7 @@ static bool doLoadWebdav(const String&remotePath,const String&showName){
 static void doUnload(){
   // v4.8.0: EJECT is a save point — drain before the disk goes away
   // (v4.8.1: own-disk flush in any mode)
-  if(g_sv_dirty_count)svFlushStandalone();
+  if(svPending())svFlushStandalone();
   if(g_wireless_mode&&g_espnow_started&&g_espnow_dirty)svFetchWireless();
   hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();g_alias=false;   // 5.9.37: drop any alias mapping
   if(g_wireless_mode&&g_espnow_started&&espnowIsPaired())espnowSendEject();drawStatusBar();drawListAndCover();gfx_flush();}
@@ -5432,6 +5544,7 @@ static void runScreensaver(){                                // blocking bounce 
 // RESCAN — delete index cache and rebuild with animated progress
 // ════════════════════════════════════════════════════════════════════════════
 static void doRescan(){
+  uint32_t _t0=millis();   // lab15a2: how long before the SCANNING screen
   g_info_showing=false;
   g_cover_flags_ready=false;   // v5.9.2: covers may have changed -> recompute reel-filter flags
   // Delete all cache files
@@ -5441,10 +5554,13 @@ static void doRescan(){
   // categories, font, language, rotation, ...) take effect on a RESCAN without a reboot.
   // Runs before the library rebuild so CATEGORIES/NESTING changes apply. Transfer MODE is
   // deliberately preserved — flipping standalone/wireless wants a clean boot, not a rescan.
+  uint32_t _t1=millis();
   { bool wl=g_wireless_mode; selfHealConfig(); loadConfig(); g_wireless_mode=wl; relayout(); }
+  uint32_t _t2=millis();
   // Rescan with animation
-  std::vector<String>().swap(g_files);g_games.clear();g_games.shrink_to_fit();   // lab14e: free the buffers, not just the contents
+  g_files.release();gamesClear();   // lab14e: free the buffers, not just the contents
   carRuntimeRelease();   // lab14e: give the old reel tiles + micro-thumbs back before the new library is sized
+  gLog("[rescan] before the scan: delete caches %lums, config %lums, free library %lums | int=%u psram=%u\n",(unsigned long)(_t1-_t0),(unsigned long)(_t2-_t1),(unsigned long)(millis()-_t2),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());   // lab15a2
   heap_caps_malloc_extmem_enable(0);listImages(SD_MMC,g_files);buildGameList();buildThumbs();   // lab14e: 0, not 16 (see setup)
   writeNfoCacheIfChanged();   // 5.9.31-lab1: persist the freshly harvested sidecars
   g_nfoharvest.clear();g_nfoharvest.shrink_to_fit();fwLocFree();g_manualset.clear();g_manualset.shrink_to_fit();g_hdset.clear();g_hdset.shrink_to_fit();
@@ -6792,10 +6908,10 @@ static void reloadLevel(){
   // lab14n: hand back the current library FIRST, exactly as doRescan does (lab14e). This used to walk the
   // card into a new list while the old one (10,000 games + reel tiles) was still in memory: on a big card
   // the memory check tripped at once and the level rebuilt as an EMPTY list ("no .adf files found").
-  std::vector<String>().swap(g_files); g_games.clear(); g_games.shrink_to_fit();
+  g_files.release(); gamesClear();
   carRuntimeRelease(); g_cover_flags_ready=false;
   heap_caps_malloc_extmem_enable(0);       // library build: small blocks to PSRAM too (see setup)
-  g_files=scanImagesAnimated();            // fills g_files (titles) + g_cats (sub-categories) + g_coverset
+  scanImagesAnimated(g_files);            // fills g_files (titles) + g_cats (sub-categories) + g_coverset
   buildGameList();buildThumbs();           // buildGameList's cache write is guarded to the top level
   g_nfoharvest.clear();g_nfoharvest.shrink_to_fit();fwLocFree();g_manualset.clear();g_manualset.shrink_to_fit();g_hdset.clear();g_hdset.shrink_to_fit();
   heap_caps_malloc_extmem_enable(4096);    // back to the runtime setting
@@ -6854,7 +6970,7 @@ static void doCategoryBrowse(){
 static void switchLib(int m){   // int, not DiskMode: Arduino auto-generates this prototype ABOVE the enum decl, so an enum param won't compile
   g_mode=(DiskMode)m;g_libpath="";
   if(g_categories){reloadLevel();}
-  else{std::vector<String>().swap(g_files);g_games.clear();g_games.shrink_to_fit();   // lab14n: free the old library first (clear() kept the games + the vector's block)
+  else{g_files.release();gamesClear();   // lab14n: free the old library first (clear() kept the games + the vector's block)
     carRuntimeRelease();g_cover_flags_ready=false;heap_caps_malloc_extmem_enable(0);listImages(SD_MMC,g_files);if(!readGameCache()){buildGameList();buildThumbs();}
     if(g_sidecars_harvested){ if(assignSidecarsFromHarvest())writeGameCache(); writeNfoCacheIfChanged(); }   // lab14p: descriptions for the new library,
     else loadNfoCache();                                                                                  //   exactly as setup() does
@@ -6958,7 +7074,10 @@ static void handleTap(uint16_t px,uint16_t py){
       return;
     }
     for(int i=0;i<g_ir_n;i++){
-      if(px>=(uint16_t)g_ir[i].x&&px<(uint16_t)(g_ir[i].x+g_ir[i].w)&&py>=(uint16_t)g_ir[i].y&&py<(uint16_t)(g_ir[i].y+g_ir[i].h)){ infoAction(g_ir[i].act); return; }
+      if(px>=(uint16_t)g_ir[i].x&&px<(uint16_t)(g_ir[i].x+g_ir[i].w)&&py>=(uint16_t)g_ir[i].y&&py<(uint16_t)(g_ir[i].y+g_ir[i].h)){
+        uint32_t t0=millis(); uint8_t a=g_ir[i].act; infoAction(a);   // lab15a2: slow Settings taps go in the log
+        uint32_t dt=millis()-t0; if(dt>300) gLog("[slow] settings action %u took %lums | int=%u psram=%u largest-int=%u\n",(unsigned)a,(unsigned long)dt,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram(),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        return; }
     }
     return;
   }
@@ -7058,7 +7177,7 @@ void loop(){
     }
     // Own-disk writes settled — flush to SD (v4.8.1: in ANY mode; a wireless GTi
     // can still be USB-attached to a PC or a local Gotek)
-    if(g_loaded&&g_sv_dirty_count&&g_sv_last_write&&now-g_sv_last_write>SV_SETTLE_MS)
+    if(g_loaded&&svPending()&&g_sv_last_write&&now-g_sv_last_write>SV_SETTLE_MS)
       svFlushStandalone();
   }
 
