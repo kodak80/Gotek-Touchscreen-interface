@@ -1,4 +1,6 @@
 // espnow_server_p4wifi.cpp — ESP32-P4 WiFi-direct transport (replaces the p4stub).
+// lab15i-P4: brought to the 15i radio API - CMD_CLAIM 0x0A take-over check over TCP, espnowStop (no radio off),
+// SHARE / 'in use by' reported as unavailable (ESP-NOW only), ESPNOW_DATA_LBA 13 via the shared espnow_server.h.
 // ---------------------------------------------------------------------------------
 // The P4 has no radio of its own; WiFi runs on the companion ESP32-C6 over SDIO
 // (esp-hosted). Once the C6 is on 2.12.13 (self-updated from the SD card), all of
@@ -216,7 +218,51 @@ static void tcpSendSetName(const char* ip){
   delay(20);
 }
 
-static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uint32_t connectTimeoutMs) {
+// ── lab15i-P4: take-over check (CMD_CLAIM 0x0A over TCP) - same wire format as the S3's espnow_server.cpp ──
+// Escape CMD_CLAIM: my MAC[6], flags (bit0 = take over), name length, name. Webby 1.6.6+ answers 0x01 = go ahead;
+// 0x03 = another screen has a disk in me; 0x02 = another screen's saves are not handed back yet (both followed by
+// length + that screen's name). An older dongle answers 0x00 (unknown command) = go ahead (old behaviour).
+#define CMD_CLAIM 0x0A
+static ClaimAskCb _claimAsk = nullptr;
+static String     _myName   = "";
+static bool       _claimCancelled = false;
+void espnowSetClaimAsk(ClaimAskCb cb){ _claimAsk = cb; }
+void espnowSetScreenName(const String& n){ _myName = n; _myName.trim(); }
+bool espnowClaimCancelled(){ return _claimCancelled; }
+static String screenName(){
+  if (_myName.length()) return _myName;
+  uint8_t m[6]; WiFi.macAddress(m); char b[12]; snprintf(b, sizeof(b), "GTi-%02X%02X", m[4], m[5]); return String(b);
+}
+static bool tcpClaim(const char* ip){          // true = go ahead and send
+  _claimCancelled = false;
+  for (int pass = 0; pass < 2; pass++) {
+    WiFiClient c;
+    if (!c.connect(ip, DONGLE_TCP_PORT)) return true;          // can't ask: old behaviour
+    uint8_t my[6]; WiFi.macAddress(my);
+    String nm = screenName(); uint8_t L = (uint8_t)(nm.length() > 24 ? 24 : nm.length());
+    uint8_t esc[5] = {0xFF,0xFF,0xFF,0xFF, CMD_CLAIM}; uint8_t fl = pass ? 1 : 0;
+    c.write(esc, 5); c.write(my, 6); c.write(&fl, 1); c.write(&L, 1); c.write((const uint8_t*)nm.c_str(), L);
+    uint32_t t0 = millis(); while (!c.available() && millis()-t0 < 1500) delay(5);
+    int r = c.available() ? c.read() : -1;
+    if (r != 0x02 && r != 0x03) { c.stop(); delay(20); return true; }
+    char who[25] = {0}; t0 = millis(); while (!c.available() && millis()-t0 < 500) delay(2);
+    int wl = c.available() ? c.read() : 0; if (wl > 24) wl = 24;
+    int got = 0; t0 = millis();
+    while (got < wl && millis()-t0 < 500) { int ch = c.read(); if (ch < 0) { delay(1); continue; } who[got++] = (char)ch; }
+    c.stop(); delay(20);
+    Serial.printf("[P4WIFI] dongle %s '%s'\n", r == 0x02 ? "holds unsaved saves from" : "is in use by", who);
+    if (pass == 1) return true;
+    if (!_claimAsk || !_claimAsk(r == 0x02, who[0] ? who : "another screen")) { _claimCancelled = true; return false; }
+  }
+  return true;
+}
+// ESP-NOW-only features: not available over the P4's Wi-Fi-direct link (no ESP-NOW on Arduino-P4).
+void   espnowSendShare(const uint8_t*){ Serial.println("[P4WIFI] SHARE needs ESP-NOW - not available on the P4"); }
+String espnowScanInUseBy(int){ return ""; }        // "in use by" comes in the ESP-NOW pairing reply - unknown here
+// MODE switching: the hosted radio must NOT be switched off and on again (5.9.12 crash) - forget the link only.
+void   espnowStop(){ WiFi.disconnect(false, true); }
+
+static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uint32_t connectTimeoutMs, bool claim) {
   String ip = String(ipc && ipc[0] ? ipc : DONGLE_AP_IP);
 
   WiFi.mode(WIFI_STA);
@@ -240,6 +286,10 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
   }
   Serial.printf("[P4WIFI] joined, IP %s -> dongle %s:%d\n", WiFi.localIP().toString().c_str(), ip.c_str(), DONGLE_TCP_PORT);
 
+  if (claim && !tcpClaim(ip.c_str())) {   // lab15i-P4: another screen's disk is in this dongle and the user said no
+    Serial.println("[P4WIFI] not sent - dongle kept for the other screen");
+    WiFi.disconnect(); return false;
+  }
   tcpSendSetName(ip.c_str());   // wireless DSK fix: real filename+ext for the fling
   WiFiClient client;
   if (!client.connect(ip.c_str(), DONGLE_TCP_PORT)) {
@@ -274,11 +324,11 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
 
 // Single paired dongle — AP-direct, 15 s window, learned BSSID.
 bool espnowSendDisk(uint32_t size) {
-  return sendDiskCore(_dongle_mac, _dongle_ip.length()?_dongle_ip.c_str():DONGLE_AP_IP, size, 15000);
+  return sendDiskCore(_dongle_mac, _dongle_ip.length()?_dongle_ip.c_str():DONGLE_AP_IP, size, 15000, true);   // single dongle: take-over check first
 }
 // Hivemind fan-out — one dongle by BSSID; shorter window so a powered-off member doesn't stall.
 bool espnowSendDiskTo(const uint8_t* mac, uint32_t size) {
-  return sendDiskCore(mac, DONGLE_AP_IP, size, 6000);
+  return sendDiskCore(mac, DONGLE_AP_IP, size, 6000, false);   // hivemind fan-out: no take-over question (same as the S3)
 }
 
 // Home-WiFi transport: join the router (STA/DHCP), resolve the dongle via mDNS
@@ -302,6 +352,9 @@ bool espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, ui
       IPAddress r = MDNS.queryHost("gotekomega", 2500);
       if ((uint32_t)r != 0) { ip = r.toString(); ioIp = ip; Serial.printf("[P4WIFI/HOME] gotekomega.local -> %s\n", ip.c_str()); }
       MDNS.end();
+    }
+    if (ip.length() > 0 && !tcpClaim(ip.c_str())) {   // lab15i-P4: take-over check (home Wi-Fi path too, as on the S3)
+      Serial.println("[P4WIFI/HOME] not sent - dongle kept for the other screen"); ip = "";
     }
     if (ip.length() > 0) {
       tcpSendSetName(ip.c_str());   // wireless DSK fix: real filename+ext for the fling

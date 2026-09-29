@@ -20,11 +20,11 @@
     "builds": [
       {
         "v": "5.9.41-lab15i",
-        "ch": "lab",
+        "ch": "beta",
         "date": "2026-09-29",
         "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15i-update.bin",
-        "note": "Lab build for testers - not yet hardware-tested by us. Same as lab15h, plus: each wireless dongle keeps its OWN save file (Game.sav.XXXX.<ext>, XXXX = 4 characters from the dongle's ID; with Webby-1.6.8 they match its Wi-Fi name GotekOMEGA-XXXX). So the Amiga on the GTi's cable and an Amiga on a dongle can play the same game without mixing their saves. Cable saves stay Game.sav.<ext>. Works with any Webby. Built with ESP32 core 3.3.12.",
-        "latest": false
+        "note": "Latest (29 Sep). Same as lab15h, plus: each wireless dongle keeps its OWN save file (Game.sav.XXXX.<ext>, XXXX = 4 characters from the dongle's ID; with Webby-1.6.8 they match its Wi-Fi name GotekOMEGA-XXXX). So the Amiga on the GTi's cable and an Amiga on a dongle can play the same game without mixing their saves. Cable saves stay Game.sav.<ext>. Works with any Webby. Built with ESP32 core 3.3.12.",
+        "latest": true
       },
       {
         "v": "5.9.41-lab15h",
@@ -128,7 +128,7 @@
         "date": "2026-09-18",
         "app": "firmware/jc3248-beta/GTi-JC35-5.9.30-update.bin",
         "note": "SD FW-UPDATE now refuses a merged/full-flash image up front (it can only ever flash the ~1.8MB app image) and shows the INCOMING firmware version on the confirm screen before you commit. Settings tab fully follows BTNSTYLE incl. the page/close bar. Keeps 5.9.29's /gti.log diagnostics, plus REEL BORDER and LAST USED.",
-        "latest": true
+        "latest": false
       },
       {
         "v": "5.9.23",
@@ -209,6 +209,14 @@
     "chipFamily": "ESP32-S3",
     "builds": [
       {
+        "v": "Webby-1.6.9-supermini",
+        "ch": "beta",
+        "latest": true,
+        "date": "2026-09-29",
+        "full": "firmware/supermini-beta/manifest-1.6.9-supermini.json",
+        "note": "Latest. For the Super Mini (two small LEDs, red + blue); for a Waveshare S3-Zero (one colour LED) use the S3-Zero entry. NEEDS GTi 5.9.41-lab14t or newer on the screen (older screens can pair but not send disks) - update the screen too. Same as 1.6.8 (unique Wi-Fi name GotekOMEGA-XXXX), plus a fixed page at 192.168.4.1: real version, any disk image (ADF DSK HFE ST IMG ...) up to 1.75 MB, fits a phone, all six languages, the real Wi-Fi name, links to the full interface / web flasher / help. Pair again after flashing (full wipe)."
+      },
+      {
         "v": "Webby-1.6.8-supermini",
         "ch": "lab",
         "latest": false,
@@ -243,7 +251,7 @@
       {
         "v": "Webby-0.8",
         "ch": "beta",
-        "latest": true,
+        "latest": false,
         "date": "2026-09-12",
         "full": "firmware/supermini-beta/manifest-1.5.json",
         "note": "This file is Webby-0.8-fleetUI - it was listed here as Webby-1.5 by mistake, which is why the dongle's web page shows 0.8. Old build: no unique Wi-Fi name, no device name, no web update; DSK/GENERIC images sent wirelessly arrive as DISK.ADF (FlashFloppy ERROR 34). Amiga ADFs work."
@@ -269,6 +277,14 @@
   "zero": {
     "chipFamily": "ESP32-S3",
     "builds": [
+      {
+        "v": "Webby-1.6.9-zero",
+        "ch": "beta",
+        "latest": true,
+        "date": "2026-09-29",
+        "full": "firmware/zero-beta/manifest-1.6.9-zero.json",
+        "note": "Latest. For the Waveshare ESP32-S3-Zero (one colour status LED) - same firmware as Webby-1.6.9-supermini, only the status light differs; don't put it on a Super Mini. NEEDS GTi 5.9.41-lab14t or newer on the screen - update the screen too. Fixed page at 192.168.4.1 (real version, any disk image up to 1.75 MB, fits a phone, all six languages, links). Pair after flashing (full wipe)."
+      },
       {
         "v": "Webby-1.6.8-zero",
         "ch": "lab",
