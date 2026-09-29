@@ -1003,7 +1003,7 @@ static void handleWebUI(){
 static void handleRoot(){ server.send_P(200, "text/html", PAGE_HTML); }
 
 // ── FLEET: per-device identity from the STA MAC ─────────────────────────────
-static String discoId(){ uint8_t m[6]; WiFi.macAddress(m);
+static String discoId(){ uint8_t m[6] = {0}; esp_read_mac(m, ESP_MAC_WIFI_STA);   // 1.6.8: same value as WiFi.macAddress(), but valid before the radio starts
   char b[13]; snprintf(b,sizeof(b),"%02X%02X%02X%02X%02X%02X",m[0],m[1],m[2],m[3],m[4],m[5]); return String(b); }
 // #name: sanitizeName + discoName are defined up top (before statusJson) so
 // there is no forward-reference — that avoided arduino's prototype generator
@@ -1205,7 +1205,11 @@ static void startEspnowApMode(){
   WiFi.mode(WIFI_AP_STA);
   // Unique AP name per device: two dongles in one room both broadcasting
   // "GotekOMEGA" is impossible to tell apart (you configure the wrong one).
-  uint8_t apm[6]; WiFi.macAddress(apm);
+  // 1.6.8: WiFi.macAddress() asks the station interface, which only exists once the radio's
+  // start event has run - straight after WiFi.mode() it doesn't yet, the call fails and apm stayed
+  // zero, so EVERY dongle was "GotekOMEGA-0000". esp_read_mac() reads the chip's own number and needs
+  // no radio. SoftAP MAC = the BSSID the dongle broadcasts = its identity (Wire Protocol Registry).
+  uint8_t apm[6] = {0}; esp_read_mac(apm, ESP_MAC_WIFI_SOFTAP);
   char apid[24]; snprintf(apid, sizeof(apid), "%s-%02X%02X", AP_SSID, apm[4], apm[5]);
   char apline[32]; snprintf(apline, sizeof(apline), "AP: %s", apid);
   WiFi.softAP(apid, AP_PASS, ESPNOW_CHANNEL);

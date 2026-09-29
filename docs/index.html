@@ -219,7 +219,7 @@
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="12" height="6" rx="1.5"/><path d="M15 10.5h3a2 2 0 0 1 0 3h-3"/><path d="M6 9V7.5"/><path d="M9 9V7.5"/><path d="M18.5 12h1.5"/></svg>
         <span class="go">→</span>
         <h3>Flash a wireless dongle</h3>
-        <p>Flash the little board that plugs into the Gotek and loads disks over the air — Super Mini or XIAO.</p>
+        <p>Flash the little board that plugs into the Gotek and loads disks over the air — Super Mini, S3-Zero or XIAO.</p>
       </button>
     </div>
     <div class="subdoors">
@@ -486,10 +486,14 @@
   const DONGLE = {
     main:[
       {id:'supermini', img:'img/supermini.jpg', nm:'Super Mini', sz:'', dongle:true, meta:'ESP32-S3 Super Mini + PSRAM',
-        spot:'The wider board with two side buttons', tags:[['PREFERRED','t-dongle'],['USB DONGLE','t-wifi']],
+        spot:'The wider board with two side buttons and two small LEDs (red + blue)', tags:[['PREFERRED','t-dongle'],['USB DONGLE','t-wifi']],
         prep:'Plug the Super Mini into your PC with a <b>USB data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release.',
         stable:{man:'firmware/supermini/manifest.json', ver:'Firmware v3.2.0 — ESP-NOW + WiFi transport, owner-lock, save write-back', sd:null},
         beta:{man:'firmware/supermini-beta/manifest-1.5.json', ver:'Webby-0.8-fleetUI — built-in multi-dongle web console (WebDAV / FTP)', sd:null}},
+      {id:'zero', nm:'Waveshare S3-Zero', sz:'', dongle:true, meta:'Waveshare ESP32-S3-Zero + PSRAM · USB-C',
+        spot:'Small square board with one colour status LED — pick this only if yours is a Zero', tags:[['USB DONGLE','t-wifi']],
+        prep:'<b>Super Mini or S3-Zero?</b> Pick the one that matches the board in your dongle. The firmware is the same; only the status light differs — the S3-Zero has one colour LED, the Super Mini two small ones. Don\'t swap them: the Zero build drives a colour LED that can upset the Super Mini\'s radio pairing.<br>Plug the Zero into your PC with a <b>USB-C data cable</b>. Hold <b>BOOT</b>, tap <b>RESET</b>, release.',
+        stable:{man:'firmware/zero-beta/manifest-1.6.8-zero.json', ver:'Webby-1.6.8-zero — first build for the Waveshare S3-Zero (colour status LED)', sd:null}, beta:null},
       {id:'xiao', img:'img/xiao.jpg', nm:'Seeed XIAO', sz:'', dongle:true, meta:'Seeed XIAO ESP32-S3 · 21×17mm',
         spot:'Tiny board, “seeed studio” metal shield — plug the antenna in first', tags:[['USB DONGLE','t-wifi']],
         prep:'Plug the XIAO into your PC with a <b>USB data cable</b> — and its <b>WiFi antenna</b> before powering on. Hold <b>BOOT</b>, tap <b>RESET</b>, release.',

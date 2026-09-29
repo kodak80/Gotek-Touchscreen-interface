@@ -19,6 +19,14 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.41-lab15i",
+        "ch": "lab",
+        "date": "2026-09-29",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15i-update.bin",
+        "note": "Lab build for testers - not yet hardware-tested by us. Same as lab15h, plus: each wireless dongle keeps its OWN save file (Game.sav.XXXX.<ext>, XXXX = 4 characters from the dongle's ID; with Webby-1.6.8 they match its Wi-Fi name GotekOMEGA-XXXX). So the Amiga on the GTi's cable and an Amiga on a dongle can play the same game without mixing their saves. Cable saves stay Game.sav.<ext>. Works with any Webby. Built with ESP32 core 3.3.12.",
+        "latest": false
+      },
+      {
         "v": "5.9.41-lab15h",
         "ch": "beta",
         "date": "2026-09-27",
@@ -201,6 +209,14 @@
     "chipFamily": "ESP32-S3",
     "builds": [
       {
+        "v": "Webby-1.6.8-supermini",
+        "ch": "lab",
+        "latest": false,
+        "date": "2026-09-29",
+        "full": "firmware/supermini-beta/manifest-1.6.8-supermini.json",
+        "note": "Lab build for testers - not yet hardware-tested by us. For the Super Mini (two small LEDs, red + blue). Have a Waveshare S3-Zero (one colour LED)? Use the S3-Zero entry instead. Same as 1.6.7, plus: the Wi-Fi name is really unique now (GotekOMEGA-XXXX - every dongle used to be GotekOMEGA-0000), so a phone or PC has to join the new name once. NEEDS GTi 5.9.41-lab14t or newer. Pair again after flashing (full wipe)."
+      },
+      {
         "v": "Webby-1.6.7",
         "ch": "beta",
         "latest": false,
@@ -247,6 +263,19 @@
         "date": "2026-08-02",
         "full": "firmware/supermini/manifest.json",
         "note": "classic pre-Webby dongle: ESP-NOW + WiFi transport, owner-lock, save write-back"
+      }
+    ]
+  },
+  "zero": {
+    "chipFamily": "ESP32-S3",
+    "builds": [
+      {
+        "v": "Webby-1.6.8-zero",
+        "ch": "lab",
+        "latest": false,
+        "date": "2026-09-29",
+        "full": "firmware/zero-beta/manifest-1.6.8-zero.json",
+        "note": "Lab build for testers - the first build for the Waveshare ESP32-S3-Zero (one colour status LED). Same firmware as Webby-1.6.8-supermini; only the status light differs. Don't put it on a Super Mini - the colour-LED driver upset the Super Mini's radio pairing. NEEDS GTi 5.9.41-lab14t or newer. Pair after flashing (full wipe)."
       }
     ]
   },

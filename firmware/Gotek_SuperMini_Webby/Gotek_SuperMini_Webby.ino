@@ -47,7 +47,23 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.7"   // 1.6.7: take-over check moved to TCP command 0x0A (0x07 is ENROLL in the fleet contract) | 1.6.6: two screens can share this dongle - SHARE from an owner screen opens pairing for one more screen (2 min); the dongle remembers which screen sent the disk, tells scanning screens, and asks before another screen takes it over (refuses while that screen's saves are not handed back, unless forced); save reports go to the screen that sent the disk | 1.6.5: deleting the dongle on its GTi puts it back to "looking for a new owner"; a dongle with no owner always accepts pairing (was: shut after the first pairing, never reopened, and shut 6 min after power-on)
+// 1.6.8: ONE source, TWO builds - the SuperMini and the Waveshare S3-Zero differ only in their status light.
+//   0 = SuperMini  : two plain LEDs, red GPIO1 + blue GPIO2. GPIO21 is never touched.   (THIS sketch)
+//   1 = S3-Zero    : one WS2812 colour LED on GPIO21. GPIO1/GPIO2 are left alone.        (../Gotek_Zero_Webby)
+// Leave this at 0. The Zero build is its own sketch folder, Gotek_Zero_Webby, GENERATED from this file by
+// its make_zero.py (only this line differs) - so each board compiles in its own folder and the two merged
+// .bin files never overwrite each other. Edit here, then regenerate the Zero sketch.
+// The version string says which one it is (Webby-1.6.8-supermini / Webby-1.6.8-zero), on the OLED, the web
+// page and /api - so a dongle always tells you which image it runs.
+#ifndef WEBBY_ZERO
+#define WEBBY_ZERO     0
+#endif
+#if WEBBY_ZERO
+#define WEBBY_BOARD    "zero"
+#else
+#define WEBBY_BOARD    "supermini"
+#endif
+#define FW_VERSION     "Webby-1.6.8-" WEBBY_BOARD   // 1.6.8: SuperMini / S3-Zero builds from one source (WEBBY_ZERO); the Wi-Fi name really is unique now - GotekOMEGA-XXXX came out as GotekOMEGA-0000 on every dongle (the MAC was read before the radio had started) | 1.6.7: take-over check moved to TCP command 0x0A (0x07 is ENROLL in the fleet contract) | 1.6.6: two screens can share this dongle - SHARE from an owner screen opens pairing for one more screen (2 min); the dongle remembers which screen sent the disk, tells scanning screens, and asks before another screen takes it over (refuses while that screen's saves are not handed back, unless forced); save reports go to the screen that sent the disk | 1.6.5: deleting the dongle on its GTi puts it back to "looking for a new owner"; a dongle with no owner always accepts pairing (was: shut after the first pairing, never reopened, and shut 6 min after power-on)
 #define ESPNOW_CHANNEL 6
 //  Board profile 
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -55,11 +71,11 @@
 // The SuperMini is just the cheapest board that packages those three. To port to
 // another S3, override these pins for that board (an unused GPIO is fine  the
 // LEDs are optional status, not required). Defaults = SuperMini.
-// --- Status LEDs (driven unconditionally  no board detection) ------------
-// We light BOTH kinds of status LED on every render, so ONE firmware image
-// works on every board with no build switch: two discrete LEDs (SuperMini:
-// red=GPIO1, blue=GPIO2) AND a WS2812 RGB (Zero: GPIO21). A board simply
-// ignores the output it doesn't have  toggling an unused GPIO is harmless.
+// --- Status LEDs -----------------------------------------------------------
+// 1.6.8: chosen by WEBBY_ZERO (top of the file). SuperMini build = two discrete LEDs (red GPIO1,
+// blue GPIO2) only; S3-Zero build = the WS2812 on GPIO21 only. (Before 1.6.8 one image drove both, and
+// the WS2812 output was switched off for everyone in 1.6.2 because it starved the SuperMini's ESP-NOW -
+// so the Zero had no status light at all.)
 #ifndef LED_RED
 #define LED_RED        1      // SuperMini red
 #endif
@@ -76,7 +92,7 @@
 #define LED_NP_BRIGHT  28     // 0..255, keep low
 #endif
 #ifndef LED_NP_ENABLE
-#define LED_NP_ENABLE  0     // 1.6.2: WS2812/RMT OFF by default - driving the pixel starved the ESP-NOW radio on the SuperMini (pairing died). Discrete red/blue LEDs unaffected. Set 1 only where you accept the wireless risk.
+#define LED_NP_ENABLE  WEBBY_ZERO     // 1.6.8: on in the Zero build only | 1.6.2: WS2812/RMT OFF by default - driving the pixel starved the ESP-NOW radio on the SuperMini (pairing died). Discrete red/blue LEDs unaffected. Set 1 only where you accept the wireless risk.
 #endif
 #ifndef BOOT_PIN
 #define BOOT_PIN       0
@@ -185,8 +201,12 @@ static void ledRender() {
   // Only touch the hardware when something changed (covers both outputs).
   uint32_t sig=((uint32_t)R<<16)|((uint32_t)G<<8)|B|((uint32_t)(dred?1:0)<<25)|((uint32_t)(dblue?1:0)<<24);
   static uint32_t last=0xFFFFFFFFu; if(sig==last) return; last=sig;
+#if !WEBBY_ZERO
   digitalWrite(LED_RED,  dred ? HIGH : LOW);
   digitalWrite(LED_BLUE, dblue? HIGH : LOW);
+#else
+  (void)dred; (void)dblue;
+#endif
 #if LED_NP_ENABLE
 #if LED_NP_SWAP_RG
   neopixelWrite(LED_NP_PIN, G, R, B);   // R/G swapped for this Zero's pixel
@@ -201,7 +221,9 @@ static inline void setLeds(bool red, bool blue){ g_led_red = red; g_led_blue = b
 static inline void ledActivity(uint16_t ms=350){ g_led_act_until = millis() + ms; ledRender(); }
 static inline void ledTick(){ ledRender(); }   // call each loop so time-based states refresh
 static void ledInit(){
+#if !WEBBY_ZERO
   pinMode(LED_RED, OUTPUT); pinMode(LED_BLUE, OUTPUT);   // WS2812 needs no pinMode
+#endif
   ledRender();
 }
 static void oledStatus(const String& l0, const String& l1, const String& l2, const String& l3) {
@@ -1072,7 +1094,7 @@ static void handleWebUI(){
 static void handleRoot(){ server.send_P(200, "text/html", PAGE_HTML); }
 
 //  FLEET: per-device identity from the STA MAC 
-static String discoId(){ uint8_t m[6]; WiFi.macAddress(m);
+static String discoId(){ uint8_t m[6] = {0}; esp_read_mac(m, ESP_MAC_WIFI_STA);   // 1.6.8: same value as WiFi.macAddress(), but valid before the radio starts
   char b[13]; snprintf(b,sizeof(b),"%02X%02X%02X%02X%02X%02X",m[0],m[1],m[2],m[3],m[4],m[5]); return String(b); }
 // #name: sanitizeName + discoName are defined up top (before statusJson) so
 // there is no forward-reference  that avoided arduino's prototype generator
@@ -1087,7 +1109,7 @@ static void sendAliveBeacon(){
   j += ",\"id\":\"";    j += discoId();      j += "\"";
   j += ",\"name\":\"";  j += discoName();    j += "\"";
   j += ",\"ip\":\"";    j += ip.toString();  j += "\"";
-  j += ",\"board\":\"supermini\"";
+  j += ",\"board\":\"" WEBBY_BOARD "\"";   // 1.6.8: "supermini" or "zero"
   j += ",\"fw\":\"";    j += FW_VERSION;     j += "\"";
   j += ",\"hd\":true";
   j += ",\"port\":80";
@@ -1274,7 +1296,11 @@ static void startEspnowApMode(){
   WiFi.mode(WIFI_AP_STA);
   // Unique AP name per device: two dongles in one room both broadcasting
   // "GotekOMEGA" is impossible to tell apart (you configure the wrong one).
-  uint8_t apm[6]; WiFi.macAddress(apm);
+  // 1.6.8: WiFi.macAddress() asks the station interface, which only exists once the radio's
+  // start event has run - straight after WiFi.mode() it doesn't yet, the call fails and apm stayed
+  // zero, so EVERY dongle was "GotekOMEGA-0000". esp_read_mac() reads the chip's own number and needs
+  // no radio. SoftAP MAC = the BSSID the dongle broadcasts = its identity (Wire Protocol Registry).
+  uint8_t apm[6] = {0}; esp_read_mac(apm, ESP_MAC_WIFI_SOFTAP);
   char apid[24]; snprintf(apid, sizeof(apid), "%s-%02X%02X", AP_SSID, apm[4], apm[5]);
   char apline[32]; snprintf(apline, sizeof(apline), "AP: %s", apid);
   WiFi.softAP(apid, AP_PASS, ESPNOW_CHANNEL);

@@ -49,7 +49,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15h-JC3248"  // lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
+#define FW_VERSION "5.9.41-lab15i-JC3248"  // lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -1059,6 +1059,18 @@ static volatile uint32_t g_sv_total_writes=0;
 static String   g_loaded_path="";                        // SD path of the mounted image ("" = diag/none)
 static String   g_sv_wl_path="";                         // SD path of the disk last FLUNG to the dongle
 static uint32_t g_sv_wl_loadid=0;                        // dongle load_id it acked with
+// lab15i: per-dongle saves. In Wireless mode the same game is on the GTi's own USB AND on the dongle, so two
+// Amigas can play it at once. Before, both saved into the same Game.sav.adf and it became a sector-by-sector
+// mix of the two (an AmigaDOS save disk could end up unreadable). Now each save file only ever holds what ONE
+// Amiga saw plus that Amiga's own writes:
+//   cable  -> Game.sav.adf            (unchanged - every existing save keeps working)
+//   dongle -> Game.sav.XXXX.adf       (XXXX = last 2 bytes of the paired dongle's MAC = its softAP MAC =
+//                                      the GotekOMEGA-XXXX name from Webby 1.6.8; ".sav." kept in the name so
+//                                      the walker, the save list and savPathFor all treat it as a save)
+static String   g_loaded_orig="";                        // the library image behind g_loaded_path (never a .sav)
+static bool     g_sv_cable_rebased=false;                // cable save already rebuilt from what was presented
+static String   g_sv_wl_orig="";                         // the library image behind g_sv_wl_path
+static String   g_sv_wl_tag="";                          // XXXX of the dongle it went to ("" = no own file: old behaviour)
 static inline bool svGet(const uint8_t*m,uint32_t i){return (m[i>>3]>>(i&7))&1;}
 static inline void svSet(uint8_t*m,uint32_t i){m[i>>3]|=(uint8_t)(1u<<(i&7));}
 // lab15c: g_sv_dirty is the WRITE OVERLAY for the whole time a disk is in - every sector the host wrote
@@ -4770,6 +4782,20 @@ static String savPathFor(const String&adfPath){
   return adfPath.substring(0,dot)+".sav"+adfPath.substring(dot);
 }
 static bool savExistsFor(const String&adfPath){String sv=savPathFor(adfPath);return sv!=adfPath&&SD_MMC.exists(sv);}
+// lab15i: the paired dongle's tag - last 4 hex of its MAC ("" when no dongle is paired / MAC unknown).
+// From memory (espnow_server keeps the MAC it paired with) - no card access, fine for the badge.
+static String dongleSavTag(){
+  if(!g_wireless_mode||!g_espnow_started||!espnowIsPaired())return "";
+  String m=espnowGetXiaoMac();                            // "AA:BB:CC:DD:EE:FF"
+  if(m.length()<17||m=="00:00:00:00:00:00")return "";
+  return m.substring(12,14)+m.substring(15,17);
+}
+// Game.adf + "80FE" -> Game.sav.80FE.adf
+static String dongleSavPathFor(const String&adfPath,const String&tag){
+  int dot=adfPath.lastIndexOf('.');int sl=adfPath.lastIndexOf('/');
+  if(dot<0||dot<sl)return adfPath+".sav."+tag;
+  return adfPath.substring(0,dot)+".sav."+tag+adfPath.substring(dot);
+}
 // lab14i: the save list (see g_savset). One small file per mode in /GTI:
 // [u32 "GSV1"][u16 len][cut folder, len bytes][u64 path hash]... - new saves are appended.
 static String savSetPath(){return String(GTI_DIR)+(g_mode==MODE_ADF?"/.gtisaves_adf":g_mode==MODE_DSK?"/.gtisaves_dsk":"/.gtisaves_gen");}
@@ -4805,9 +4831,15 @@ static void savSetAdd(const String&sav){   // the GTi just wrote a save: badge i
   if(!g_savset_ok||g_nocache) return;
   File f=SD_MMC.open(savSetPath().c_str(),FILE_APPEND); if(f){ f.write((uint8_t*)&h,8); f.close(); }
 }
+static bool savBadgeForOne(const String&adfPath,const String&sv);
 static bool savBadgeFor(const String&adfPath){
   if(g_saves_mode!=1) return false;
   String sv=savPathFor(adfPath); if(sv==adfPath) return false;
+  if(savBadgeForOne(adfPath,sv)) return true;
+  String tag=dongleSavTag();                                   // lab15i: or the paired dongle's own save
+  return tag.length() && savBadgeForOne(adfPath,dongleSavPathFor(adfPath,tag));
+}
+static bool savBadgeForOne(const String&adfPath,const String&sv){
   if(!g_savset_ok||(g_savset_cutdir.length()&&parentDir(adfPath).equalsIgnoreCase(g_savset_cutdir)))
     return SD_MMC.exists(sv);                   // no list yet, or the folder a too-big walk stopped in: live check
   String l=sv; l.toLowerCase(); return std::binary_search(g_savset.begin(),g_savset.end(),coverHash(l));
@@ -4820,9 +4852,9 @@ static void svErr(const char*step,uint32_t n=0xFFFFFFFFu){ int e=errno;
   if(n==0xFFFFFFFFu) snprintf(g_sv_err,sizeof g_sv_err,"%s (errno %d %s)",step,e,e?strerror(e):"-");
   else snprintf(g_sv_err,sizeof g_sv_err,"%s %u (errno %d %s)",step,(unsigned)n,e,e?strerror(e):"-"); }
 static bool svPatchCore(const String&master,const String&sav,const uint8_t*map,uint32_t mapBits,
-                        const uint8_t*packed,const uint8_t*ram){
+                        const uint8_t*packed,const uint8_t*ram,bool fromMaster=false){
   g_sv_err[0]=0; errno=0;
-  String base=SD_MMC.exists(sav)?sav:master;
+  String base=(!fromMaster&&SD_MMC.exists(sav))?sav:master;   // lab15i: fromMaster = rebuild the save from what the Amiga was given
   String tmp=sav+".tmp";
   SD_MMC.remove(tmp);
   {File in=SD_MMC.open(base,FILE_READ);if(!in){svErr("open image to copy");return false;}
@@ -4880,12 +4912,19 @@ static void svFlushStandalone(){
   if(!svPending())return;
   if(g_saves_mode==0||!g_loaded||!g_loaded_path.length()){g_sv_fseq=g_sv_wseq;return;}   // OFF / diag disk: nothing written to the card (lab15c: the Gotek still sees its own writes until eject)
   uint32_t seq0=g_sv_wseq;                          // writes that land during the flush make it pending again
-  String master=g_loaded_path;
-  String sav=(g_saves_mode==2)?master:savPathFor(master);
+  String master=g_loaded_path;                      // what the Amiga on the cable was given
+  String orig=g_loaded_orig.length()?g_loaded_orig:master;
+  String sav=(g_saves_mode==2)?orig:savPathFor(orig);   // lab15i: the cable ALWAYS saves to the plain save (or the image), never to a dongle's
   uint32_t imgSecs=(g_sv_img_size+511)/512;if(imgSecs>SV_IMG_MAX_SECTORS)imgSecs=SV_IMG_MAX_SECTORS;
-  bool inPlace=SD_MMC.exists(sav);
+  // lab15i: in Wireless mode the cable can be given a DONGLE's save (Game.sav.XXXX). Patching only the written
+  // sectors into Game.sav.adf would mix two games' states, so the first save of this load rebuilds
+  // Game.sav.adf from the file the cable was given; later saves of the same load patch it in place.
+  // OVERWRITE never rebuilds the image (patch in place, as before).
+  bool rebase=(g_saves_mode==1)&&!g_sv_cable_rebased&&!master.equalsIgnoreCase(sav);
+  bool inPlace=!rebase&&SD_MMC.exists(sav);
   bool ok=inPlace ? svPatchInPlace(sav,g_sv_dirty,imgSecs,g_sv_img_size,g_disk)
-                  : svPatchCore(master,sav,g_sv_dirty,imgSecs,nullptr,g_disk);
+                  : svPatchCore(master,sav,g_sv_dirty,imgSecs,nullptr,g_disk,rebase);
+  if(ok&&rebase)g_sv_cable_rebased=true;
   gLog("[saves] %s %s: %u sectors in the overlay, %s%s%s\n",ok?"saved":"FAILED",sav.c_str(),(unsigned)g_sv_dirty_count,inPlace?"patched in place":"new save file",
        ok?"":" - ",ok?"":(g_sv_err[0]?g_sv_err:"no detail"));   // lab15d: why
   if(ok){
@@ -4902,7 +4941,18 @@ static bool svPersistWireless(uint32_t load_id,uint32_t img_size,const uint8_t*m
   if(!g_sv_wl_path.length())return false;                             // no mapping (multicast / pre-save FLING)
   if(g_sv_wl_loadid&&load_id&&g_sv_wl_loadid!=load_id)return false;   // stale — not the disk we flung
   if(nSec==0)return true;                                             // nothing to write; ack quiets the beacon
-  String master=g_sv_wl_path;
+  String master=g_sv_wl_path;                                         // the file that was SENT
+  if(g_sv_wl_tag.length()){
+    // lab15i: the dongle's own file, in COPY and OVERWRITE alike. First save: built from the file that was sent
+    // (its own save, the cable save or the image); after that the dongle only sends new sectors -> patch it.
+    String orig=g_sv_wl_orig.length()?g_sv_wl_orig:master;
+    String sav=dongleSavPathFor(orig,g_sv_wl_tag);
+    bool had=SD_MMC.exists(sav);
+    bool ok=svPatchCore(master,sav,map,(uint32_t)mapLen*8,packed,nullptr);
+    gLog("[saves] %s dongle %s: %s - %u sectors, %s%s%s\n",ok?"saved":"FAILED",g_sv_wl_tag.c_str(),sav.c_str(),(unsigned)nSec,
+         had?"updated":"new save file",ok?"":" - ",ok?"":(g_sv_err[0]?g_sv_err:"no detail"));
+    return ok;
+  }
   String sav=(g_saves_mode==2)?master:savPathFor(master);
   return svPatchCore(master,sav,map,(uint32_t)mapLen*8,packed,nullptr);
 }
@@ -4973,6 +5023,21 @@ static bool doLoadSelected(const String&adfPath){
   // Prefer the save-copy when one exists (COPY mode): saves accumulate in the .sav
   String loadPath=adfPath;
   if(g_saves_mode==1&&savExistsFor(adfPath))loadPath=savPathFor(adfPath);
+  // lab15i: going to ONE dongle (not a Hivemind fan-out)? Then that dongle gets its OWN save if it has one
+  // (Game.sav.XXXX.adf); if not, the cable save / the image as before - its first save starts from that.
+  uint8_t mcMacs[64][6]; int mcN=0; String wlTag="";
+  if(g_wireless_mode&&g_espnow_started){
+    mcN=enumMuCaDongles(mcMacs,g_dongle_cap);                   // (was read further down; same call, moved up)
+    bool fanOut=(mcN>0&&g_hivemind);
+    if(!fanOut&&g_saves_mode!=0){
+      wlTag=dongleSavTag();
+      if(wlTag.length()){
+        String ds=dongleSavPathFor(adfPath,wlTag);
+        if(SD_MMC.exists(ds))loadPath=ds;
+        gLog("[saves] dongle %s: %s\n",wlTag.c_str(),loadPath==ds?"sending its own save":"no own save yet - sending the cable save or the image");
+      }
+    }
+  }
   gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
   gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);String tn=basenameNoExt(filenameOnly(adfPath));if(tn.length()>16)tn=tn.substring(0,16);
   gfx_setCursor(6,STATUS_H+16);gfx_print(tn);gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(6,STATUS_H+28);gfx_print(T(L_LOADING));
@@ -5047,6 +5112,7 @@ static bool doLoadSelected(const String&adfPath){
   }
   mscAnnounce(g_alias?g_alias_sectors:TOTAL_SECTORS);
   hardAttach();g_loaded=true;g_loaded_name=basenameNoExt(filenameOnly(adfPath));g_loaded_path=loadPath;g_loaded_game_idx=g_sel;g_loaded_disk_idx=g_disk_sel;
+  g_loaded_orig=adfPath;g_sv_cable_rebased=false;             // lab15i
   if(g_lastused&&g_loaded_game_idx>=0&&g_loaded_game_idx<(int)g_games.size())writeLastUsed(g_files[g_games[g_loaded_game_idx].first_file_idx]);   // remember this game for next boot
   if(g_sel>=0&&g_sel<(int)g_games.size()){if(g_games[g_sel].plays<65535)g_games[g_sel].plays++;saveStats();}
   if(g_wireless_mode&&g_espnow_started){
@@ -5056,9 +5122,8 @@ static bool doLoadSelected(const String&adfPath){
     { String fn = (g_mode==MODE_GEN) ? filenameOnly(adfPath)
                                      : (basenameNoExt(filenameOnly(adfPath)) + (g_mode==MODE_ADF ? ".adf" : ".dsk"));
       espnowSetFlingName(fn); }
-    uint8_t mcMacs[64][6]; int mcN=enumMuCaDongles(mcMacs,g_dongle_cap);
     if(mcN>0&&g_hivemind){                                  // multicast: fan the disk out to every MuCa- dongle in turn (v4.8.1: only when HIVEMIND=ON)
-      g_sv_wl_path="";g_sv_wl_loadid=0;                     // Hivemind saves: PINNED — no writeback mapping for multicast
+      g_sv_wl_path="";g_sv_wl_loadid=0;g_sv_wl_tag="";g_sv_wl_orig="";   // Hivemind saves: PINNED — no writeback mapping for multicast
       for(int i=0;i<mcN;i++){
         gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_fillRect(4,STATUS_H+24,150,12,COL_PANEL);
         gfx_setCursor(6,STATUS_H+26);gfx_print("Multicast "+String(i+1)+"/"+String(mcN));gfx_flush();
@@ -5067,13 +5132,13 @@ static bool doLoadSelected(const String&adfPath){
     } else if(g_link_home && g_home_ssid.length()){         // 5.8.6: home-WiFi transport — route via the router to the dongle's gotek.local
       String prevIp=g_dongle_home_ip;
       if(espnowSendDiskHome(g_home_ssid,g_home_pass,g_dongle_home_ip,copied)){
-        g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;
+        g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;g_sv_wl_orig=adfPath;g_sv_wl_tag=wlTag;   // lab15i
       } else if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
       if(g_dongle_home_ip!=prevIp&&g_dongle_home_ip.length())saveConfigKey("DONGLE_HOME_IP",g_dongle_home_ip);  // persist the resolved IP for next time
     } else if(espnowIsPaired()){                            // single paired dongle — unchanged
       espnowSendNotify(g_loaded_name,g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN",copied);
       if(espnowSendDisk(copied)){                           // v4.8.0: remember what we flung, keyed by the dongle's load_id
-        g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;
+        g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;g_sv_wl_orig=adfPath;g_sv_wl_tag=wlTag;   // lab15i
       } else if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
     }
   }
@@ -5122,7 +5187,7 @@ static bool doLoadWebdav(const String&remotePath,const String&showName){
   String outn=(g_mode==MODE_GEN||g_longname)?showName:String(getOutputFilename());   // lab14q: LONGNAME
   build_root(g_disk+(RESERVED_SECTORS+SECTORS_PER_FAT)*512,outn.c_str(),(uint32_t)got);
   g_sv_img_size=0;svDirtyReset();                 // no SD path to write saves back to — tracking off for now
-  hardAttach();g_loaded=true;g_loaded_name=showName;g_loaded_path="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;
+  hardAttach();g_loaded=true;g_loaded_name=showName;g_loaded_path="";g_loaded_orig="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;
   Serial.printf("[DAV] mounted %s (%ld bytes)\n",showName.c_str(),got);
   return true;
 }
@@ -5137,7 +5202,7 @@ static void doUnload(){
   // (v4.8.1: own-disk flush in any mode)
   if(svPending())svFlushStandalone();
   if(g_wireless_mode&&g_espnow_started&&g_espnow_dirty)svFetchWireless();
-  hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();g_alias=false;   // 5.9.37: drop any alias mapping
+  hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_orig="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();g_alias=false;   // 5.9.37: drop any alias mapping
   if(g_wireless_mode&&g_espnow_started&&espnowIsPaired())espnowSendEject();drawStatusBar();drawListAndCover();gfx_flush();}
 
 // Expand the zero-RLE embedded ADF straight into the RAM-disk data area. No SD needed.
@@ -5159,7 +5224,7 @@ static void doLoadDiag(){
   diagInflate(DIAG_RLE,DIAG_RLE_LEN,g_disk+DATA_LBA*512);
   hardAttach();
   g_loaded=true;g_loaded_name="AMIGA TEST KIT";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;
-  g_loaded_path="";g_sv_img_size=0;svDirtyReset();   // diag disk: writes are never persisted
+  g_loaded_path="";g_loaded_orig="";g_sv_img_size=0;svDirtyReset();   // diag disk: writes are never persisted
   drawFullUI();gfx_flush();
 }
 
