@@ -1,7 +1,10 @@
-// ESP32-S3 (Guition JC3248W535C) — USB MSC RAM Disk + ADF/DSK Browser
-// Full port of Waveshare 7" firmware v3.4.7 (Mez UI) onto Dimi's hardware layer
-// Board: ESP32S3 Dev Module | USB-OTG (TinyUSB) | CDC DISABLED | OPI PSRAM
-// N16R8: Flash 16MB QIO 80MHz | PSRAM OPI (Octal 8MB) | Partition: sketch-local partitions.csv = 6.9MB APP x2 (dual-OTA for SD-update) + 2.8MB SPIFFS — maximises the 16MB | 240MHz
+// ESP32-P4 ROUND (Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C, 3.4" 800x800) - USB MSC RAM Disk + ADF/DSK Browser
+// 5.9.41-lab15n-P4R = the 4.3" P4 5.9.41-lab15n-P4 source + the 3.4C board layer: JD9365 800x800 round DSI panel
+// (p4_display.c: the P4's portrait compose buffer, 464x624, turned upright into the middle of the round glass =
+// a 624x464 landscape canvas), GT9271 touch (GT911 protocol, SDA7/SCL8), microSD 4-bit on CLK43/CMD44/D0-D3 39-42.
+// BRING-UP BUILD: the normal square UI, drawn smaller inside the circle. The round layout is a later build.
+// Board: ESP32P4 Dev Module | Chip Variant: MATCH THE CHIP (esptool prints the revision) | USB-OTG (TinyUSB) |
+// CDC DISABLED | PSRAM Enabled | 16MB Flash | Partition Custom | JD9365 800x800 DSI | GT9271 touch
 
 #include <Arduino.h>
 #include "USB.h"
@@ -20,7 +23,8 @@
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_interface.h"
-#include "esp_lcd_axs15231b.h"
+#include "p4_display.h"   // P4R: JD9365 800x800 round MIPI-DSI backend (compose 464x624 -> centred, upright)
+// [P4] AXS15231B QSPI panel driver removed (DSI on P4)
 #include "esp_random.h"
 #include "diag_adf.h"      // embedded Amiga Test Kit ADF (zero-RLE compressed, public domain)
 #include <JPEGDEC.h>
@@ -49,10 +53,13 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15m-JC3248"  // lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j: tap the game text in the list (title + description) = the whole .nfo full-screen in the manual reader (scroll, SIZE, TOP, CLOSE) | lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
+#define FW_VERSION "5.9.41-lab15r-P4R"   // P4R-3: ROUND LIST - the games as a wheel (middle row selected, rows follow the edge), A-Z round the right rim (tap or slide), rim INSERT/REEL/CONFIG/LIB; everything that used to fall back to the square list (leaving Settings, rescan, library switch) comes home to the round reel/list | P4R-2c: the round reel stays round - save toasts, "dongle linked", SAVING GAME, the end of a disk load/eject (also from the web UI) and the dongle take-over question now come back to (or show on) the round reel instead of leaving the square list on screen | P4R-2b: FIX - a square screen shown after the round reel (Settings, list) no longer keeps the reel's leftovers round the edge | P4R-2: ROUND REEL - the reel uses the whole round glass (800x800): REELSTYLE=MOON (covers on an arc across the top, default) or FLAT, status round the rim, LIST/CONFIG/source/ROLL as curved rim buttons, boots into the reel (ROUNDHOME=LIST for the old list), ROUNDUI=OFF = the square reel; Settings: REEL STYLE, ROUND UI; TEST TOOLS: RIM TOUCH TEST | P4R: Waveshare 3.4C ROUND 800x800 bring-up (4.3" P4 15n + JD9365 panel, GT9271 touch, 4-bit SD; square UI inside the circle) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
+#include <WiFi.h>          // P4: brings up the C6 co-processor link (esp-hosted over SDIO)
+#include <esp_hosted.h>     // P4: C6 firmware version query + slave OTA (self-update)
+#include <esp_partition.h> // P4: read the embedded C6 image from the c6fw partition
 #include <Update.h>            // v5.3: self-flash an app image off the SD (OTA)
 #include "esp_ota_ops.h"       // v5.3: OTA slot query + rollback-validate handshake
 #include "esp_log.h"           // 5.9.29: capture IDF OTA/image log lines into /gti.log
@@ -63,17 +70,18 @@ extern "C" { bool tud_mounted(void); void tud_disconnect(void); void tud_connect
 // ════════════════════════════════════════════════════════════════════════════
 // HARDWARE
 // ════════════════════════════════════════════════════════════════════════════
-#define LCD_WIDTH  320
-#define LCD_HEIGHT 480
+#define LCD_WIDTH  464   // P4R: the compose buffer (portrait-native like the 4.3") = P4DISP_CW; landscape canvas 624x464
+#define LCD_HEIGHT 624   //      = P4DISP_CH. p4_display.c places it upright in the middle of the 800x800 round panel
 // Virtual canvas + rotation. g_rot: 0=landscape, 1=portrait, 2=landscape-flipped,
 // 3=portrait-flipped. Each ROTATE tap advances 90 degrees. gW/gH swap for portrait.
-static int gW=480, gH=320;
-static int g_rot=0;
+static int gW=LCD_HEIGHT, gH=LCD_WIDTH;   // P4R: 624x464 landscape canvas
+static int g_rot=0;   // P4: default LANDSCAPE (panel mounted landscape); ROTATE cycles 0/1/2/3
 static bool g_compact=false;
 #define g_portrait (g_rot==1||g_rot==3)
 // Disk-selector grid geometry — declared up here so the Arduino auto-prototype
 // for diskGrid() (which returns this type) sees it before use.
 struct DiskGrid{int pages,pageStart,pageEnd,COLS,dbw,dbh,dgap,gridW,gx,gridY,gridH,pageBtnH,pageGap,labelY;bool multiPage;};
+struct RRim { int a0,a1; uint8_t id; };   // P4R-2/3: a round-screen rim button - angles in degrees (clockwise from 3 o'clock, y down). Up here so the IDE's generated prototypes see it
 #define LCD_PIN_CS 45
 #define LCD_PIN_CLK 47
 #define LCD_PIN_MOSI 21
@@ -84,9 +92,13 @@ struct DiskGrid{int pages,pageStart,pageEnd,COLS,dbw,dbh,dgap,gridW,gx,gridY,gri
 #define TOUCH_SDA 4
 #define TOUCH_SCL 8
 #define TOUCH_ADDR 0x3B
-#define SD_CLK 12
-#define SD_CMD 11
-#define SD_D0 13
+#define SD_CLK 43   // P4R (3.4C): microSD SDIO CLK=43 CMD=44 D0-D3=39-42 (same as the 7B); 4-bit first, 1-bit fallback
+#define SD_CMD 44
+#define SD_D0 39
+#define SD_D1 40
+#define SD_D2 41
+#define SD_D3 42
+static bool g_sd_4bit=false;   // P4R: true when the 4-bit mount took
 static int g_sd_freq=20000;   // 5.3.5: SDIO clock kHz. 20000=safe default, 40000=fast (SDSPEED= in CONFIG.TXT, auto-falls back)
 #define ROWS_PER_STRIP 10
 // ── 5.9.33-lab3: panel-push + reel profiling knobs ─────────────────────────
@@ -123,6 +135,7 @@ static inline uint16_t inkFor(uint16_t bg){int r=(bg>>11)&0x1F,g=(bg>>5)&0x3F,b=
 // ════════════════════════════════════════════════════════════════════════════
 // INIT COMMANDS — from Dimi's working JC3248 firmware
 // ════════════════════════════════════════════════════════════════════════════
+#if 0  // [P4] AXS15231B init table unused on DSI
 static const axs15231b_lcd_init_cmd_t lcd_init_cmds[] = {
   {0xBB,(uint8_t[]){0x00,0x00,0x00,0x00,0x00,0x00,0x5A,0xA5},8,0},
   {0xA0,(uint8_t[]){0xC0,0x10,0x00,0x02,0x00,0x00,0x04,0x3F,0x20,0x05,0x3F,0x3F,0x00,0x00,0x00,0x00,0x00},17,0},
@@ -158,6 +171,7 @@ static const axs15231b_lcd_init_cmd_t lcd_init_cmds[] = {
   {0x29,(uint8_t[]){0x00},0,20},
   {0x2C,(uint8_t[]){0x00,0x00,0x00,0x00},4,0},
 };
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // FONT 6×8
@@ -200,15 +214,28 @@ static const uint8_t font6x8[95][6] PROGMEM = {
 // ════════════════════════════════════════════════════════════════════════════
 // DISPLAY + FRAMEBUFFER (Dimi's proven code)
 // ════════════════════════════════════════════════════════════════════════════
-static esp_lcd_panel_io_handle_t io_handle = NULL;
-static esp_lcd_panel_handle_t panel_handle = NULL;
-static uint16_t *framebuffer = NULL;
-static uint16_t *dma_buffer = NULL;
+static uint16_t *framebuffer = NULL;   // P4: the 480x800 compose buffer (PSRAM)
+// ── P4R-2 (lab15o): the ROUND drawing target ──────────────────────────────────────────────
+// Round screens (the reel, the rim touch test) draw into their own 800x800 buffer with no rotation: the whole
+// glass, centre (400,400). Every other screen keeps the square 624x464 canvas in the middle. roundBegin() points
+// the gfx layer at the round buffer (canvas 800x800); gfx_flush() shows it and falls back to the square canvas.
+// Touch follows whatever was shown last (g_touch_round): round screens get 800x800 coordinates, ring included.
+#define RW 800
+static uint16_t* g_rfb=NULL;            // 800x800 round compose (PSRAM, allocated on first use)
+static bool g_rt=false;                 // gfx layer is drawing into g_rfb
+static bool g_touch_round=false;        // the last frame shown was a round screen
+static int  g_rTouchX=0,g_rTouchY=0;    // last touch in round (upright panel) coordinates
+static int  g_rRawX=0,g_rRawY=0;        // ...and as the digitizer reported it (for the rim test log)
+static int  g_rt_saveW=0,g_rt_saveH=0;
+static bool g_roundui=true;             // ROUNDUI=ON (default) - the reel uses the round layout; OFF = the square reel
+static int  g_reelstyle=1;              // REELSTYLE= 0 FLAT (big cover, neighbours at the sides) / 1 MOON (covers on an arc, default)
+static bool g_roundhome=true;           // ROUNDHOME=REEL (default) boots into the round reel; LIST = the square list
 static JPEGDEC jpegdec;
 static PNG     pngdec;   // v4.8.4 PNG cover support
 
-static inline uint16_t swap16(uint16_t c){return(c>>8)|(c<<8);}
+static inline uint16_t swap16(uint16_t c){return c;}   // P4 DSI: native LE, no swap
 static inline void fb_setPixel(int vx,int vy,uint16_t color){
+  if(g_rt){ if((unsigned)vx<RW&&(unsigned)vy<RW) g_rfb[vy*RW+vx]=color; return; }   // P4R-2 round target (identity)
   int px,py;
   switch(g_rot){
     case 1: px=vx; py=vy; break;                              // 90  portrait
@@ -223,13 +250,25 @@ static inline void fb_setPixel(int vx,int vy,uint16_t color){
 static uint16_t text_fg=TFT_WHITE,text_bg=TFT_BLACK;
 static int text_size=1,text_x=0,text_y=0;
 static int g_clip_y0=0,g_clip_y1=gH,g_clip_x0=0,g_clip_x1=gW;   // clip window (vertical=scroll, horizontal=marquee)
+// P4R-2: switch the gfx layer to the round 800x800 canvas (false = no memory for the buffer; stay square)
+static bool roundBegin(){
+  if(!g_rfb){ g_rfb=(uint16_t*)heap_caps_malloc((size_t)RW*RW*2,MALLOC_CAP_SPIRAM); if(!g_rfb) return false; }
+  if(!g_rt){ g_rt_saveW=gW; g_rt_saveH=gH; }
+  g_rt=true; gW=RW; gH=RW; g_clip_x0=0; g_clip_y0=0; g_clip_x1=RW; g_clip_y1=RW; return true;
+}
+static void roundEnd(){
+  if(!g_rt) return;
+  g_rt=false; gW=g_rt_saveW; gH=g_rt_saveH; g_clip_x0=0; g_clip_y0=0; g_clip_x1=gW; g_clip_y1=gH;
+}
 
-static void gfx_fillScreen(uint16_t c){uint16_t s=swap16(c);for(int i=0;i<LCD_WIDTH*LCD_HEIGHT;i++)framebuffer[i]=s;}
+static void gfx_fillScreen(uint16_t c){if(g_rt){for(int i=0;i<RW*RW;i++)g_rfb[i]=c;return;}   // P4R-2
+  uint16_t s=swap16(c);for(int i=0;i<LCD_WIDTH*LCD_HEIGHT;i++)framebuffer[i]=s;}
 static void gfx_drawPixel(int x,int y,uint16_t c){if(x>=g_clip_x0&&x<g_clip_x1&&y>=g_clip_y0&&y<g_clip_y1)fb_setPixel(x,y,c);}
 
 static void gfx_fillRect(int x,int y,int w,int h,uint16_t color){
   int vx0=max(g_clip_x0,x),vy0=max(g_clip_y0,y),vx1=min(g_clip_x1,x+w),vy1=min(g_clip_y1,y+h);
   if(vx0>=vx1||vy0>=vy1)return;
+  if(g_rt){ for(int y=vy0;y<vy1;y++){uint16_t*row=&g_rfb[y*RW];for(int x=vx0;x<vx1;x++)row[x]=color;} return; }   // P4R-2 round target
   uint16_t sc=swap16(color);
   int px0,px1,py0,py1;               // rotations map a virtual rect to a physical rect
   switch(g_rot){
@@ -313,16 +352,12 @@ static void drawDiagOverlay(){
 }
 
 static void gfx_flush(){
-  if(!framebuffer||!panel_handle)return;
+  if(!framebuffer)return;
   uint32_t _fl_t0=micros();
   { uint32_t now=millis(); if(g_diag_last){ float dt=(float)(now-g_diag_last); if(dt>0){ float f=1000.0f/dt; g_diag_fps = g_diag_fps>0 ? g_diag_fps*0.85f+f*0.15f : f; } } g_diag_last=now; }
   if(g_diagdisp) drawDiagOverlay();
-  for(int sy=0;sy<LCD_HEIGHT;sy+=g_strip_rows){
-    int rows=min(g_strip_rows,LCD_HEIGHT-sy);
-    memcpy(dma_buffer,&framebuffer[sy*LCD_WIDTH],LCD_WIDTH*rows*2);
-    esp_lcd_panel_draw_bitmap(panel_handle,0,sy,LCD_WIDTH,sy+rows,dma_buffer);
-    if(g_flush_us>0)delayMicroseconds(g_flush_us);
-  }
+  if(g_rt){ p4disp_present_full(g_rfb); g_touch_round=true; roundEnd(); }   // P4R-2: a round screen - show it, back to square drawing
+  else { p4disp_present(framebuffer); g_touch_round=false; }   // P4: DSI page-flip of the compose (STRIPROWS=/FLUSHUS= parse but do nothing here)
   g_rp_flush+=micros()-_fl_t0;
 }
 
@@ -348,8 +383,8 @@ int png_buf_cb(PNGDRAW*pDraw){   // PNGdec's PNG_DRAW_CALLBACK returns int
   return 1;
 }
 // ── Cover ingest: one size-agnostic, garbage-proof decode point (v1) ──────────
-#define COVER_TILE_PX        150               // decode-budget long edge (== CAR_TILE); both panel + reel share this
-#define CAR_TILE  150                            // 5.9.34-lab4: hoisted here (was down with the reel) — the LIST cover panel draws from the reel's tile now
+#define COVER_TILE_PX        220               // decode-budget long edge (== CAR_TILE); both panel + reel share this. P4: 220 (was 150 on the S3)
+#define CAR_TILE  220                            // P4: bigger reel tiles for the 800x480 panel (S3 boards: 150)
 #define COVER_FILE_CAP       (4u*1024u*1024u)  // max raw cover file loaded into PSRAM; bigger -> placeholder
 #define COVER_DECODE_BUDGET  (4u*1024u*1024u)  // max decoded RGB565 bytes (post hardware-scale); bounds intermediate + resident cache
 static int g_covermin=140;   // COVERMIN: skip covers whose short side < this many px (0=off, SD-editable)
@@ -500,63 +535,65 @@ static bool gfx_drawJpgFile(const String& path, int x, int y, int maxW, int maxH
 
 // ── Display init (from Dimi) ──
 static void displayInit(){
-  framebuffer=(uint16_t*)ps_malloc(LCD_WIDTH*LCD_HEIGHT*2);
-  // 5.9.33-lab3: size the DMA strip buffer for the LARGEST strip we might be asked
-  // for (STRIPROWS=), falling back if internal DMA RAM is tight. displayInit runs
-  // before loadConfig, so we allocate for the max and clamp the runtime value later.
-  {const int cand[3]={MAX_STRIP_ROWS,20,ROWS_PER_STRIP};
-   for(int c=0;c<3;c++){
-     dma_buffer=(uint16_t*)heap_caps_malloc(LCD_WIDTH*cand[c]*2,MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
-     if(dma_buffer){g_strip_cap=cand[c];break;}
-   }}
-  if(!framebuffer||!dma_buffer){Serial.println("FATAL: fb alloc");while(1)delay(1000);}
-  spi_bus_config_t buscfg={};
-  buscfg.data0_io_num=LCD_PIN_MOSI;buscfg.data1_io_num=LCD_PIN_MISO;
-  buscfg.sclk_io_num=LCD_PIN_CLK;buscfg.data2_io_num=LCD_PIN_D2;buscfg.data3_io_num=LCD_PIN_D3;
-  buscfg.max_transfer_sz=LCD_WIDTH*LCD_HEIGHT*2;
-  ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST,&buscfg,SPI_DMA_CH_AUTO));
-  esp_lcd_panel_io_spi_config_t io_config={};
-  io_config.cs_gpio_num=LCD_PIN_CS;io_config.dc_gpio_num=-1;io_config.spi_mode=3;
-  io_config.pclk_hz=50000000;io_config.trans_queue_depth=1;
-  io_config.lcd_cmd_bits=32;io_config.lcd_param_bits=8;io_config.flags.quad_mode=true;
-  ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST,&io_config,&io_handle));
-  axs15231b_vendor_config_t vc={};vc.init_cmds=lcd_init_cmds;
-  vc.init_cmds_size=sizeof(lcd_init_cmds)/sizeof(lcd_init_cmds[0]);vc.flags.use_qspi_interface=1;
-  esp_lcd_panel_dev_config_t pc={};pc.reset_gpio_num=-1;
-  pc.rgb_ele_order=LCD_RGB_ELEMENT_ORDER_RGB;pc.bits_per_pixel=16;pc.vendor_config=&vc;
-  ESP_ERROR_CHECK(esp_lcd_new_panel_axs15231b(io_handle,&pc,&panel_handle));
-  esp_lcd_panel_reset(panel_handle);delay(100);
-  esp_lcd_panel_init(panel_handle);delay(200);
-  ledcAttach(LCD_PIN_BL,5000,8);ledcWrite(LCD_PIN_BL,200);
+  // P4: ST7701 480x800 MIPI-DSI (replaces the JC3248 AXS15231B QSPI panel).
+  framebuffer=(uint16_t*)ps_malloc((size_t)LCD_WIDTH*LCD_HEIGHT*2);
+  if(!framebuffer){Serial.println("FATAL: fb alloc");while(1)delay(1000);}
+  if(!p4disp_init()){Serial.println("FATAL: JD9365 DSI bring-up");while(1)delay(1000);}   // P4R
+  p4disp_backlight(true);
+  g_strip_cap=MAX_STRIP_ROWS;   // no DMA strip buffer on the P4; keeps the STRIPROWS= clamp satisfied
 }
 
 // ── Touch (from Dimi) ──
 static uint8_t gTouchPts=0;static uint16_t gTouchX=0,gTouchY=0;
-static void touchInit(){Wire.begin(TOUCH_SDA,TOUCH_SCL,400000);}
+static int16_t g_tlog[16][2]; static volatile int g_tlog_n=0; static int g_tlog_done=0;   // P4R bring-up: raw touch points for gti.log
+                                                                                          // (written from loop() only - never from the touch read, which
+                                                                                          //  also runs on the SD ACCESS screen while the PC owns the card)
+// P4: GT911 on I2C SDA=7/SCL=8. Touch RST/INT are NC on this board (vendor BSP) - not driven.
+#define GT_SDA 7
+#define GT_SCL 8
+#define GT_RST 22
+#define GT_INT 21
+static uint8_t GT_ADDR=0x5D;
+static bool gtRd(uint16_t reg,uint8_t*d,int n){
+  Wire.beginTransmission(GT_ADDR);Wire.write(reg>>8);Wire.write(reg&0xFF);
+  if(Wire.endTransmission(false)!=0)return false;
+  int g=Wire.requestFrom((int)GT_ADDR,n);for(int i=0;i<n&&Wire.available();i++)d[i]=Wire.read();return g==n;}
+static bool gtWr8(uint16_t reg,uint8_t v){Wire.beginTransmission(GT_ADDR);Wire.write(reg>>8);Wire.write(reg&0xFF);Wire.write(v);return Wire.endTransmission()==0;}
+static void touchInit(){
+  // JC4880P443C: touch RST/INT are NOT wired to the MCU (vendor BSP: BSP_LCD_TOUCH_RST/INT = NC).
+  // The GT911 powers up on its own on the shared I2C bus (SDA=7 / SCL=8) - no GPIO reset dance
+  // (driving GPIO21/22 was the community guess; wrong pins, and can disturb the bus). Just probe.
+  Wire.begin(GT_SDA,GT_SCL,400000);
+  delay(60);                                   // settle after power-on
+  Wire.beginTransmission(0x5D);
+  if(Wire.endTransmission()!=0){Wire.beginTransmission(0x14);if(Wire.endTransmission()==0)GT_ADDR=0x14;}
+}
 static bool Touch_ReadFrame(){
-  uint8_t cmd[11]={0xb5,0xab,0xa5,0x5a,0x00,0x00,0x00,0x08,0x00,0x00,0x00};
-  Wire.beginTransmission(TOUCH_ADDR);Wire.write(cmd,11);
-  if(Wire.endTransmission()!=0){gTouchPts=0;return false;}
-  if(Wire.requestFrom((int)TOUCH_ADDR,8)!=8){gTouchPts=0;return false;}
-  uint8_t buf[8];for(int i=0;i<8;i++)buf[i]=Wire.read();
-  // AXS15231B idle/no-touch frames come back as 0xCA-fill or 0xFF-fill (b[0]!=0).
-  // The vendor driver requires b[0]==0 && b[1]!=0; we only checked b[1], so the idle
-  // fill (b[1]=0xCA/0xFF) was mis-read as a phantom touch -> UI flooded ("bouncing").
-  if(buf[0]!=0 || buf[1]==0){gTouchPts=0;return false;}
-  uint16_t rx=((buf[2]&0x0F)<<8)|buf[3],ry=((buf[4]&0x0F)<<8)|buf[5];
-  // AXS15231B reports touch in native panel pixels; drop out-of-range
-  // (this also filters the finger-lift phantom reads).
-  if(rx>=LCD_WIDTH||ry>=LCD_HEIGHT){gTouchPts=0;return false;}
-  uint16_t px=rx, py=ry;
-  switch(g_rot){                                   // inverse of fb_setPixel mapping
-    case 1: gTouchX=px; gTouchY=py; break;
-    case 2: gTouchX=py; gTouchY=(LCD_WIDTH-1)-px; break;
-    case 3: gTouchX=(LCD_WIDTH-1)-px; gTouchY=(LCD_HEIGHT-1)-py; break;
-    default: gTouchX=(LCD_HEIGHT-1)-py; gTouchY=px; break;
+  uint8_t st=0;
+  if(!gtRd(0x814E,&st,1)){gTouchPts=0;return false;}
+  if(!(st&0x80)||(st&0x0F)==0){ if(st&0x80)gtWr8(0x814E,0); gTouchPts=0; return false; }
+  uint8_t buf[8]; bool ok=gtRd(0x8150,buf,8); gtWr8(0x814E,0);
+  if(!ok){gTouchPts=0;return false;}
+  int prx=buf[0]|(buf[1]<<8), pry=buf[2]|(buf[3]<<8);   // P4R: GT9271 raw = round panel coords (0..799)
+  if(g_tlog_n<16){ g_tlog[g_tlog_n][0]=(int16_t)prx; g_tlog[g_tlog_n][1]=(int16_t)pry; g_tlog_n++; }   // bring-up: first 16 raw touches, logged from loop()
+  g_rRawX=prx; g_rRawY=pry; p4disp_touch_unturn(prx,pry,&g_rTouchX,&g_rTouchY);   // P4R-2: round screens use these
+  int _cx,_cy; if(!p4disp_touch_to_compose(prx,pry,&_cx,&_cy)){ if(g_touch_round){gTouchPts=1;return true;} gTouchPts=0;return false;}   // outside the square canvas: only a round screen wants it
+  uint16_t rx=(uint16_t)_cx, ry=(uint16_t)_cy;          // -> compose-buffer coords, then the P4's usual rotation mapping
+  // Map physical touch -> virtual canvas per g_rot (inverse of fb_setPixel), so touch tracks the
+  // rotated display. Without this, landscape touches land 90 deg off.
+  int vx,vy;
+  switch(g_rot){
+    case 1:  vx=rx;                vy=ry;                break;   // portrait
+    case 2:  vx=ry;                vy=(LCD_WIDTH-1)-rx;  break;   // landscape flipped
+    case 3:  vx=(LCD_WIDTH-1)-rx;  vy=(LCD_HEIGHT-1)-ry; break;   // portrait flipped
+    default: vx=(LCD_HEIGHT-1)-ry; vy=rx;                break;   // 0 = landscape (matches g_rot=0 display)
   }
+  gTouchX=(uint16_t)vx; gTouchY=(uint16_t)vy;
   gTouchPts=1; return true;
 }
-static bool getTouchXY(uint16_t*x,uint16_t*y){if(!gTouchPts)return false;*x=constrain(gTouchX,0,gW-1);*y=constrain(gTouchY,0,gH-1);return true;}
+static bool getTouchXY(uint16_t*x,uint16_t*y){if(!gTouchPts)return false;
+  if(g_touch_round){*x=(uint16_t)constrain(g_rTouchX,0,RW-1);*y=(uint16_t)constrain(g_rTouchY,0,RW-1);return true;}   // P4R-2
+  *x=constrain(gTouchX,0,gW-1);*y=constrain(gTouchY,0,gH-1);return true;}
 
 // ════════════════════════════════════════════════════════════════════════════
 // MSC RAM DISK
@@ -2480,6 +2517,7 @@ static bool doLoadSelected(const String&p);
 static void doUnload();
 
 static bool g_espnow_started=false;
+static bool g_c6_ready=false;   // P4 5.9.12: true only when the C6 is confirmed up-to-date and STA is up; gates arming the radio
 static void ensureEspNow(){if(!g_espnow_started){espnowBegin();g_espnow_started=true;}}
 
 // ============================================================================
@@ -2950,9 +2988,20 @@ static void sdGuardRemove(){                     // before SD_MMC.end(): give th
   ff_diskio_unregister(g_sdg_lower);
   g_sdg_pdrv=g_sdg_lower=0xFF; g_sdg.fs=nullptr;
 }
-static void sdPullups(){                          // CMD + D0 idle high between transfers (the board may have none)
-  if(g_sdpullup_cfg){ gpio_pullup_en((gpio_num_t)SD_CMD); gpio_pullup_en((gpio_num_t)SD_D0); }
-  else { gpio_pullup_dis((gpio_num_t)SD_CMD); gpio_pullup_dis((gpio_num_t)SD_D0); }
+static void sdPullups(){                          // CMD + D0 (P4R: + D1-D3) idle high between transfers (the board may have none)
+  if(g_sdpullup_cfg){ gpio_pullup_en((gpio_num_t)SD_CMD); gpio_pullup_en((gpio_num_t)SD_D0);
+    gpio_pullup_en((gpio_num_t)SD_D1); gpio_pullup_en((gpio_num_t)SD_D2); gpio_pullup_en((gpio_num_t)SD_D3); }
+  else { gpio_pullup_dis((gpio_num_t)SD_CMD); gpio_pullup_dis((gpio_num_t)SD_D0);
+    gpio_pullup_dis((gpio_num_t)SD_D1); gpio_pullup_dis((gpio_num_t)SD_D2); gpio_pullup_dis((gpio_num_t)SD_D3); }
+}
+// P4R: mount 4-bit first (all four data lines are wired, like the 7B), fall back to 1-bit. Pull-ups on during negotiation.
+static bool sdMountTry(int freq){
+  SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0,SD_D1,SD_D2,SD_D3); sdPullups();
+  if(SD_MMC.begin("/sdcard",false,false,freq)){ g_sd_4bit=true; return true; }
+  SD_MMC.end(); delay(20);
+  SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0); sdPullups();
+  if(SD_MMC.begin("/sdcard",true,false,freq)){ g_sd_4bit=false; return true; }
+  return false;
 }
 // Called from loop() and after big jobs: anything the guard caught goes to the log (the guard
 // itself can't log - logging is a card write that goes through the guard).
@@ -2975,6 +3024,10 @@ static void loadConfig(){
     else if(k=="FONT"){int f=1;if(v=="SMALL")f=0;else if(v=="LARGE")f=2;applyFont(f);}
     else if(k=="LANG"){String lu=v;lu.toUpperCase();for(int i=0;i<LANG_N;i++)if(lu==LANG_NAMES[i]){g_lang=i;break;}}
     else if(k=="ROTATE"){g_rot=((v.toInt()/90)%4+4)%4;}
+    else if(k=="PANELTURN"){p4disp_set_turn(((v.toInt()/90)%4+4)%4);}
+    else if(k=="ROUNDUI"){String u=v;u.toUpperCase();g_roundui=!(u=="OFF"||u=="0"||u=="NO");}                // P4R-2
+    else if(k=="REELSTYLE"){String u=v;u.toUpperCase();g_reelstyle=(u=="FLAT")?0:1;}                        // P4R-2: FLAT / MOON
+    else if(k=="ROUNDHOME"){String u=v;u.toUpperCase();g_roundhome=!(u=="LIST");}                           // P4R-2: REEL / LIST   // P4R hidden key: turn the whole picture + touch 0/90/180/270 if the round panel's "up" is off
     else if(k=="COVERMIN"){g_covermin=v.toInt();if(g_covermin<0)g_covermin=0;}
     else if(k=="REELFILTER"){String ru=v;ru.trim();ru.toUpperCase();g_reelfilter=(ru=="ON"||ru=="1"||ru=="YES");}
     else if(k=="COMPACT"){g_compact=(v=="ON"||v=="1");}
@@ -3035,11 +3088,11 @@ static void loadConfig(){
 // ════════════════════════════════════════════════════════════════════════════
 #define VW gW
 #define VH gH
-#define STATUS_H   20
-#define MODE_BAR_H 18
-#define NOW_PLAY_H 22
-#define BOTTOM_H   40
-#define AZ_W       30
+#define STATUS_H   28   // P4: 800x480 canvas - bars, rows and touch targets scaled up
+#define MODE_BAR_H 24
+#define NOW_PLAY_H 30
+#define BOTTOM_H   54
+#define AZ_W       42
 // Layout is computed by relayout() for the current rotation + compact mode.
 static int AZ_X=450, COVER_W=150, COVER_X=0, COVER_Y=20, COVER_H=260;
 static int COVER_ART_X=4, COVER_ART_Y=24, COVER_ART_W=142, COVER_ART_H=116;
@@ -3051,14 +3104,14 @@ static bool COVER_ON=true, STRIP_ON=false, NOW_ON=true;
 static int g_font=1, g_item_h=55, g_items_vis=4, g_name_sz=2;
 #define LIST_ITEM_H g_item_h
 #define ITEMS_VIS   g_items_vis
-static void applyFont(int f){if(f<0||f>2)f=1;g_font=f;g_name_sz=(f==0?1:f==2?3:2);
-  int target=(f==0?34:f==2?70:50),listH=LIST_BOTTOM-LIST_TOP,rows=listH/target;
+static void applyFont(int f){if(f<0||f>2)f=1;g_font=f;g_name_sz=(f==0?2:f==2?4:3);   // P4: one text size up
+  int target=(f==0?50:f==2?100:74),listH=LIST_BOTTOM-LIST_TOP,rows=listH/target;
   if(listH%target>=target/2)rows++; if(rows<1)rows=1;
   g_item_h=listH/rows; g_items_vis=rows;}
 static const char* fontName(int f){return f==0?T(L_FONT_SMALL):f==2?T(L_FONT_LARGE):T(L_FONT_NORMAL);}
 static const char* fontKey(int f){return f==0?"SMALL":f==2?"LARGE":"NORMAL";}   // canonical CONFIG.TXT token — NEVER localized (load parser matches these)
 static void relayout(){
-  if(g_portrait){gW=320;gH=480;}else{gW=480;gH=320;}
+  if(g_portrait){gW=LCD_WIDTH;gH=LCD_HEIGHT;}else{gW=LCD_HEIGHT;gH=LCD_WIDTH;}   // P4R: rotation-aware canvas (compose 464x624)
   // Reset the clip window to the new canvas. The clip statics init to the
   // landscape 320 height; with an EMPTY game list drawFileList() early-returns
   // before its usual set/reset, so in portrait everything below y=320 —
@@ -3068,12 +3121,12 @@ static void relayout(){
   AZ_X=VW-AZ_W; int mb=STATUS_H+MODE_BAR_H;
   if(!g_compact){
     if(!g_portrait){
-      COVER_ON=true;COVER_X=0;COVER_Y=STATUS_H;COVER_W=150;COVER_H=VH-STATUS_H-BOTTOM_H;
-      COVER_ART_X=4;COVER_ART_Y=STATUS_H+4;COVER_ART_W=142;COVER_ART_H=116;
+      COVER_ON=true;COVER_X=0;COVER_Y=STATUS_H;COVER_W=292;COVER_H=VH-STATUS_H-BOTTOM_H;   // P4
+      COVER_ART_X=8;COVER_ART_Y=STATUS_H+8;COVER_ART_W=276;COVER_ART_H=190;   // P4R: was 214 - the canvas is 464 tall (not 480), keeps the title clear of the disk grid
       LIST_X=COVER_W;LIST_TOP=mb;LIST_W=AZ_X-COVER_W;
       NOW_ON=true;NOW_Y=VH-BOTTOM_H-NOW_PLAY_H;LIST_BOTTOM=NOW_Y;
       AZ_TOP=LIST_TOP;AZ_H=(VH-BOTTOM_H)-LIST_TOP;
-      INS_X=4;INS_W=COVER_W-8;INS_H=28;INS_Y=VH-BOTTOM_H-36;STRIP_ON=false;
+      INS_X=8;INS_W=COVER_W-16;INS_H=40;INS_Y=VH-BOTTOM_H-52;STRIP_ON=false;   // P4
     }else{
       COVER_ON=true;COVER_X=0;COVER_Y=mb+2;COVER_W=VW;COVER_H=190;
       COVER_ART_X=8;COVER_ART_Y=COVER_Y+8;COVER_ART_W=108;COVER_ART_H=108;
@@ -3432,18 +3485,18 @@ static void drawStatusBar(){
 
 // disk grid geometry (landscape cover) — shared by draw + touch (struct declared up top)
 static DiskGrid diskGrid(int nd){DiskGrid L;L.pages=(nd+DISKS_PER_PAGE-1)/DISKS_PER_PAGE;if(g_disk_page>=L.pages)g_disk_page=0;
-  L.pageStart=g_disk_page*DISKS_PER_PAGE;L.pageEnd=min(L.pageStart+DISKS_PER_PAGE,nd);L.COLS=3;L.dbw=44;L.dbh=20;L.dgap=4;
+  L.pageStart=g_disk_page*DISKS_PER_PAGE;L.pageEnd=min(L.pageStart+DISKS_PER_PAGE,nd);L.COLS=3;L.dgap=8;L.dbw=(COVER_W-16-(L.COLS-1)*L.dgap)/L.COLS;L.dbh=34;   // lab15n P4: 86x34 on the 292 px panel (was 44x20, the 3.5" size)
   L.gridW=L.COLS*L.dbw+(L.COLS-1)*L.dgap;L.gx=max(4,(COVER_W-L.gridW)/2);L.multiPage=(L.pages>1);
-  L.pageBtnH=L.multiPage?16:0;L.pageGap=L.multiPage?4:0;L.gridH=2*L.dbh+L.dgap;L.labelY=INS_Y-L.gridH-L.pageBtnH-L.pageGap-12;L.gridY=L.labelY+10;return L;}
+  L.pageBtnH=L.multiPage?28:0;L.pageGap=L.multiPage?6:0;L.gridH=2*L.dbh+L.dgap;L.labelY=INS_Y-L.gridH-L.pageBtnH-L.pageGap-16;L.gridY=L.labelY+12;return L;}
 static void drawDiskGrid(int nd){DiskGrid L=diskGrid(nd);
   gfx_setTextSize(1);gfx_setTextColor(COL_DIM,COL_PANEL);gfx_setCursor(4,L.labelY);
   gfx_print(L.multiPage?("DISK ("+String(g_disk_page+1)+"/"+String(L.pages)+"):"):"DISK:");
   for(int d=L.pageStart;d<L.pageEnd;d++){int slot=d-L.pageStart,col=slot%L.COLS,row=slot/L.COLS;int bx=L.gx+col*(L.dbw+L.dgap),by=L.gridY+row*(L.dbh+L.dgap);
     bool isSel=d==g_disk_sel,isLd=(g_loaded_game_idx==g_sel&&g_loaded_disk_idx==d);uint16_t bc=isLd?COL_GREEN:(isSel?COL_AMBER:COL_BAR);
     gfx_fillRoundRect(bx,by,L.dbw,L.dbh,4,bc);gfx_drawRoundRect(bx,by,L.dbw,L.dbh,4,isSel?COL_AMBER:COL_DIM);
-    gfx_setTextColor(isLd||isSel?TFT_BLACK:COL_LIT,bc);String dl="D"+String(d+1);gfx_setCursor(bx+(L.dbw-gfx_textWidth(dl))/2,by+(L.dbh-8)/2);gfx_print(dl);}
-  if(L.multiPage){int pby=L.gridY+L.gridH+L.pageGap;gfx_fillRoundRect(L.gx,pby,L.gridW,L.pageBtnH,4,COL_ACCENT);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
-    String pl=(g_disk_page+1<L.pages)?("MORE D"+String(L.pageEnd+1)+"+  >"):("<  BACK TO D1");gfx_setCursor(L.gx+(L.gridW-gfx_textWidth(pl))/2,pby+(L.pageBtnH-8)/2);gfx_print(pl);}}
+    gfx_setTextSize(2);gfx_setTextColor(isLd||isSel?TFT_BLACK:COL_LIT,bc);String dl="D"+String(d+1);gfx_setCursor(bx+(L.dbw-gfx_textWidth(dl))/2,by+(L.dbh-16)/2);gfx_print(dl);gfx_setTextSize(1);}   // lab15n P4: size 2
+  if(L.multiPage){int pby=L.gridY+L.gridH+L.pageGap;gfx_fillRoundRect(L.gx,pby,L.gridW,L.pageBtnH,6,COL_ACCENT);gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
+    String pl=(g_disk_page+1<L.pages)?("MORE D"+String(L.pageEnd+1)+"+  >"):("<  BACK TO D1");gfx_setCursor(L.gx+(L.gridW-gfx_textWidth(pl))/2,pby+(L.pageBtnH-16)/2);gfx_print(pl);gfx_setTextSize(1);}}
 // disk stepper (portrait cover / compact) — < Dn/total >
 static int g_step_x=0,g_step_y=0,g_step_w=0,g_step_h=0;static bool g_step_on=false;
 static void drawDiskStepper(int x,int y,int w,int h,int nd){g_step_on=true;g_step_x=x;g_step_y=y;g_step_w=w;g_step_h=h;
@@ -3556,9 +3609,10 @@ static void drawCoverPanel(){
     int cb;
     if(game.disk_count>1){DiskGrid L=diskGrid(game.disk_count);cb=L.labelY-2;}
     else cb=INS_Y-2;
-    int ty=COVER_ART_Y+COVER_ART_H+4;gfx_setTextSize(1);
-    ty=drawWrapped(4,ty,game.name,COVER_W-8,10,2,cb,COL_LIT,COL_PANEL);
-    if(cachedNfoBlurb.length()>0){int te=drawWrapped(4,ty,cachedNfoBlurb,COVER_W-8,9,12,cb,COL_DIM,COL_PANEL);
+    int psz=g_font+1;int bsz=(psz>1?psz-1:1);int ty=COVER_ART_Y+COVER_ART_H+6;gfx_setTextSize(psz);   // P4: title tracks FONT; blurb one step smaller
+    ty=drawWrapped(6,ty,game.name,COVER_W-12,10*psz,2,cb,COL_LIT,COL_PANEL);
+    gfx_setTextSize(bsz);
+    if(cachedNfoBlurb.length()>0){int te=drawWrapped(6,ty+2,cachedNfoBlurb,COVER_W-12,9*bsz+1,16,cb,COL_DIM,COL_PANEL);
       g_nfo_bx=COVER_X;g_nfo_by=COVER_ART_Y+COVER_ART_H+2;g_nfo_bw=COVER_W;g_nfo_bh=max(min(te+2,cb),g_nfo_by+20)-g_nfo_by;}   // lab15j: title + description = tap target
     if(game.disk_count>1)drawDiskGrid(game.disk_count);
   }else{
@@ -3590,7 +3644,7 @@ static void drawActionStrip(){
 
 // INFO / SETTINGS panel — left column (landscape) or full width (portrait). Stores button Ys for touch.
 // ── v5.5.4: full-screen paginated INFO/settings model ──
-enum { IA_NONE=0, IA_MODE, IA_FONT, IA_THEME, IA_LANG, IA_ROTATE, IA_COMPACT, IA_DONGLE, IA_HIVEMIND, IA_RESCAN, IA_RESET, IA_DIAG, IA_SDACCESS, IA_FWUPDATE, IA_LIBMODE, IA_CATEG, IA_BTNSTYLE, IA_SSMODE, IA_SSFAV, IA_LINK, IA_HOMEWIFI, IA_WEBUI, IA_WIFICHECK, IA_SAVER, IA_CRACKTRO, IA_DIAGDISP, IA_REELBORDER, IA_LASTUSED, IA_NOCACHE, IA_COVERS, IA_REELPROF, IA_LISTTILE, IA_SDSOAK, IA_TESTPAGE, IA_TESTBACK };
+enum { IA_NONE=0, IA_MODE, IA_FONT, IA_THEME, IA_LANG, IA_ROTATE, IA_COMPACT, IA_DONGLE, IA_HIVEMIND, IA_RESCAN, IA_RESET, IA_DIAG, IA_SDACCESS, IA_FWUPDATE, IA_LIBMODE, IA_CATEG, IA_BTNSTYLE, IA_SSMODE, IA_SSFAV, IA_LINK, IA_HOMEWIFI, IA_WEBUI, IA_WIFICHECK, IA_SAVER, IA_CRACKTRO, IA_DIAGDISP, IA_REELBORDER, IA_LASTUSED, IA_NOCACHE, IA_COVERS, IA_REELPROF, IA_LISTTILE, IA_SDSOAK, IA_TESTPAGE, IA_TESTBACK, IA_REELSTYLE, IA_ROUNDUI, IA_RIMTEST };   // P4R-2: last three
 struct InfoItem { char lbl[32]; uint16_t bg,fg; uint8_t act; };
 static InfoItem g_ii[32]; static int g_ii_n=0;
 struct InfoRect { int x,y,w,h; uint8_t act; };
@@ -3617,6 +3671,7 @@ static void drawInfoPanel(){
   if(g_info_test){
     add("< BACK TO SETTINGS", COL_ACCENT, TFT_WHITE, IA_TESTBACK);
     add("SD SOAK TEST", COL_BLUE, TFT_WHITE, IA_SDSOAK);   // lab14g: read-only SD reliability test -> GTI/gti.log
+    add("RIM TOUCH TEST", COL_BLUE, TFT_WHITE, IA_RIMTEST);   // P4R-2: how accurate is touch out at the round edge -> GTI/gti.log
     add(String("REEL PROF")+": "+(g_reelprof?T(L_ON):T(L_OFF)), g_reelprof?(uint16_t)0x8000:COL_BAR, g_reelprof?TFT_WHITE:COL_LIT, IA_REELPROF);   // 5.9.33-lab3 frame profiler -> gti.log
     add(String("NO-CACHE")+": "+(g_nocache?T(L_ON):T(L_OFF)), g_nocache?(uint16_t)0x8000:COL_BAR, g_nocache?TFT_WHITE:COL_LIT, IA_NOCACHE);   // 5.9.32-lab2 benchmark control -> CONFIG.TXT NOCACHE=
     add(String("DIAG-DISP")+": "+(g_diagdisp?T(L_ON):T(L_OFF)), g_diagdisp?COL_GREEN:COL_BAR, g_diagdisp?TFT_BLACK:COL_LIT, IA_DIAGDISP);   // live diagnostic overlay -> CONFIG.TXT DIAGDISP=
@@ -3648,6 +3703,8 @@ static void drawInfoPanel(){
   add(String(T(L_CFG_FAVSAVER))+": "+(g_ss_fav?T(L_ON):T(L_OFF)), g_ss_fav?COL_GREEN:COL_BAR, g_ss_fav?TFT_BLACK:COL_LIT, IA_SSFAV);   // 5.8.3 favourites into slideshow
   add(String("CRACKTRO")+": "+(g_cracktro>=0?T(L_ON):T(L_OFF)), g_cracktro>=0?COL_GREEN:COL_BAR, g_cracktro>=0?TFT_BLACK:COL_LIT, IA_CRACKTRO);   // boot intro on/off -> CONFIG.TXT CRACKTRO=
   add(String("REEL BORDER")+": "+(g_reelborder?T(L_ON):T(L_OFF)), g_reelborder?COL_GREEN:COL_BAR, g_reelborder?TFT_BLACK:COL_LIT, IA_REELBORDER);   // MasterTelly CR: frame around reel covers -> CONFIG.TXT REELBORDER=
+  add(String("ROUND UI")+": "+(g_roundui?T(L_ON):T(L_OFF)), g_roundui?COL_GREEN:COL_BAR, g_roundui?TFT_BLACK:COL_LIT, IA_ROUNDUI);   // P4R-2
+  if(g_roundui) add(String("REEL STYLE")+": "+(g_reelstyle?"MOON":"FLAT"), COL_ACCENT, TFT_WHITE, IA_REELSTYLE);   // P4R-2: FLAT / MOON
   add(String("COVER ART")+": "+(g_covers_on?T(L_ON):T(L_OFF)), g_covers_on?COL_GREEN:COL_BAR, g_covers_on?TFT_BLACK:COL_LIT, IA_COVERS);   // 5.9.32-lab2 -> CONFIG.TXT COVERS=
   add(String("LIST TILE")+": "+(g_listtile?T(L_ON):T(L_OFF)), g_listtile?COL_GREEN:COL_BAR, g_listtile?TFT_BLACK:COL_LIT, IA_LISTTILE);   // 5.9.34-lab4 -> CONFIG.TXT LISTTILE=
   add(String("LAST USED")+": "+(g_lastused?T(L_ON):T(L_OFF)), g_lastused?COL_GREEN:COL_BAR, g_lastused?TFT_BLACK:COL_LIT, IA_LASTUSED);   // restore last-loaded game on boot -> CONFIG.TXT LASTUSED=
@@ -4346,6 +4403,18 @@ static void tilePicRect(const uint16_t*t,int n,int&x0,int&y0,int&w,int&h){
 static void carBlit(uint16_t*tile,int srcDim,int cx,int cy,int w,int h,int dim){
   if(w<=0||h<=0||srcDim<=0)return;
   int x0=cx-w/2,y0=cy-h/2;
+  if(g_rt){   // P4R-2 round target: identity rows, any size up to the whole canvas, optional source rect (g_cb_*)
+    int sx0=g_cb_sw?g_cb_sx0:0, sy0=g_cb_sw?g_cb_sy0:0, sw=g_cb_sw?g_cb_sw:srcDim, sh=g_cb_sw?g_cb_sh:srcDim;
+    int dx0=max(0,g_clip_x0-x0),dx1=min(w,g_clip_x1-x0),dy0=max(0,g_clip_y0-y0),dy1=min(h,g_clip_y1-y0);
+    if(dx0>=dx1||dy0>=dy1)return;
+    static int sxm[RW]; for(int dx=dx0;dx<dx1;dx++)sxm[dx]=sx0+(dx*sw)/w;
+    const uint16_t flat=carDim(COL_BAR,dim);
+    for(int dy=dy0;dy<dy1;dy++){ uint16_t*row=&g_rfb[(size_t)(y0+dy)*RW+x0];
+      if(!tile){ for(int dx=dx0;dx<dx1;dx++)row[dx]=flat; continue; }
+      const uint16_t*srow=tile+(size_t)(sy0+(dy*sh)/h)*srcDim;
+      for(int dx=dx0;dx<dx1;dx++)row[dx]=carDim(srow[sxm[dx]],dim); }
+    return;
+  }
   if(w>CAR_TILE+8||h>CAR_TILE+8||!framebuffer){          // paranoia fallback: the old, slow, always-correct path
     for(int dy=0;dy<h;dy++){int sy=g_cb_sw?g_cb_sy0+dy*g_cb_sh/h:dy*srcDim/h;
       for(int dx=0;dx<w;dx++){int sx=g_cb_sw?g_cb_sx0+dx*g_cb_sw/w:dx*srcDim/w;
@@ -4394,8 +4463,10 @@ static void carBlit(uint16_t*tile,int srcDim,int cx,int cy,int w,int h,int dim){
 }
 
 // The d6 overlay: pips while rolling, final face at rest — or "23" on the lucky roll.
+static int g_die_ox=-1,g_die_oy=-1;   // P4R-2: the round reel puts the die somewhere else (-1 = the square reel's spot)
 static void carDrawDie(){
-  int s=26,bw=VW/3,x=2*bw+(bw-s)/2,y=VH-BOTTOM_H-s-14;   // v5.4.2: hover a few lines ABOVE the ROLL button (dice / gap / button)
+  int s=26,bw=VW/3,x=2*bw+(bw-s)/2,y=VH-BOTTOM_H-s-14;
+  if(g_die_ox>=0){x=g_die_ox;y=g_die_oy;}   // v5.4.2: hover a few lines ABOVE the ROLL button (dice / gap / button)
   gfx_fillRoundRect(x,y,s,s,5,0xFFFF);
   gfx_drawRoundRect(x,y,s,s,5,COL_ACCENT);
   int c=x+s/2,m=y+s/2,o=7;
@@ -4410,7 +4481,397 @@ static void carDrawDie(){
   if(f==6){gfx_fillCircle(c-o,m,2,TFT_BLACK);gfx_fillCircle(c+o,m,2,TFT_BLACK);}
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// P4R-2 (lab15o): THE ROUND REEL — the whole 800x800 glass, centre (400,400).
+//   REELSTYLE=MOON : covers ride an arc across the top, the one at 12 o'clock is selected (300x225)
+//   REELSTYLE=FLAT : one big cover in the middle (340x255), the neighbours peek in from the sides
+//   Status runs round the top rim; title, disks and INSERT sit below the covers; LIST / CONFIG / source /
+//   ROLL are curved buttons on the bottom rim. Tap the cover or the title = the whole .nfo (as on the square
+//   boards). Drag left/right (along the arc) turns the reel - same tap/drag/coast machine as the square reel.
+//   Everything is drawn with the normal gfx calls into the round buffer (roundBegin), no card I/O while moving.
+// ════════════════════════════════════════════════════════════════════════════════════════════
+static void carExit(); static void carCycleSrc(); static void carRollDice();   // fwd (defined with the reel below)
+static void rlEnter();   // P4R-3 fwd (the round list is defined after the reel)
+static void doManual(const String& path,const char* title);                   // fwd (lab15j reader; default arg on its definition)
+#define RCX 400
+#define RCY 400
+static const RRim g_rrim[4]={ {24,50,4}, {54,84,1}, {96,126,2}, {130,156,3} };   // ROLL, LIST, CONFIG, source
+#define RRIM_R0 320
+#define RRIM_R1 396
+// geometry the tap handler needs (set by drawRoundReel)
+static int g_rr_cx=0,g_rr_cy=0,g_rr_cw=0,g_rr_ch=0;                 // selected cover
+static int g_rr_ty=0,g_rr_th=0;                                      // title band
+static int g_rr_dn=0,g_rr_dfirst=0,g_rr_dx0=0,g_rr_dy=0,g_rr_dsp=0;  // disk circles: count shown, first disk, x of the first, y, spacing
+static int g_rr_ix=0,g_rr_iy=0,g_rr_iw=0,g_rr_ih=0;                 // INSERT pill
+static String g_rr_toast=""; static uint16_t g_rr_toast_col=0;      // P4R-2c: a message pill at the top of the round reel
+
+static uint8_t rRimHitId(int x,int y){                       // 0 = not on a rim button
+  int dx=x-RCX, dy=y-RCY; long d2=(long)dx*dx+(long)dy*dy;
+  if(d2<(long)(RRIM_R0-6)*(RRIM_R0-6)) return 0;               // a little slack inwards
+  float a=atan2f((float)dy,(float)dx)*57.29578f; if(a<0)a+=360.0f;
+  for(int i=0;i<4;i++) if(a>=g_rrim[i].a0-2&&a<=g_rrim[i].a1+2) return g_rrim[i].id;
+  return 0;
+}
+// Filled ring segment in the lower half (0 < a0 < a1 < 180). Per row: the ring gives |x| between the two radii,
+// the two angles give x between dy*cot(a1) and dy*cot(a0) - no per-pixel trig.
+static void rFillRingSeg(int a0,int a1,int r0,int r1,uint16_t c){
+  float c0=cosf(a0*0.0174533f)/sinf(a0*0.0174533f), c1=cosf(a1*0.0174533f)/sinf(a1*0.0174533f);
+  for(int dy=1;dy<=r1;dy++){
+    float xo=sqrtf((float)r1*r1-(float)dy*dy), xi=(dy<r0)?sqrtf((float)r0*r0-(float)dy*dy):-1.0f;
+    float lo=dy*c1, hi=dy*c0;                                   // angle a1 is the left edge, a0 the right
+    for(int side=0;side<2;side++){
+      float s0=side?(xi<0?-xo:xi):-xo, s1=side?xo:(xi<0?-9999.0f:-xi);
+      if(!side&&xi<0) continue;                                 // below the inner radius: one span, done by side 1
+      float x0=max(s0,lo), x1=min(s1,hi);
+      if(x1>x0) gfx_fillRect(RCX+(int)x0,RCY+dy,(int)(x1-x0)+1,1,c);
+    }
+  }
+}
+// Text centred on a point, upright, clipped to the canvas.
+static void rTextC(int cx,int y,const String&t,int sz,uint16_t fg,uint16_t bg){
+  gfx_setTextSize(sz); gfx_setTextColor(fg,bg); gfx_setCursor(cx-gfx_textWidth(t)/2,y); gfx_print(t);
+}
+// Text along an arc across the top (upright letters, centred on 12 o'clock). Colour per part.
+static void rArcText(int r,int sz,const String* parts,const uint16_t* cols,int np,uint16_t bg){
+  int total=0; for(int i=0;i<np;i++) total+=parts[i].length();
+  float step=(6.0f*sz)/(float)r;                               // radians per character
+  float a=-1.570796f-step*(total-1)/2.0f;
+  gfx_setTextSize(sz);
+  for(int i=0;i<np;i++){ gfx_setTextColor(cols[i],bg);
+    for(unsigned k=0;k<parts[i].length();k++){ int x=RCX+(int)(r*cosf(a)), y=RCY+(int)(r*sinf(a));
+      gfx_setCursor(x-3*sz,y-4*sz); gfx_print(String(parts[i][k])); a+=step; } }
+}
+// Shorten t (with "..") until it fits w pixels at size sz.
+static String rFit(String t,int w,int sz){ gfx_setTextSize(sz); if(gfx_textWidth(t)<=w) return t;
+  while(t.length()>3&&gfx_textWidth(t+"..")>w) t.remove(t.length()-1); return t+".."; }
+
+// One cover at centre (cx,cy), fitted inside bw x bh, letterbox + black bands trimmed (lab15l/m).
+static void rCover(int gi,int cx,int cy,int bw,int bh,int dim,bool moving,bool sel,bool isLd,int* ow,int* oh){
+  auto&gm=g_games[gi];
+  uint16_t* t=NULL; int n=CAR_TILE;
+  if(g_covers_on){ t=carTile(gi,!moving&&dim<2); if(!t){ t=carMicro(gi); n=t?g_car_micro_dim:CAR_TILE; } }
+  int px=0,py=0,pw=n,ph=n; if(t) tilePicRect(t,n,px,py,pw,ph);
+  int dw=bw, dh=(ph*bw)/pw; if(dh>bh){ dh=bh; dw=(pw*bh)/ph; } if(dw<8)dw=8; if(dh<8)dh=8;
+  if(!t||gm.jpg_path=="?"){ dw=bw*3/4; dh=bh*3/4; }            // no picture: a tile with the initial
+  int x0=cx-dw/2, y0=cy-dh/2;
+  uint16_t bord=isLd?COL_GREEN:(sel?COL_AMBER:COL_ACCENT);
+  gfx_fillRoundRect(x0-4,y0-4,dw+8,dh+8,8,carDim(bord,dim));
+  if(t&&gm.jpg_path!="?"){ g_cb_sx0=px;g_cb_sy0=py;g_cb_sw=pw;g_cb_sh=ph; carBlit(t,n,cx,cy,dw,dh,dim); g_cb_sw=0;g_cb_sh=0; }
+  else { gfx_fillRect(x0,y0,dw,dh,carDim(COL_BAR,dim)); int ls=max(2,dh/40); char ib[2]={(char)toupper(gm.name.charAt(0)),0};
+         gfx_setTextSize(ls); gfx_setTextColor(carDim(COL_LIT,dim),carDim(COL_BAR,dim)); gfx_setCursor(cx-3*ls,cy-4*ls); gfx_print(ib); }
+  if(ow)*ow=dw; if(oh)*oh=dh;
+}
+
+static void drawRoundReel(){
+  const bool moon=(g_reelstyle!=0);
+  gfx_fillScreen(COL_BG);
+  int n=carN();
+  // ── status round the top rim ──
+  { String p[4]; uint16_t c[4];
+    p[0]="OMEGAWARE"; c[0]=COL_ORANGE;
+    p[1]=String("  ")+(g_wireless_mode?(espnowIsPaired()?"WIRELESS":"WIRELESS:PAIR"):T(L_STANDALONE)); c[1]=0x07FF;
+    p[2]=String("  ")+(g_loaded?(String("DISK")+(g_loaded_game_idx>=0&&g_loaded_game_idx<(int)g_games.size()&&g_games[g_loaded_game_idx].disk_count>1?(" "+String(g_loaded_disk_idx+1)):String(""))):String("EMPTY")); c[2]=g_loaded?COL_GREEN:COL_DIM;
+    p[3]=n?(String("  ")+String(carWrap((int)lroundf(g_car_pos))+1)+"/"+String(n)+" "+carSrcName()):String(""); c[3]=COL_MID;
+    rArcText(moon?366:352,2,p,c,4,COL_BG); }
+  // ── rim buttons ──
+  for(int i=0;i<4;i++){ uint8_t id=g_rrim[i].id;
+    uint16_t bc=(id==1)?COL_BLUE:(id==2)?COL_GREEN:(id==3)?COL_AMBER:COL_ACCENT;
+    rFillRingSeg(g_rrim[i].a0,g_rrim[i].a1,RRIM_R0,RRIM_R1,bc);
+    float am=(g_rrim[i].a0+g_rrim[i].a1)*0.5f*0.0174533f; int lx=RCX+(int)(358*cosf(am)), ly=RCY+(int)(358*sinf(am));
+    String lb=(id==1)?String(T(L_LIST)):(id==2)?String("CONFIG"):(id==3)?String(carSrcName()):String(T(L_ROLL));
+    rTextC(lx,ly-8,lb,2,inkFor(bc),bc); }
+  g_rr_dn=0; g_rr_cw=0;
+  if(n==0){ rTextC(RCX,380,(g_car_src==1)?String(T(L_NO_FAVS)):String(T(L_NO_GAMES)),3,COL_LIT,COL_BG); return; }
+  int ci=(int)lroundf(g_car_pos); float frac=g_car_pos-(float)ci;
+  bool moving=(g_car_touch&&g_car_moved)||g_car_coast||g_car_spin;
+  int maxOff=(n>=5)?2:((n>=2)?1:0);
+  if(!moving){ carTile(g_car_list[carWrap(ci)],true); if(maxOff>=1){carTile(g_car_list[carWrap(ci-1)],true);carTile(g_car_list[carWrap(ci+1)],true);} }
+  static const int order[5]={-2,2,-1,1,0};
+  const int BW=moon?300:340, BH=moon?225:255;                    // the selected cover's box
+  for(int oi=0;oi<5;oi++){ int off=order[oi]; if(abs(off)>maxOff) continue;
+    int gi=g_car_list[carWrap(ci+off)]; float rel=(float)off-frac, ar=fabsf(rel); if(ar>2.6f) continue;
+    int cx,cy; float sc;
+    if(moon){ float ang=(-90.0f+rel*38.0f)*0.0174533f; cx=RCX+(int)(300*cosf(ang)); cy=545+(int)(300*sinf(ang));
+              sc=(ar<=1.0f)?1.0f-0.45f*ar:0.55f-0.17f*(ar-1.0f); }
+    else    { cx=RCX+(int)(rel*330.0f); cy=265; sc=1.0f-0.40f*min(ar,1.5f); }
+    if(sc<0.3f) sc=0.3f;
+    int dim=(ar<0.5f)?0:((ar<1.6f)?1:2);
+    bool isLd=(g_loaded&&g_loaded_game_idx==gi);
+    int dw=0,dh=0; rCover(gi,cx,cy,(int)(BW*sc),(int)(BH*sc),dim,moving,ar<0.5f,isLd,&dw,&dh);
+    if(ar<0.5f){ g_rr_cx=cx; g_rr_cy=cy; g_rr_cw=dw; g_rr_ch=dh;
+      if(g_games[gi].fav) gfx_fillStar(cx+dw/2-14,cy-dh/2+14,10.0f,COL_STAR);
+      static int savSel=-1; static bool hasSav=false;
+      if(!moving){ if(savSel!=gi){ savSel=gi; hasSav=savBadgeFor(g_files[g_games[gi].first_file_idx]); } if(hasSav) drawSaveFloppy(cx-dw/2+6,cy-dh/2+6); } }
+  }
+  // ── the selected game: title, one line of the description, disks, INSERT ──
+  int gi=g_car_list[carWrap(ci)]; auto&game=g_games[gi];
+  static int diskGi=-1; if(diskGi!=gi){ diskGi=gi; g_disk_sel=(g_loaded&&g_loaded_game_idx==gi)?g_loaded_disk_idx:0; }
+  int ty=moon?388:420;
+  { int sz=3; String t=game.name; gfx_setTextSize(3); if(gfx_textWidth(t)>560){ sz=2; } t=rFit(t,560,sz);
+    rTextC(RCX,ty,t,sz,COL_LIT,COL_BG); g_rr_ty=ty-6; g_rr_th=8*sz+12; }
+  if(game.nfo_done&&game.blurb.length()){ String l=game.blurb; int nl=l.indexOf('\n'); if(nl>0) l=l.substring(0,nl);
+    rTextC(RCX,ty+34,rFit(l,560,2),2,COL_DIM,COL_BG); }
+  int dy=ty+86;
+  if(game.disk_count>1){
+    int nd=game.disk_count, show=min(nd,7), first=0;
+    if(nd>7){ first=g_disk_sel-3; if(first<0)first=0; if(first>nd-7)first=nd-7; }
+    int sp=52, x0=RCX-(show-1)*sp/2;
+    g_rr_dn=show; g_rr_dfirst=first; g_rr_dx0=x0; g_rr_dy=dy; g_rr_dsp=sp;
+    for(int k=0;k<show;k++){ int d=first+k, x=x0+k*sp;
+      bool isLd=(g_loaded&&g_loaded_game_idx==gi&&g_loaded_disk_idx==d), isSel=(d==g_disk_sel);
+      uint16_t bc=isLd?COL_GREEN:(isSel?COL_AMBER:COL_BAR);
+      gfx_fillCircle(x,dy,22,bc); gfx_drawCircle(x,dy,22,isSel?COL_AMBER:COL_DIM);
+      String dl=String(d+1); rTextC(x,dy-8,dl,2,(isLd||isSel)?TFT_BLACK:COL_LIT,bc); }
+    if(first>0) rTextC(x0-40,dy-8,"<",2,COL_DIM,COL_BG);
+    if(first+show<nd) rTextC(x0+(show-1)*sp+40,dy-8,">",2,COL_DIM,COL_BG);
+    dy+=38;
+  } else dy+=0;
+  { bool isLd=(g_loaded&&g_loaded_game_idx==gi);
+    g_rr_iw=250; g_rr_ih=60; g_rr_ix=RCX-g_rr_iw/2; g_rr_iy=(game.disk_count>1)?dy:ty+76;
+    uint16_t bf=isLd?(uint16_t)0x4000:(uint16_t)0x0340, bb=isLd?(uint16_t)0xE8C4:COL_GREEN;
+    gfx_fillRoundRect(g_rr_ix,g_rr_iy,g_rr_iw,g_rr_ih,30,bf); gfx_drawRoundRect(g_rr_ix,g_rr_iy,g_rr_iw,g_rr_ih,30,bb);
+    rTextC(RCX,g_rr_iy+(g_rr_ih-24)/2,isLd?T(L_EJECT):T(L_INSERT),3,TFT_WHITE,bf); }
+  if(g_car_dieShow){ g_die_ox=RCX+g_rr_iw/2+22; g_die_oy=g_rr_iy+17; carDrawDie(); g_die_ox=-1; }
+  if(g_rr_toast.length()){ String t=rFit(g_rr_toast,520,2); gfx_setTextSize(2); int w=gfx_textWidth(t)+40;   // P4R-2c
+    gfx_fillRoundRect(RCX-w/2,74,w,40,20,g_rr_toast_col); rTextC(RCX,86,t,2,inkFor(g_rr_toast_col),g_rr_toast_col); }
+}
+
+// Tap on the round reel (800x800 coordinates).
+static void roundReelTap(int px,int py){
+  uint8_t rim=rRimHitId(px,py);
+  if(rim==1){ int nn=carN(); if(nn){ g_sel=g_car_list[carWrap((int)lroundf(g_car_pos))]; } rlEnter(); return; }   // LIST -> the round list on this game (P4R-3)
+  if(rim==2){ g_car_active=false; g_info_showing=true; g_info_page=0; g_info_test=false; drawInfoFull(); return; }   // CONFIG
+  if(rim==3){ carCycleSrc(); return; }                                          // ALL / FAV / MOST
+  if(rim==4){ carRollDice(); return; }                                          // ROLL
+  int n=carN(); if(!n) return;
+  int ci=carWrap((int)lroundf(g_car_pos)); int gi=g_car_list[ci]; auto&gm=g_games[gi];
+  // disks
+  if(g_rr_dn>0 && abs(py-g_rr_dy)<=26 && px>=g_rr_dx0-26 && px<=g_rr_dx0+(g_rr_dn-1)*g_rr_dsp+26){
+    int k=(px-g_rr_dx0+g_rr_dsp/2)/g_rr_dsp; if(k<0)k=0; if(k>=g_rr_dn)k=g_rr_dn-1; int d=g_rr_dfirst+k;
+    if(d<(int)gm.disk_indices.size()){
+      if(g_loaded&&g_loaded_game_idx==gi){ if(d!=g_loaded_disk_idx){ doUnload(); g_sel=gi;g_disk_sel=d;g_disk_page=0; doLoadSelected(g_files[gm.disk_indices[d]]); } }
+      else g_disk_sel=d;
+      if(g_car_active){drawCarousel();gfx_flush();} }
+    return;
+  }
+  // INSERT / EJECT
+  if(px>=g_rr_ix&&px<g_rr_ix+g_rr_iw&&py>=g_rr_iy&&py<g_rr_iy+g_rr_ih){
+    g_sel=gi;g_disk_page=0;setActiveLetter(bucketOf(gm.name));
+    if(g_loaded&&g_loaded_game_idx==gi)doUnload();
+    else{int d=(g_disk_sel>=0&&g_disk_sel<(int)gm.disk_indices.size())?g_disk_sel:0;doLoadSelected(g_files[gm.disk_indices.empty()?gm.first_file_idx:gm.disk_indices[d]]);}
+    if(g_car_active){drawCarousel();gfx_flush();}
+    return;
+  }
+  // the cover or the title = the whole .nfo (lab15j)
+  bool onCover=(g_rr_cw>0&&abs(px-g_rr_cx)<=g_rr_cw/2&&abs(py-g_rr_cy)<=g_rr_ch/2);
+  bool onTitle=(py>=g_rr_ty&&py<g_rr_ty+g_rr_th&&abs(px-RCX)<=300);
+  if(onCover||onTitle){
+    String np; if(findNFOFor(g_files[gm.first_file_idx],np)){ gLog("[nfo] open %s\n",np.c_str()); doManual(np,"NFO"); if(g_car_active){drawCarousel();gfx_flush();} }
+    return;
+  }
+  // a tap beside the selected cover steps the reel that way
+  if(py<g_rr_ty){ if(px<g_rr_cx-g_rr_cw/2) g_car_pos-=1.0f; else if(px>g_rr_cx+g_rr_cw/2) g_car_pos+=1.0f; else return;
+    g_car_pos=(float)carWrap((int)lroundf(g_car_pos)); g_car_coast=false; drawCarousel(); gfx_flush(); }
+}
+
+// ── RIM TOUCH TEST (Settings > TEST TOOLS): tap 21 dots; logs how far each touch lands from its dot ──
+static void rimTouchTest(){
+  const int NT=21; int tx[NT],ty[NT],tr[NT];
+  for(int i=0;i<12;i++){ float a=i*30.0f*0.0174533f; tx[i]=RCX+(int)(360*cosf(a)); ty[i]=RCY+(int)(360*sinf(a)); tr[i]=360; }
+  for(int i=0;i<8;i++){ float a=(i*45.0f+22.5f)*0.0174533f; tx[12+i]=RCX+(int)(250*cosf(a)); ty[12+i]=RCY+(int)(250*sinf(a)); tr[12+i]=250; }
+  tx[20]=RCX; ty[20]=RCY; tr[20]=0;
+  gLog("[rimtest] start: %d dots (12 at r=360, 8 at r=250, centre) | PANELTURN applied, coordinates are upright panel 0-799\n",NT);
+  long sum[3]={0,0,0}; int mx[3]={0,0,0}, cnt[3]={0,0,0}; bool aborted=false;
+  for(int k=0;k<NT&&!aborted;k++){
+    if(!roundBegin()) return;
+    gfx_fillScreen(COL_BG);
+    rTextC(RCX,300,"RIM TOUCH TEST",3,COL_LIT,COL_BG);
+    rTextC(RCX,340,String("tap the dot  ")+String(k+1)+"/"+String(NT),2,COL_DIM,COL_BG);
+    rTextC(RCX,470,"(no tap for 20 s = stop)",1,COL_DIM,COL_BG);
+    gfx_drawCircle(tx[k],ty[k],24,COL_AMBER); gfx_fillCircle(tx[k],ty[k],10,COL_AMBER);
+    gfx_flush();
+    uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<1500) delay(10);           // finger off first
+    bool got=false; int gx=0,gy=0,rx=0,ry=0; t0=millis();
+    while(millis()-t0<20000){ if(Touch_ReadFrame()){ gx=g_rTouchX; gy=g_rTouchY; rx=g_rRawX; ry=g_rRawY; got=true; break; } delay(10); }
+    if(!got){ aborted=true; break; }
+    int e=(int)sqrtf((float)(gx-tx[k])*(gx-tx[k])+(float)(gy-ty[k])*(gy-ty[k]));
+    int ring=(tr[k]==360)?0:(tr[k]==250)?1:2; sum[ring]+=e; cnt[ring]++; if(e>mx[ring])mx[ring]=e;
+    gLog("[rimtest] dot %d at %d,%d (r=%d): touch %d,%d (raw %d,%d) - %d px off\n",k+1,tx[k],ty[k],tr[k],gx,gy,rx,ry,e);
+  }
+  const char* nm[3]={"rim r=360","inner r=250","centre"};
+  for(int r=0;r<3;r++) if(cnt[r]) gLog("[rimtest] %s: %d taps, average %ld px off, worst %d px\n",nm[r],cnt[r],sum[r]/cnt[r],mx[r]);
+  if(aborted) gLog("[rimtest] stopped (no tap for 20 s)\n");
+  if(!roundBegin()) return;
+  gfx_fillScreen(COL_BG);
+  rTextC(RCX,250,aborted?"TEST STOPPED":"TEST DONE",3,COL_LIT,COL_BG);
+  for(int r=0;r<3;r++) if(cnt[r]) rTextC(RCX,310+r*34,String(nm[r])+": avg "+String((long)(sum[r]/cnt[r]))+" px, worst "+String(mx[r])+" px",2,COL_MID,COL_BG);
+  rTextC(RCX,460,"details in GTI/gti.log - tap to return",2,COL_DIM,COL_BG);
+  gfx_flush();
+  uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<1500) delay(10);
+  t0=millis(); while(!Touch_ReadFrame()&&millis()-t0<30000) delay(20);
+  t0=millis(); while(Touch_ReadFrame()&&millis()-t0<1500) delay(10);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// P4R-3 (lab15r): THE ROUND LIST — the games as a wheel, A-Z round the right-hand rim.
+//   The middle row is the selected game (pill + small cover); rows above/below shrink and fade and follow the edge.
+//   Drag up/down turns the wheel (with coast + snap). Tap a row = bring it to the middle; tap the middle row = the reel
+//   on that game. A-Z: tap a letter or slide a thumb along the right rim - the wheel jumps, a big letter shows where.
+//   Rim buttons: INSERT/EJECT, REEL, CONFIG, LIB (ADF/DSK/GEN).
+// ════════════════════════════════════════════════════════════════════════════════════════════
+static void carEnter(); static void switchLib(int m);   // fwd
+static bool  g_rl_active=false;               // the round list is on screen (the loop routes touch to rlTick)
+static int   g_round_last=0;                  // 0 = reel, 1 = list: where "home" goes back to after Settings etc.
+static float g_rl_pos=0;                      // wheel position: index of the game in the middle (fractional while moving)
+static bool  g_rl_touch=false,g_rl_moved=false,g_rl_coast=false,g_rl_az=false;
+static int   g_rl_x0=0,g_rl_y0=0,g_rl_lastY=0,g_rl_rel=0; static float g_rl_pos0=0,g_rl_vel=0,g_rl_ivel=0; static uint32_t g_rl_lastMs=0;
+static float g_rl_target=-1;                  // tap on a row: glide there
+static char  g_rl_azL=0;                      // letter under the thumb while sliding the rim
+#define RL_ROW 78
+static const RRim g_rlrim[4]={ {58,88,11}, {92,122,12}, {126,152,13}, {156,178,14} };   // INSERT, REEL, CONFIG, LIB
+static uint8_t rRimHitSet(const RRim* set,int nset,int x,int y){
+  int dx=x-RCX, dy=y-RCY; long d2=(long)dx*dx+(long)dy*dy;
+  if(d2<(long)(RRIM_R0-6)*(RRIM_R0-6)) return 0;
+  float a=atan2f((float)dy,(float)dx)*57.29578f; if(a<0)a+=360.0f;
+  for(int i=0;i<nset;i++) if(a>=set[i].a0-2&&a<=set[i].a1+2) return set[i].id;
+  return 0;
+}
+static int rlN(){ return (int)g_games.size(); }
+static int rlFirstOf(char L){ for(int i=0;i<rlN();i++) if(bucketOf(g_games[i].name)==L) return i; return -1; }
+// A-Z on the right rim: letters at -50..+50 degrees, radius 372. Touch zone: outside r=330 on the right.
+static char rlAzAt(int x,int y){
+  int dx=x-RCX, dy=y-RCY; if(dx<=0) return 0; long d2=(long)dx*dx+(long)dy*dy; if(d2<330L*330L) return 0;
+  float a=atan2f((float)dy,(float)dx)*57.29578f; if(a<-56||a>56) return 0;
+  int k=(int)lroundf((a+50.0f)*25.0f/100.0f); if(k<0)k=0; if(k>25)k=25; return (char)('A'+k);
+}
+static void drawRoundList(){
+  gfx_fillScreen(COL_BG);
+  int n=rlN(); if(n){ if(g_rl_pos>n-1)g_rl_pos=(float)(n-1); if(g_rl_pos<0)g_rl_pos=0; }
+  int ci=(int)lroundf(g_rl_pos); if(ci<0)ci=0; if(n&&ci>n-1)ci=n-1; float frac=g_rl_pos-(float)ci;
+  bool moving=(g_rl_touch&&g_rl_moved)||g_rl_coast||g_rl_target>=0;
+  // status round the top rim
+  { String p[4]; uint16_t c[4];
+    p[0]="OMEGAWARE"; c[0]=COL_ORANGE;
+    p[1]=String("  ")+(g_wireless_mode?(espnowIsPaired()?"WIRELESS":"WIRELESS:PAIR"):T(L_STANDALONE)); c[1]=0x07FF;
+    p[2]=String("  ")+(g_loaded?String("DISK"):String("EMPTY")); c[2]=g_loaded?COL_GREEN:COL_DIM;
+    p[3]=n?(String("  ")+String(ci+1)+"/"+String(n)):String(""); c[3]=COL_MID;
+    rArcText(366,2,p,c,4,COL_BG); }
+  // A-Z round the right rim
+  char cur=n?bucketOf(g_games[ci].name):0;
+  for(int k=0;k<26;k++){ char L=(char)('A'+k); float a=(-50.0f+k*4.0f)*0.0174533f; int x=RCX+(int)(372*cosf(a)), y=RCY+(int)(372*sinf(a));
+    bool has=(rlFirstOf(L)>=0);   // (26 short scans of names already in PSRAM - no card)
+    if(L==cur){ gfx_fillCircle(x,y,14,COL_AMBER); rTextC(x,y-7,String(L),2,inkFor(COL_AMBER),COL_AMBER); }
+    else rTextC(x,y-7,String(L),2,has?COL_MID:carDim(COL_DIM,1),COL_BG); }
+  // rim buttons
+  for(int i=0;i<4;i++){ uint8_t id=g_rlrim[i].id;
+    uint16_t bc=(id==11)?COL_GREEN:(id==12)?COL_BLUE:(id==13)?COL_ACCENT:COL_AMBER;
+    bool isLd=(id==11)&&n&&g_loaded&&g_loaded_game_idx==ci; if(isLd) bc=0xC000;
+    rFillRingSeg(g_rlrim[i].a0,g_rlrim[i].a1,RRIM_R0,RRIM_R1,bc);
+    float am=(g_rlrim[i].a0+g_rlrim[i].a1)*0.5f*0.0174533f; int lx=RCX+(int)(358*cosf(am)), ly=RCY+(int)(358*sinf(am));
+    String lb=(id==11)?String(isLd?T(L_EJECT):T(L_INSERT)):(id==12)?String(T(L_REEL)):(id==13)?String("CONFIG"):String(g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN");
+    rTextC(lx,ly-8,lb,2,inkFor(bc),bc); }
+  if(!n){ rTextC(RCX,380,T(L_NO_GAMES),3,COL_LIT,COL_BG); return; }
+  // the wheel: far rows first, the middle row last
+  for(int pass=0;pass<2;pass++) for(int d=-4;d<=4;d++){
+    int gi=ci+d; if(gi<0||gi>=n) continue; float rel=(float)d-frac, ar=fabsf(rel);
+    bool mid=(ar<0.5f); if((pass==1)!=mid) continue;
+    int y=RCY+(int)(rel*RL_ROW); if(y<96||y>704) continue;
+    float hc=sqrtf(fmaxf(0.0f,376.0f*376.0f-(float)(y-RCY)*(y-RCY)));
+    int left=RCX-(int)hc+44, right=RCX+(int)hc-78; int w=right-left; if(w<80) continue;
+    auto&gm=g_games[gi]; bool isLd=(g_loaded&&g_loaded_game_idx==gi);
+    if(mid){
+      uint16_t pb=COL_PANEL; gfx_fillRoundRect(left,y-36,w,72,36,isLd?COL_GREEN:COL_AMBER); gfx_fillRoundRect(left+3,y-33,w-6,66,33,pb);
+      rCover(gi,left+62,y,78,54,0,moving,true,isLd,NULL,NULL);
+      String nm=rFit(gm.name,w-150-(gm.disk_count>1?52:0),3); gfx_setTextSize(3); gfx_setTextColor(COL_LIT,pb); gfx_setCursor(left+112,y-12); gfx_print(nm);
+      if(gm.disk_count>1){ String b=String(gm.disk_count)+"DSK"; gfx_setTextSize(1); int bw=gfx_textWidth(b)+12;
+        gfx_fillRoundRect(right-bw-22,y-9,bw,18,9,COL_BLUE); gfx_setTextColor(inkFor(COL_BLUE),COL_BLUE); gfx_setCursor(right-bw-16,y-4); gfx_print(b); }
+      if(gm.fav) gfx_fillStar(left+30,y-26,8.0f,COL_STAR);
+    } else {
+      int dim=(ar<1.5f)?0:((ar<2.5f)?1:2); int sz=(ar<1.5f)?2:((ar<3.0f)?2:1);
+      uint16_t col=carDim(isLd?COL_GREEN:COL_LIT,dim);
+      String nm=rFit(gm.name,w-20,sz); rTextC((left+right)/2,y-4*sz,nm,sz,col,COL_BG);
+    }
+  }
+  if(g_rl_az&&g_rl_azL){ gfx_fillCircle(250,RCY,64,COL_AMBER); gfx_drawCircle(250,RCY,66,COL_LIT);
+    rTextC(250,RCY-28,String(g_rl_azL),7,inkFor(COL_AMBER),COL_AMBER); }
+  if(g_rr_toast.length()){ String t=rFit(g_rr_toast,520,2); gfx_setTextSize(2); int tw=gfx_textWidth(t)+40;
+    gfx_fillRoundRect(RCX-tw/2,74,tw,40,20,g_rr_toast_col); rTextC(RCX,86,t,2,inkFor(g_rr_toast_col),g_rr_toast_col); }
+}
+static void rlShow(){ if(roundBegin()){ drawRoundList(); gfx_flush(); } }
+static void rlEnterNoDraw(){ g_car_active=false; g_rl_active=true; g_round_last=1; g_rl_touch=false; g_rl_coast=false; g_rl_target=-1; g_rl_az=false;
+  int n=rlN(); g_rl_pos=(float)((g_sel>=0&&g_sel<n)?g_sel:0); }
+static void rlEnter(){ rlEnterNoDraw(); rlShow(); }
+static void rlSettle(){ int n=rlN(); if(!n) return; int ci=(int)lroundf(g_rl_pos); if(ci<0)ci=0; if(ci>n-1)ci=n-1; g_rl_pos=(float)ci;
+  if(g_sel!=ci){ g_sel=ci; g_disk_sel=0; g_disk_page=0; setActiveLetter(bucketOf(g_games[ci].name)); } }
+static void rlTap(int px,int py){
+  uint8_t rim=rRimHitSet(g_rlrim,4,px,py); int n=rlN();
+  if(rim==12){ g_rl_active=false; g_round_last=0; carEnter(); return; }                                   // REEL (on this game)
+  if(rim==13){ g_rl_active=false; g_info_showing=true; g_info_page=0; g_info_test=false; drawInfoFull(); return; }   // CONFIG
+  if(rim==14){ switchLib((g_mode+1)%3); return; }                                                        // LIB: ADF -> DSK -> GEN
+  if(rim==11&&n){ auto&gm=g_games[g_sel];                                                                  // INSERT / EJECT
+    if(g_loaded&&g_loaded_game_idx==g_sel) doUnload();
+    else doLoadSelected(g_files[gm.disk_indices.empty()?gm.first_file_idx:gm.disk_indices[0]]);
+    if(g_rl_active) rlShow(); return; }
+  if(!n) return;
+  int d=(int)lroundf((float)(py-RCY)/RL_ROW);
+  if(d==0){ g_rl_active=false; g_round_last=0; carEnter(); return; }                                     // the middle row = the reel on it
+  float t=g_rl_pos+(float)d; if(t<0)t=0; if(t>n-1)t=(float)(n-1); g_rl_target=t;                          // glide there
+}
+static void rlTick(bool touch,uint16_t px,uint16_t py,uint32_t now){
+  int n=rlN();
+  if(touch){
+    g_rl_rel=0;
+    if(!g_rl_touch){ g_rl_touch=true; g_rl_moved=false; g_rl_x0=px; g_rl_y0=py; g_rl_lastY=py; g_rl_pos0=g_rl_pos; g_rl_vel=0; g_rl_coast=false; g_rl_target=-1; g_rl_lastMs=now;
+      char L=rlAzAt(px,py); g_rl_az=(L!=0);
+      if(g_rl_az){ g_rl_azL=L; int f=rlFirstOf(L); if(f>=0){ g_rl_pos=(float)f; rlSettle(); } rlShow(); }
+      return; }
+    if(g_rl_az){ char L=rlAzAt(px,py); if(!L){ int dx=px-RCX,dy=py-RCY; float a=atan2f((float)dy,(float)dx)*57.29578f;   // slid a bit inwards: keep the angle
+                   if(dx>0&&a>=-56&&a<=56){ int k=(int)lroundf((a+50.0f)*25.0f/100.0f); if(k<0)k=0; if(k>25)k=25; L=(char)('A'+k);} }
+      if(L&&L!=g_rl_azL){ g_rl_azL=L; int f=rlFirstOf(L); if(f>=0){ g_rl_pos=(float)f; rlSettle(); } rlShow(); }
+      return; }
+    if(abs((int)py-g_rl_y0)>DRAG_THRESH) g_rl_moved=true;
+    if(g_rl_moved&&n>0&&!rRimHitSet(g_rlrim,4,g_rl_x0,g_rl_y0)){
+      g_rl_pos=g_rl_pos0-((float)((int)py-g_rl_y0))/RL_ROW; if(g_rl_pos<0)g_rl_pos=0; if(g_rl_pos>n-1)g_rl_pos=(float)(n-1);
+      uint32_t dt=now-g_rl_lastMs; if(dt>0){ g_rl_vel=((float)((int)py-g_rl_lastY))/(float)dt; g_rl_lastY=py; g_rl_lastMs=now; }
+      rlShow(); }
+    return;
+  }
+  if(g_rl_touch){
+    if(++g_rl_rel<RELEASE_FRAMES) return;
+    g_rl_touch=false; g_rl_rel=0;
+    if(g_rl_az){ g_rl_az=false; rlSettle(); rlShow(); return; }
+    if(g_rl_moved){ g_rl_ivel=-g_rl_vel*16.0f/RL_ROW; g_rl_coast=true; }
+    else rlTap(g_rl_x0,g_rl_y0);
+    return;
+  }
+  if(g_rl_target>=0&&n>0){ float dd=g_rl_target-g_rl_pos; g_rl_pos+=dd*0.30f;
+    if(fabsf(dd)<0.02f){ g_rl_pos=g_rl_target; g_rl_target=-1; rlSettle(); } rlShow(); return; }
+  if(g_rl_coast&&n>0){
+    g_rl_pos+=g_rl_ivel; g_rl_ivel*=0.92f;
+    if(g_rl_pos<0){g_rl_pos=0;g_rl_ivel=0;} if(g_rl_pos>n-1){g_rl_pos=(float)(n-1);g_rl_ivel=0;}
+    if(fabsf(g_rl_ivel)<0.02f){ float t=(float)lroundf(g_rl_pos), dd=t-g_rl_pos; if(fabsf(dd)<0.01f){ g_rl_pos=t; g_rl_coast=false; rlSettle(); } else g_rl_pos+=dd*0.35f; }
+    rlShow(); return;
+  }
+  if(g_ss_enabled&&g_ss_have&&!g_rl_touch){ uint32_t thr=g_loaded?g_ss_load_ms:g_ss_idle_ms;
+    if(now-g_last_touch_ms>=thr){ runScreensaver(); return; } }
+}
+// P4R-3: "home" for the round UI. Called by drawFullUI(): any screen that used to fall back to the square list
+// (leaving Settings, a finished rescan, a library switch...) lands on the round reel or round list instead.
+// Draws only - the caller's gfx_flush() shows it.
+static bool roundHomeDraw(){
+  if(!g_roundui||g_info_showing) return false;
+  if(!g_car_active&&!g_rl_active){
+    if(g_round_last==1) rlEnterNoDraw();
+    else { carBuildList(); carMicroEnsure(); g_car_active=true; g_car_touch=false; g_car_coast=false;
+           int start=0; for(int i=0;i<carN();i++) if(g_car_list[i]==g_sel){start=i;break;} g_car_pos=(float)start; }
+  }
+  if(!roundBegin()) return false;
+  if(g_rl_active) drawRoundList(); else drawRoundReel();
+  return true;
+}
+static void redrawRound(){ if(g_rl_active) rlShow(); else { drawCarousel(); gfx_flush(); } }   // P4R-3
 static void drawCarousel(){
+  if(g_roundui && roundBegin()){ drawRoundReel(); return; }   // P4R-2: the round reel (the caller's gfx_flush shows it)
   uint32_t _rp_f0=micros();
   if(g_reelprof&&g_rp_frames&&millis()-g_rp_t0>=1500){   // 5.9.33-lab3: where did the frame actually go?
     uint32_t f=g_rp_frames,span=millis()-g_rp_t0;
@@ -4465,7 +4926,7 @@ static void drawCarousel(){
       int gi=g_car_list[carWrap(ci+off)];
       float rel=(float)off-frac;
       float ar=fabsf(rel);if(ar>2.6f)continue;
-      int x=ccx+(int)(rel*110.0f*(1.0f-min(ar,1.0f)*0.22f));
+      int x=ccx+(int)(rel*161.0f*(1.0f-min(ar,1.0f)*0.22f));   // P4: wider reel spacing (220 px tiles)
       float scale=1.0f-ar*0.28f;if(scale<0.42f)scale=0.42f;
       float squash=1.0f-ar*0.20f;if(squash<0.55f)squash=0.55f;
       int h=(int)(CAR_TILE*scale),w=(int)(CAR_TILE*scale*squash);
@@ -4671,6 +5132,7 @@ static void carRollDice(){
 }
 
 static void carHandleTap(uint16_t px,uint16_t py){
+  if(g_touch_round){ roundReelTap(px,py); return; }   // P4R-2
   if(py>=(uint16_t)(VH-BOTTOM_H)){
     if(px<(uint16_t)(VW/3))carExit();
     else if(px<(uint16_t)(2*VW/3))carCycleSrc();
@@ -4730,7 +5192,7 @@ static void carTick(bool touch,uint16_t px,uint16_t py,uint32_t now){
       g_car_pos0=g_car_pos;g_car_vel=0;g_car_coast=false;g_car_lastMs=now;
     }else{
       if(abs((int)px-g_car_x0)>DRAG_THRESH)g_car_moved=true;
-      if(g_car_moved&&n>0&&py<(uint16_t)(VH-BOTTOM_H)){
+      if(g_car_moved&&n>0&&(g_touch_round?!rRimHitId(g_car_x0,g_car_y0):py<(uint16_t)(VH-BOTTOM_H))){   // P4R-2: round = not a drag that began on a rim button
         g_car_pos=g_car_pos0-((float)((int)px-g_car_x0))/CAR_PX_PER_STEP;
         uint32_t dt=now-g_car_lastMs;
         if(dt>0){g_car_vel=((float)((int)px-g_car_lastX))/(float)dt;g_car_lastX=px;g_car_lastMs=now;}
@@ -4806,7 +5268,8 @@ static void carTick(bool touch,uint16_t px,uint16_t py,uint32_t now){
   }
 }
 
-static void drawFullUI(){gfx_fillScreen(COL_BG);drawStatusBar();drawCoverPanel();drawActionStrip();drawModeBar();drawFileList();drawNowPlayingBar();drawAZBar();drawBottomBar();}
+static void drawFullUI(){if(roundHomeDraw())return;   // P4R-3: round UI - home is the round reel/list
+  gfx_fillScreen(COL_BG);drawStatusBar();drawCoverPanel();drawActionStrip();drawModeBar();drawFileList();drawNowPlayingBar();drawAZBar();drawBottomBar();}
 static void drawListAndCover(){drawCoverPanel();drawActionStrip();drawFileList();drawNowPlayingBar();drawAZBar();}
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -4924,11 +5387,19 @@ static bool svPatchCore(const String&master,const String&sav,const uint8_t*map,u
   else svErr("rename .tmp to the save file");
   return _ok;
 }
-static void svToast(const String&msg){
-  gfx_fillRect(0,0,VW,STATUS_H,COL_GREEN);gfx_setTextSize(1);gfx_setTextColor(TFT_BLACK,COL_GREEN);
+// P4R-2c: redraw whatever screen is current (the reel if it is up, else the list) - so a job that finishes while the
+// round reel is showing puts the round reel back instead of leaving the square list on the glass.
+static void redrawCurrent(){ if(g_car_active){drawCarousel();gfx_flush();} else {drawFullUI();gfx_flush();} }   // (drawFullUI draws the round list when that is up)
+// P4R-2c: a short message. Square screens: in the status bar (as before). Round reel: a pill at the top of the reel.
+// ms=0 leaves it up (the next redraw clears it on the square screens; the round one keeps it until the next toast).
+static void uiToast(const String&msg,uint16_t col,uint32_t ms){
+  if((g_car_active||g_rl_active)&&g_roundui){ g_rr_toast=msg; g_rr_toast_col=col; redrawRound();
+    if(ms){ delay(ms); g_rr_toast=""; redrawRound(); } return; }
+  gfx_fillRect(0,0,VW,STATUS_H,col);gfx_setTextSize(1);gfx_setTextColor(TFT_BLACK,col);
   int tw=gfx_textWidth(msg);gfx_setCursor((VW-tw)/2,6);gfx_print(msg);gfx_flush();
-  delay(1200);drawStatusBar();gfx_flush();
+  if(ms){ delay(ms);drawStatusBar();gfx_flush(); }
 }
+static void svToast(const String&msg){ uiToast(msg,COL_GREEN,1200); }
 // lab15c: a save file that already exists (COPY: the .sav from an earlier save; OVERWRITE: the image
 // itself) is patched IN PLACE - same file, same clusters, same size, only the written sectors change.
 // So the card file the mounted disk is read from never moves while the disk is in, and there is no
@@ -5003,8 +5474,9 @@ static bool svPersistWireless(uint32_t load_id,uint32_t img_size,const uint8_t*m
 static void svFetchWireless(){
   if(g_saves_mode==0){g_espnow_dirty=false;return;}                   // SAVES=OFF: ignore beacons
   if(!g_wireless_mode||!g_espnow_started||!espnowIsPaired())return;
-  gfx_fillRect(0,VH/2-24,VW,48,COL_ACCENT);gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
-  {const char*m="SAVING GAME...";int tw=gfx_textWidth(m);gfx_setCursor((VW-tw)/2,VH/2-8);gfx_print(m);}gfx_flush();
+  if((g_car_active||g_rl_active)&&g_roundui) uiToast("SAVING GAME...",COL_ACCENT,0);   // P4R-2c/3
+  else{ gfx_fillRect(0,VH/2-24,VW,48,COL_ACCENT);gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
+  {const char*m="SAVING GAME...";int tw=gfx_textWidth(m);gfx_setCursor((VW-tw)/2,VH/2-8);gfx_print(m);}gfx_flush(); }
   bool ok=espnowFetchSave(svPersistWireless);
   if(g_car_active)drawCarousel();else drawFullUI();
   gfx_flush();
@@ -5038,7 +5510,7 @@ static bool claimAskUI(bool dirty, const char* who){
       if(ly>=by&&ly<by+bh){ if(lx<12+bw){take=true;break;} if(lx>=24+bw){break;} } }
     delay(15);
   }
-  drawFullUI(); gfx_flush();
+  redrawCurrent();   // P4R-2c: back to the reel if that is where the send started
   return take;
 }
 
@@ -5057,7 +5529,7 @@ static bool doLoadSelected(const String&adfPath){
     gfx_setCursor(6,STATUS_H+30);gfx_print(T(L_NO_WIRELESS_DEV));
     gfx_setCursor(6,STATUS_H+42);gfx_print(T(L_AVAIL_HD));
     gfx_setCursor(6,STATUS_H+56);gfx_print(T(L_USE_CABLE));
-    gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
+    gfx_flush();delay(2200);redrawCurrent();return false;
   }
   // v4.8.0 interlocks: pending saves die when the RAM disk is rebuilt — drain first
   // (v4.8.1: own-disk flush runs in ANY mode — a wireless GTi can still be USB-attached)
@@ -5088,11 +5560,11 @@ static bool doLoadSelected(const String&adfPath){
   // Clean swap: if a disk is already mounted, cleanly eject first so the host re-reads the new media.
   // FORCESWAP=ON skips this and swaps the bytes in place (faster, but the host may not notice).
   if(g_loaded && !g_forceswap) hardDetach();
-  File f=SD_MMC.open(loadPath.c_str(),FILE_READ);if(!f){gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_FAILED));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
+  File f=SD_MMC.open(loadPath.c_str(),FILE_READ);if(!f){gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_FAILED));gfx_flush();delay(1000);redrawCurrent();return false;}
   // Use VFS to get real file size (SD_MMC f.size() returns 0 for subdirectory files)
   String vfsLoad="/sdcard"+loadPath;
   struct stat stLoad;
-  if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
+  if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);redrawCurrent();return false;}
   uint32_t fsz=(uint32_t)stLoad.st_size;
   uint32_t copied=0;
   if(g_wireless_mode){
@@ -5109,7 +5581,7 @@ static bool doLoadSelected(const String&adfPath){
       gfx_setCursor(6,STATUS_H+44);gfx_print(T(L_HD_NO_WIRELESS));
       gfx_setTextColor(COL_DIM,COL_PANEL);
       gfx_setCursor(6,STATUS_H+58);gfx_print(T(L_USE_CABLE));
-      gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
+      gfx_flush();delay(2200);redrawCurrent();return false;
     }
     g_alias=false;
     {String pn=presentName(adfPath);build_volume(pn.c_str(),fsz);}   // v5.2: GEN keeps the real name+ext so FlashFloppy detects the format; lab14q: LONGNAME
@@ -5144,7 +5616,7 @@ static bool doLoadSelected(const String&adfPath){
       gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB");
       gfx_setTextColor(COL_DIM,COL_PANEL);
       gfx_setCursor(6,STATUS_H+44);gfx_print(aerr);
-      gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
+      gfx_flush();delay(2200);redrawCurrent();return false;
     }
     copied=fsz;
     // Save tracking is LIVE under alias: the dirty map is what makes the overlay
@@ -5185,7 +5657,7 @@ static bool doLoadSelected(const String&adfPath){
       } else if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
     }
   }
-  drawStatusBar();drawListAndCover();gfx_flush();return true;
+  if(g_car_active||g_rl_active){redrawRound();}else{drawStatusBar();drawListAndCover();gfx_flush();}return true;   // P4R-2c/3
 }
 
 // ── WebDAV fetch into the RAM disk (merge step 1) ─────────────────────────
@@ -5209,13 +5681,13 @@ static bool doLoadWebdav(const String&remotePath,const String&showName){
     WiFi.disconnect(false,true);delay(200);
     WiFi.begin(g_home_ssid.c_str(),g_home_pass.c_str());
     uint32_t t0=millis();while(WiFi.status()!=WL_CONNECTED&&millis()-t0<15000)delay(200);
-    if(WiFi.status()!=WL_CONNECTED){g_dav_fail="WiFi join failed";Serial.println("[DAV] "+g_dav_fail);WiFi.disconnect();WiFi.mode(WIFI_OFF);return false;}
+    if(WiFi.status()!=WL_CONNECTED){g_dav_fail="WiFi join failed";Serial.println("[DAV] "+g_dav_fail);WiFi.disconnect(false);return false;}   // P4: never switch the hosted radio off
   }
   davApplyConfig();
   if(g_loaded&&!g_forceswap)hardDetach();
   long got=davClient.streamToBuffer(remotePath,g_disk+DATA_LBA*512,MAX_FILE_BYTES,false);
   davClient.closeIdle();                          // the pooled TLS context is ~50KB of internal heap
-  if(!keepUp){WiFi.disconnect();delay(100);WiFi.mode(WIFI_OFF);}   // standalone: same leave discipline as espnowSendDiskHome
+  if(!keepUp){WiFi.disconnect(false);delay(100);}   // P4: leave the association, never switch the hosted radio off
   if(got<=0||davClient.lastTruncated()){
     g_dav_fail=davClient.lastError();
     Serial.printf("[DAV] fetch failed: %s\n",davClient.lastError().c_str());
@@ -5246,7 +5718,7 @@ static void doUnload(){
   if(svPending())svFlushStandalone();
   if(g_wireless_mode&&g_espnow_started&&g_espnow_dirty)svFetchWireless();
   hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_orig="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();g_alias=false;   // 5.9.37: drop any alias mapping
-  if(g_wireless_mode&&g_espnow_started&&espnowIsPaired())espnowSendEject();drawStatusBar();drawListAndCover();gfx_flush();}
+  if(g_wireless_mode&&g_espnow_started&&espnowIsPaired())espnowSendEject();if(g_car_active||g_rl_active){redrawRound();}else{drawStatusBar();drawListAndCover();gfx_flush();}}   // P4R-2c/3
 
 // Expand the zero-RLE embedded ADF straight into the RAM-disk data area. No SD needed.
 static void diagInflate(const uint8_t*src,uint32_t slen,uint8_t*dst){
@@ -5932,12 +6404,14 @@ static void doHomeWifiSetup(){
 // 5.9.17: switch the radio between the three MODE states LIVE (no reboot).
 // STANDALONE = radio off, ESP-NOW = blind dongles, WiFi = home router + web UI.
 static void applyRadioMode(){
-  if(g_espnow_started){ espnowStop(); g_espnow_started=false; }   // leave ESP-NOW cleanly
+  // P4: the radio lives on the C6 (esp-hosted). Switching it OFF and back on re-inits the hosted link, which
+  // crashed it (5.9.12) - so on the P4 the STA stays up and MODE only decides what the GTi does with it.
+  if(g_espnow_started){ espnowStop(); g_espnow_started=false; }   // P4: forgets the link state only; radio stays up
   webPanelStop();                                                 // stop the web server if it was up
-  WiFi.disconnect(true,true); delay(60);
-  if(!g_wireless_mode){ WiFi.mode(WIFI_OFF); }                     // STANDALONE
+  WiFi.disconnect(false,true); delay(60);                         // P4: drop the association, keep the radio on
+  if(!g_wireless_mode){ }                                         // STANDALONE: radio idle
   else if(g_link_home){ webPanelBegin(); }                        // WiFi (non-blocking; server comes up in webPanelService)
-  else { ensureEspNow(); }                                        // ESP-NOW
+  else if(g_c6_ready){ ensureEspNow(); }                          // wireless dongles (Wi-Fi-direct on the P4)
 }
 
 static void doWebUiSetup(){
@@ -6531,7 +7005,7 @@ static void runSDAccessBoot(bool sdok){
 // OTA partition table (Tools > Partition Scheme > a "2x…APP" 16M scheme); a
 // single-slot "No OTA" build has no spare slot and says so instead of failing ugly.
 #define FWUP_PATH "/GTi_update.bin"
-#define FWUP_TAG  "JC35"   // v5.5.3: SD update auto-detects any *.bin whose name carries this tag (no rename)
+#define FWUP_TAG  "P4R"    // P4R: own tag (GTi-P4R-*.bin) so the 4.3" P4 and the round one never take each other's update | SD update auto-detects any GTi-P4-*.bin (was "JC35", which collided with the JC3248 build)
 static void fwupMsg(int y,const char*s,uint16_t fg,uint16_t bg,int sz){gfx_setTextSize(sz);gfx_setTextColor(fg,bg);gfx_setCursor((VW-gfx_textWidth(s))/2,y);gfx_print(s);}
 // 5.9.29: the old one-liner waited for "a touch" but never for a RELEASE first. The tap
 // that got us here (plus the AXS15231B's stale idle frames) satisfied it instantly, so every
@@ -6575,7 +7049,7 @@ static void fwupIdfEnd(){
 // every JC build carries this unique marker in its .rodata (it's referenced below, so the
 // linker always keeps it); a SuperMini/XIAO bin doesn't, so scanning the incoming image
 // for it reliably refuses a cross-board flash. Marker spans chunk boundaries safely.
-static const char GTI_FW_MARK[]="OMEGAWARE.GTi.JC3248.fw";
+static const char GTI_FW_MARK[]="OMEGAWARE.GTi.P4R.fw";   // P4R: differs from the 4.3" P4 marker
 // 5.9.30: a scannable version stamp. Arduino's esp_app_desc.version is the CORE's git hash
 // ("ee57070"), not ours, so it can't tell you which GTi build a .bin is. This literal can be
 // found in any 5.9.30+ image, letting the confirm screen show the INCOMING version before you
@@ -6838,6 +7312,98 @@ static void clockFromBuild(){
   time_t e=mktime(&t); if(e<=0) return;
   struct timeval tv={e,0}; settimeofday(&tv,nullptr);
 }
+// ════════════════════════════════════════════════════════════════════════════
+// C6 (WiFi co-processor) SELF-UPDATE  (P4 only)
+// The P4 has no radio of its own; WiFi/ESP-NOW live on the ESP32-C6 reached over
+// SDIO (esp-hosted). The factory C6 ships esp-hosted ~2.3.x, far behind this
+// Arduino core's 2.12.x host -> WiFi doesn't work. If a matching slave image is
+// present on the SD card and the C6 is behind, offer to flash it via the
+// esp-hosted slave-OTA API. Tap-gated. Absent file => skipped entirely.
+// OTA writes the INACTIVE C6 slot and only switches on activate(), so an
+// interrupted flash leaves the old C6 firmware intact (no brick).
+// ════════════════════════════════════════════════════════════════════════════
+static void c6SelfUpdate(){
+  const char* C6BIN = "/c6_network_adapter_2.12.13.bin";
+
+  WiFi.mode(WIFI_STA); delay(150);                          // spin up the hosted link to reach the C6
+  esp_hosted_coprocessor_fwver_t v; memset(&v,0,sizeof v);
+  bool haveVer = (esp_hosted_get_coprocessor_fwversion(&v)==ESP_OK);
+  // Skip only if the C6 is already at 2.12.13 or newer; anything lower is offered the update.
+  auto c6AtLeast=[&](int a,int b,int c){ if(v.major1!=a)return v.major1>a; if(v.minor1!=b)return v.minor1>b; return v.patch1>=c; };
+  if(haveVer && c6AtLeast(2,12,13)){ g_c6_ready=true; return; }   // 5.9.12: radio always-on; leave STA up so espnowBegin never re-inits the hosted radio (that OFF->STA re-init crashed)
+
+  // Image source: an SD override wins (drop a newer c6_network_adapter_*.bin on the card),
+  // otherwise the embedded 'c6fw' flash partition baked in at build time. Header = "C6FW" + u32 LE length.
+  bool useSD = SD_MMC.exists(C6BIN);
+  const esp_partition_t* c6part=NULL; size_t c6off=0, c6len=0;
+  if(!useSD){
+    c6part=esp_partition_find_first(ESP_PARTITION_TYPE_ANY,ESP_PARTITION_SUBTYPE_ANY,"c6fw");
+    if(c6part){ uint8_t h[8];
+      if(esp_partition_read(c6part,0,h,8)==ESP_OK && h[0]=='C'&&h[1]=='6'&&h[2]=='F'&&h[3]=='W'){
+        c6len=(uint32_t)h[4]|((uint32_t)h[5]<<8)|((uint32_t)h[6]<<16)|((uint32_t)h[7]<<24); c6off=8;
+      }
+    }
+  }
+  if(!useSD && c6len==0){ WiFi.mode(WIFI_OFF); return; }     // no SD image, no embedded image -> normal boot
+
+  auto msg=[&](const char*l1,const char*l2,uint16_t col){
+    gfx_fillScreen(COL_BG);
+    gfx_setTextSize(2); gfx_setTextColor(col,COL_BG);
+    gfx_setCursor((VW-gfx_textWidth(l1))/2, VH/2-20); gfx_print(l1);
+    if(l2&&l2[0]){ gfx_setTextSize(1); gfx_setTextColor(COL_LIT,COL_BG);
+      gfx_setCursor((VW-gfx_textWidth(l2))/2, VH/2+8); gfx_print(l2); }
+    gfx_flush();
+  };
+
+  char sub[72]; snprintf(sub,sizeof sub,"C6 is v%d.%d.%d  ->  update to 2.12.13  (enables WiFi)", v.major1, v.minor1, v.patch1);
+  gfx_fillScreen(COL_BG);
+  gfx_setTextSize(2); gfx_setTextColor(COL_AMBER,COL_BG);
+  { const char*t="WiFi CO-PROCESSOR UPDATE"; gfx_setCursor((VW-gfx_textWidth(t))/2,VH/2-70); gfx_print(t); }
+  gfx_setTextSize(1); gfx_setTextColor(COL_LIT,COL_BG);
+  { gfx_setCursor((VW-gfx_textWidth(sub))/2,VH/2-34); gfx_print(sub); }
+  { const char*t="TAP the screen to update   -   wait 25s to skip"; gfx_setTextColor(COL_ACCENT,COL_BG); gfx_setCursor((VW-gfx_textWidth(t))/2,VH/2+2); gfx_print(t); }
+  gfx_flush();
+
+  { uint32_t d0=millis(); while(Touch_ReadFrame()&&millis()-d0<600) delay(10); }
+  bool go=false; uint32_t t0=millis();
+  while(millis()-t0<25000){ uint16_t tx,ty; if(Touch_ReadFrame()&&getTouchXY(&tx,&ty)){ go=true; break; } delay(20); }
+  if(!go){ WiFi.mode(WIFI_OFF); return; }
+
+  File fw; size_t total, done=0;
+  if(useSD){ fw=SD_MMC.open(C6BIN,"r"); if(!fw){ msg("SD read failed","",TFT_RED); delay(2500); WiFi.mode(WIFI_OFF); return; } total=fw.size(); }
+  else total=c6len;
+
+  if(esp_hosted_slave_ota_begin()!=ESP_OK){ if(useSD)fw.close(); msg("C6 OTA begin failed","power-cycle & retry",TFT_RED); delay(3000); WiFi.mode(WIFI_OFF); return; }
+  static uint8_t buf[1400]; bool ok=true; uint32_t last=0;
+  while(done<total){
+    size_t want=total-done; if(want>sizeof buf) want=sizeof buf;
+    int n;
+    if(useSD) n=fw.read(buf,want);
+    else n=(esp_partition_read(c6part,c6off+done,buf,want)==ESP_OK)?(int)want:-1;
+    if(n<=0) break;
+    if(esp_hosted_slave_ota_write(buf,(size_t)n)!=ESP_OK){ ok=false; break; }
+    done+=n;
+    if(millis()-last>120){ last=millis();
+      gfx_fillScreen(COL_BG);
+      gfx_setTextSize(2); gfx_setTextColor(COL_AMBER,COL_BG);
+      { const char*t="UPDATING C6 - DO NOT POWER OFF"; gfx_setCursor((VW-gfx_textWidth(t))/2,VH/2-40); gfx_print(t); }
+      int bw=VW-160,bx=80,by=VH/2; gfx_drawRect(bx,by,bw,16,COL_LIT);
+      gfx_fillRect(bx+2,by+2,(int)((long)(bw-4)*done/(total?total:1)),12,COL_SEL);
+      char pc[16]; snprintf(pc,sizeof pc,"%u%%",(unsigned)(done*100/(total?total:1)));
+      gfx_setTextSize(1); gfx_setTextColor(COL_LIT,COL_BG); gfx_setCursor((VW-gfx_textWidth(pc))/2,by+24); gfx_print(pc);
+      gfx_flush();
+    }
+    yield();
+  }
+  if(useSD) fw.close();
+  esp_hosted_slave_ota_end();
+  if(!ok){ msg("C6 OTA write failed","power-cycle & retry",TFT_RED); delay(3000); ESP.restart(); }
+  msg("C6 updated - activating","rebooting...",COL_ACCENT);
+  esp_hosted_slave_ota_activate();
+  delay(3000);
+  ESP.restart();
+}
+
 void setup(){
   Serial.begin(115200);delay(200);
   clockFromBuild();   // lab15d
@@ -6861,8 +7427,8 @@ void setup(){
   gfx_fillScreen(TFT_BLACK);gfx_flush();
   // 5.9.35: the RAM disk is allocated AFTER the config is read (see below) so
   // BIGDISK= can size it. Nothing between here and there touches g_disk.
-  SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0);delay(100);
-  bool sdok=SD_MMC.begin("/sdcard",true,false,20000);if(!sdok){delay(200);sdok=SD_MMC.begin("/sdcard",true,false,20000);}
+  delay(100);
+  bool sdok=sdMountTry(20000);if(!sdok){SD_MMC.end();delay(200);sdok=sdMountTry(20000);}   // P4R: 4-bit first, 1-bit fallback
   if(!sdok && !sdAccessReq){                          // 5.9.38: is it an exFAT/NTFS card rather than no card?
     int fk=sdPeekForeignFs();
     if(fk==1||fk==2){
@@ -6884,8 +7450,8 @@ void setup(){
     g_sdg.on=g_sdguard_cfg; sdPullups();           // lab14g: SDGUARD= / SDPULLUP= from CONFIG.TXT
     if(g_sd_freq!=20000){           // 5.3.5: SDSPEED=40 opt-in (lab14g: or 10) — remount, fall back to 20 if it won't take
       sdGuardRemove();
-      SD_MMC.end();delay(30);SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0);
-      if(!SD_MMC.begin("/sdcard",true,false,g_sd_freq)){g_sd_freq=20000;SD_MMC.setPins(SD_CLK,SD_CMD,SD_D0);SD_MMC.begin("/sdcard",true,false,20000);}
+      SD_MMC.end();delay(30);
+      if(!sdMountTry(g_sd_freq)){g_sd_freq=20000;SD_MMC.end();delay(30);sdMountTry(20000);}   // P4R
       sdPullups(); _sg=sdGuardInstall();
     }
     // lab14e: reserve the RAM disk FIRST, at its full BIGDISK size, so the library is sized
@@ -6895,6 +7461,7 @@ void setup(){
     if(!g_disk && !diskAlloc()){gfx_setTextColor(TFT_RED,TFT_BLACK);gfx_setCursor(8,160);gfx_print("RAM ALLOC FAILED");gfx_flush();while(1)delay(1000);}
     espnowSetScanCap(g_dongle_cap);
     relayout();                 // apply ROTATE/COMPACT from config before first draw
+    if(!sdAccessReq) c6SelfUpdate();   // P4: one-time C6 WiFi self-update (tap-gated); skipped in SD access so the radio stays down while the PC holds the card
     { // lab14l: "it's alive" screen - up within a second of power-on and held while the library loads
       // (a big card takes ~20 s before the cracktro). Drawn here, after CONFIG.TXT, so it has the right
       // rotation. Anything that follows (scan screen, cover build, TOO BIG, cracktro) simply draws over it.
@@ -6913,7 +7480,7 @@ void setup(){
                                (unsigned)g_bc_prev.failsz,(unsigned)g_bc_prev.failcaps,g_bc_prev.failsz?"":" (none)");
       else gLog("[crash] last boot died (reset=%d) - no breadcrumb (older firmware or power loss)\n",g_bc_prev.reason);
     }
-    gLog("[sd] clock %d kHz, 1-bit, internal pull-ups on CMD/D0 %s | guard %s (drive %d via %d)\n",g_sd_freq,g_sdpullup_cfg?"ON":"OFF",
+    gLog("[sd] clock %d kHz, %s, internal pull-ups on CMD/D0-D3 %s | guard %s (drive %d via %d)\n",g_sd_freq,g_sd_4bit?"4-bit":"1-bit",g_sdpullup_cfg?"ON":"OFF",
          _sg?(g_sdg.on?"ON":"installed, OFF (SDGUARD=OFF)"):"NOT INSTALLED",(int)g_sdg_pdrv,(int)g_sdg_lower);
     gLog("[ramdisk] reserved first: max image %luKB, %lu bytes PSRAM | psram now %u\n",(unsigned long)g_img_max_kb,(unsigned long)TOTAL_SECTORS*512UL,(unsigned)ESP.getFreePsram());
     if(!sdAccessReq){   // 5.9.41-lab14d: SD ACCESS never needs the library - and a too-big card must still be reachable
@@ -6959,7 +7526,7 @@ void setup(){
        (unsigned long)TOTAL_SECTORS*512UL,(unsigned)ESP.getFreePsram());
   build_volume(getOutputFilename(),g_mode==MODE_ADF?ADF_DEFAULT_SIZE:64);
   espnowSetClaimAsk(claimAskUI);   // lab14s: take-over question for a shared dongle
-  if(g_wireless_mode && !g_link_home && !sdAccessReq){espnowBegin();g_espnow_started=true;}   // v5.1: don't arm the radio when booting into SD access — no stray FATFS writes while the PC holds the card
+  if(g_wireless_mode && !g_link_home && !sdAccessReq && g_c6_ready){espnowBegin();g_espnow_started=true;}   // v5.1: not in SD access. P4: only once the C6 is confirmed up to date (c6SelfUpdate)
   if(g_cracktro>=0)drawCracktro(g_cracktro);   // CRACKTRO=OFF/NONE (-1) skips the boot demo entirely
   USB.onEvent(usbEventCB);
   if(sdAccessReq){runSDAccessBoot(sdok);}   // v5.1: SD-access boot mode — never returns (reboots to normal)
@@ -6967,6 +7534,7 @@ void setup(){
   MSC.onRead(onRead);MSC.onWrite(onWrite);MSC.mediaPresent(true);
   MSC.begin(TOTAL_SECTORS,512);g_usb_announced=TOTAL_SECTORS;USB.begin();hardDetach();
   bool bootCar=(g_car_bootmode==1)||(g_car_bootmode==2&&readLastView()==1);   // v4.8.6: CAROUSEL= 0=list / 1=reel / LAST=restore
+  if(g_roundui){ if(g_roundhome) bootCar=true; else g_round_last=1; }         // P4R-2/3: round home = the reel (ROUNDHOME=LIST: the round list)
   if(bootCar&&!g_games.empty())carEnter();else{drawFullUI();gfx_flush();}
   bcSet(BC_READY,(uint32_t)g_games.size());   // lab14e: boot finished - a crash from here on is not a library-load crash
   esp_ota_mark_app_valid_cancel_rollback();   // v5.3: confirm this image booted OK (satisfies the A/B rollback handshake; harmless no-op on non-rollback bootloaders)
@@ -7239,6 +7807,9 @@ static void infoAction(uint8_t act){
                       g_rp_frames=g_rp_draw=g_rp_clear=g_rp_blit=g_rp_sav=g_rp_flush=0; g_rp_t0=millis();
                       drawInfoFull(); break;   // 5.9.33-lab3: live frame breakdown into /gti.log
     case IA_SDSOAK: sdSoakTest(); drawInfoFull(); break;   // lab14g
+    case IA_RIMTEST: rimTouchTest(); drawInfoFull(); break;   // P4R-2
+    case IA_ROUNDUI: g_roundui=!g_roundui; saveConfigKey("ROUNDUI", g_roundui?"ON":"OFF"); drawInfoFull(); break;   // P4R-2 (next reel)
+    case IA_REELSTYLE: g_reelstyle=g_reelstyle?0:1; saveConfigKey("REELSTYLE", g_reelstyle?"MOON":"FLAT"); drawInfoFull(); break;   // P4R-2
     case IA_LISTTILE: g_listtile=!g_listtile; saveConfigKey("LISTTILE", g_listtile?"ON":"OFF"); drawInfoFull(); break;   // 5.9.34-lab4: list cover from the reel tile vs a fresh JPEG decode
     case IA_SSMODE:
       if(g_ss_slides){ g_ss_slides=false; g_ss_matrix=false; saveConfigKey("SSMODE","BOUNCE"); }
@@ -7350,11 +7921,12 @@ static void handleTap(uint16_t px,uint16_t py){
 // ════════════════════════════════════════════════════════════════════════════
 
 void loop(){
+  while(g_tlog_done<g_tlog_n){ gLog("[touch] raw %d,%d (panel 800x800; canvas is x %d-%d, y %d-%d)\n",g_tlog[g_tlog_done][0],g_tlog[g_tlog_done][1],
+        P4DISP_OX,P4DISP_OX+P4DISP_CH-1,P4DISP_OY,P4DISP_OY+P4DISP_CW-1); g_tlog_done++; }   // P4R bring-up
   webPanelService();   // one web client + one queued DAV load per pass (merge step 2)
   { static uint32_t _sgT=0; if(g_sdg.pending_report && millis()-_sgT>2000){ _sgT=millis(); sdGuardReport(false); } }   // lab14g
   if(g_espnow_link_just_established){g_espnow_link_just_established=false;
-    gfx_fillRect(0,0,VW,STATUS_H,0x07E0);gfx_setTextSize(1);gfx_setTextColor(TFT_BLACK,0x07E0);
-    gfx_setCursor(VW/2-57,6);gfx_print(T(L_DONGLE_LINKED));gfx_flush();delay(2000);drawStatusBar();gfx_flush();}
+    uiToast(T(L_DONGLE_LINKED),0x07E0,2000);}   // P4R-2c: round-aware
 
   static uint32_t last=0;if(millis()-last<16){delay(1);return;}last=millis();
   bool frame=Touch_ReadFrame();uint16_t px=0,py=0;bool touch=frame&&getTouchXY(&px,&py);
@@ -7374,6 +7946,12 @@ void loop(){
       svFlushStandalone();
   }
 
+  // ── P4R-3: the round list ──
+  if(g_rl_active){
+    if(touch)g_last_touch_ms=now;
+    rlTick(touch,px,py,now);
+    return;
+  }
   // ── Carousel mode: dedicated tap/drag/coast machine, then bail ──
   if(g_car_active){
     if(touch)g_last_touch_ms=now;

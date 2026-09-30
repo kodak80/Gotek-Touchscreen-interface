@@ -51,7 +51,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15i-P4"   // P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
+#define FW_VERSION "5.9.41-lab15n-P4"   // lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -368,6 +368,8 @@ static void ensureCoverFlags();   // fwd: set each game cover_ok from its cached
 static bool g_listtile=true;      // LISTTILE=
 static uint16_t* carTileEx(int gi,bool mayDecode,bool*okOut);   // fwd (defined with the reel)
 static void carBlit(uint16_t*tile,int srcDim,int cx,int cy,int w,int h,int dim);
+static int g_cb_sx0=0,g_cb_sy0=0,g_cb_sw=0,g_cb_sh=0;   // lab15l: optional source rect inside the tile for carBlit (sw=0 = whole tile, the reel's case)
+static void tilePicRect(const uint16_t*t,int n,int&x0,int&y0,int&w,int&h);   // lab15l: fwd
 
 // A ".png" beside a ".jpg" cover (boxart ships both) — the progressive/failed-JPEG fallback.
 static bool pngSiblingFor(const String& jpgPath, String& out){
@@ -2133,6 +2135,7 @@ static bool g_hotswap=false;    // ON = tapping another disk while loaded swaps 
 static bool g_forceswap=false;  // ON = swap disk bytes in place without the USB eject/re-attach cycle
 static int g_info_x=0,g_info_w=150,g_info_bottom=0;
 static String g_manual_path=""; static int g_manual_bx=0,g_manual_by=0,g_manual_bw=0,g_manual_bh=0;  // v4.9.2 .rtfm book button rect
+static int g_nfo_bx=0,g_nfo_by=0,g_nfo_bw=0,g_nfo_bh=0;   // lab15j: list-panel text area (title + description) - a tap opens the whole .nfo
 // lab15b: 36 bytes, no heap blocks of its own - text + multi-disk lists live in g_gtext (gti_gamestore.h)
 struct GameEntry{AStr name;AStr jpg_path;AStr blurb;DiskList disk_indices;int first_file_idx=0;int disk_count=0;uint16_t plays=0;bool fav=false;bool cover_ok=false;bool nfo_done=false;bool has_manual=false;bool is_hd=false;};   // 5.9.31-lab1: sidecar results cached in PSRAM (see .nfocache) so selecting a game costs ZERO directory walks
 // 5.9.41-lab14b: g_games is a deque, not a vector. At 15k games a vector needs ONE 1.2 MB block
@@ -3423,18 +3426,18 @@ static void drawStatusBar(){
 
 // disk grid geometry (landscape cover) — shared by draw + touch (struct declared up top)
 static DiskGrid diskGrid(int nd){DiskGrid L;L.pages=(nd+DISKS_PER_PAGE-1)/DISKS_PER_PAGE;if(g_disk_page>=L.pages)g_disk_page=0;
-  L.pageStart=g_disk_page*DISKS_PER_PAGE;L.pageEnd=min(L.pageStart+DISKS_PER_PAGE,nd);L.COLS=3;L.dbw=44;L.dbh=20;L.dgap=4;
+  L.pageStart=g_disk_page*DISKS_PER_PAGE;L.pageEnd=min(L.pageStart+DISKS_PER_PAGE,nd);L.COLS=3;L.dgap=8;L.dbw=(COVER_W-16-(L.COLS-1)*L.dgap)/L.COLS;L.dbh=34;   // lab15n P4: 86x34 on the 292 px panel (was 44x20, the 3.5" size)
   L.gridW=L.COLS*L.dbw+(L.COLS-1)*L.dgap;L.gx=max(4,(COVER_W-L.gridW)/2);L.multiPage=(L.pages>1);
-  L.pageBtnH=L.multiPage?16:0;L.pageGap=L.multiPage?4:0;L.gridH=2*L.dbh+L.dgap;L.labelY=INS_Y-L.gridH-L.pageBtnH-L.pageGap-12;L.gridY=L.labelY+10;return L;}
+  L.pageBtnH=L.multiPage?28:0;L.pageGap=L.multiPage?6:0;L.gridH=2*L.dbh+L.dgap;L.labelY=INS_Y-L.gridH-L.pageBtnH-L.pageGap-16;L.gridY=L.labelY+12;return L;}
 static void drawDiskGrid(int nd){DiskGrid L=diskGrid(nd);
   gfx_setTextSize(1);gfx_setTextColor(COL_DIM,COL_PANEL);gfx_setCursor(4,L.labelY);
   gfx_print(L.multiPage?("DISK ("+String(g_disk_page+1)+"/"+String(L.pages)+"):"):"DISK:");
   for(int d=L.pageStart;d<L.pageEnd;d++){int slot=d-L.pageStart,col=slot%L.COLS,row=slot/L.COLS;int bx=L.gx+col*(L.dbw+L.dgap),by=L.gridY+row*(L.dbh+L.dgap);
     bool isSel=d==g_disk_sel,isLd=(g_loaded_game_idx==g_sel&&g_loaded_disk_idx==d);uint16_t bc=isLd?COL_GREEN:(isSel?COL_AMBER:COL_BAR);
     gfx_fillRoundRect(bx,by,L.dbw,L.dbh,4,bc);gfx_drawRoundRect(bx,by,L.dbw,L.dbh,4,isSel?COL_AMBER:COL_DIM);
-    gfx_setTextColor(isLd||isSel?TFT_BLACK:COL_LIT,bc);String dl="D"+String(d+1);gfx_setCursor(bx+(L.dbw-gfx_textWidth(dl))/2,by+(L.dbh-8)/2);gfx_print(dl);}
-  if(L.multiPage){int pby=L.gridY+L.gridH+L.pageGap;gfx_fillRoundRect(L.gx,pby,L.gridW,L.pageBtnH,4,COL_ACCENT);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
-    String pl=(g_disk_page+1<L.pages)?("MORE D"+String(L.pageEnd+1)+"+  >"):("<  BACK TO D1");gfx_setCursor(L.gx+(L.gridW-gfx_textWidth(pl))/2,pby+(L.pageBtnH-8)/2);gfx_print(pl);}}
+    gfx_setTextSize(2);gfx_setTextColor(isLd||isSel?TFT_BLACK:COL_LIT,bc);String dl="D"+String(d+1);gfx_setCursor(bx+(L.dbw-gfx_textWidth(dl))/2,by+(L.dbh-16)/2);gfx_print(dl);gfx_setTextSize(1);}   // lab15n P4: size 2
+  if(L.multiPage){int pby=L.gridY+L.gridH+L.pageGap;gfx_fillRoundRect(L.gx,pby,L.gridW,L.pageBtnH,6,COL_ACCENT);gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
+    String pl=(g_disk_page+1<L.pages)?("MORE D"+String(L.pageEnd+1)+"+  >"):("<  BACK TO D1");gfx_setCursor(L.gx+(L.gridW-gfx_textWidth(pl))/2,pby+(L.pageBtnH-16)/2);gfx_print(pl);gfx_setTextSize(1);}}
 // disk stepper (portrait cover / compact) — < Dn/total >
 static int g_step_x=0,g_step_y=0,g_step_w=0,g_step_h=0;static bool g_step_on=false;
 static void drawDiskStepper(int x,int y,int w,int h,int nd){g_step_on=true;g_step_x=x;g_step_y=y;g_step_w=w;g_step_h=h;
@@ -3488,6 +3491,7 @@ static void drawMagnifier(int cx,int cy,uint16_t col){
 
 static void drawCoverPanel(){
   g_manual_bw=0;   // v4.9.2: cleared each draw; set below only if this game has a .rtfm
+  g_nfo_bw=0;      // lab15j: same for the .nfo text tap area (set only when a description is drawn)
   if(!COVER_ON)return;
   gfx_fillRect(COVER_X,COVER_Y,COVER_W,COVER_H,COL_PANEL);if(g_games.empty())return;
   auto&game=g_games[g_sel];
@@ -3510,24 +3514,34 @@ static void drawCoverPanel(){
     }
     cachedHasSav=savBadgeFor(_fp);}   // lab14i: from the save list (kept current when the GTi writes a save) - no card lookup
   // Cover art
+  int ax=COVER_ART_X,ay=COVER_ART_Y,aw=COVER_ART_W,ah=COVER_ART_H;   // lab15l: the frame; shrinks to hug a tile picture
   gfx_fillRoundRect(COVER_ART_X,COVER_ART_Y,COVER_ART_W,COVER_ART_H,5,COL_BAR);
   gfx_drawRoundRect(COVER_ART_X-1,COVER_ART_Y-1,COVER_ART_W+2,COVER_ART_H+2,6,COL_ACCENT);
   {bool _drew=false; uint32_t _cv0=micros();
    if(game.jpg_path.length()>0&&game.jpg_path!="?"){
      if(g_listtile){            // 5.9.34-lab4: 45 KB pre-decoded tile instead of a fresh ~500 KB JPEG decode, every single selection change
        bool _ok=false; uint16_t*_t=carTileEx(g_sel,true,&_ok);
-       if(_t&&_ok){int _s=min(COVER_ART_W-4,COVER_ART_H-4);   // the tile is square with its letterbox baked in, so fit the largest square
-         carBlit(_t,CAR_TILE,COVER_ART_X+COVER_ART_W/2,COVER_ART_Y+COVER_ART_H/2,_s,_s,0);_drew=true;}
+       if(_t&&_ok){
+         // lab15l: cut the tile's letterbox off and fit the picture itself as big as the frame allows (was: the whole
+         // square tile, so a 4:3 cover showed at ~92x69 inside a 142x96 frame). Then the frame is redrawn around it.
+         int px,py,pw,ph; tilePicRect(_t,CAR_TILE,px,py,pw,ph);
+         int bw=COVER_ART_W-4,bh=COVER_ART_H-4,dw=bw,dh=(ph*bw)/pw; if(dh>bh){dh=bh;dw=(pw*bh)/ph;} if(dw<1)dw=1; if(dh<1)dh=1;
+         aw=dw+4;ah=dh+4;ax=COVER_ART_X+(COVER_ART_W-aw)/2;ay=COVER_ART_Y+(COVER_ART_H-ah)/2;
+         gfx_fillRect(COVER_ART_X-1,COVER_ART_Y-1,COVER_ART_W+2,COVER_ART_H+2,COL_PANEL);
+         gfx_fillRoundRect(ax,ay,aw,ah,5,COL_BAR); gfx_drawRoundRect(ax-1,ay-1,aw+2,ah+2,6,COL_ACCENT);
+         g_cb_sx0=px;g_cb_sy0=py;g_cb_sw=pw;g_cb_sh=ph;
+         carBlit(_t,CAR_TILE,ax+aw/2,ay+ah/2,dw,dh,0);
+         g_cb_sw=0;g_cb_sh=0;_drew=true;}
      }
      if(!_drew)_drew=gfx_drawJpgFile(game.jpg_path,COVER_ART_X+2,COVER_ART_Y+2,COVER_ART_W-4,COVER_ART_H-4);
    }
    if(g_reelprof)gLog("[cover] %s art %luus for %s\n",g_listtile?"tile":"jpeg",(unsigned long)(micros()-_cv0),game.name.c_str());
    if(!_drew){char ib[2]={(char)toupper(game.name.charAt(0)),0};gfx_setTextSize(2);gfx_setTextColor(COL_LIT,COL_BAR);gfx_setCursor(COVER_ART_X+COVER_ART_W/2-6,COVER_ART_Y+COVER_ART_H/2-8);gfx_print(ib);}}
   // v4.8.0: floppy icon — this game has a save-copy (INSERT will boot the save)
-  if(cachedHasSav)drawSaveFloppy(COVER_ART_X+3,COVER_ART_Y+3);
-  if(cachedHD){drawHDChip(COVER_ART_X+COVER_ART_W-23,COVER_ART_Y+3);drawNoA500(COVER_ART_X+15,COVER_ART_Y+COVER_ART_H-15,13,TFT_RED);}   // v4.9 HD markers
+  if(cachedHasSav)drawSaveFloppy(ax+3,ay+3);                     // lab15l: markers follow the (possibly smaller) frame
+  if(cachedHD){drawHDChip(ax+aw-23,ay+3);drawNoA500(ax+15,ay+ah-15,13,TFT_RED);}   // v4.9 HD markers
   if(cachedManual.length()){   // v4.9.2: book button, bottom-right of the cover art — only when a .rtfm exists
-    g_manual_bw=26;g_manual_bh=22;g_manual_bx=COVER_ART_X+3;g_manual_by=COVER_ART_Y+(COVER_ART_H-g_manual_bh)/2;g_manual_path=cachedManual;   // v4.9.3: bigger + left edge, clear of the fav/HD corners
+    g_manual_bw=26;g_manual_bh=22;g_manual_bx=ax+3;g_manual_by=ay+(ah-g_manual_bh)/2;g_manual_path=cachedManual;   // v4.9.3: bigger + left edge, clear of the fav/HD corners
     gfx_fillRoundRect(g_manual_bx,g_manual_by,g_manual_bw,g_manual_bh,3,COL_ACCENT);gfx_drawRoundRect(g_manual_bx,g_manual_by,g_manual_bw,g_manual_bh,3,COL_AMBER);
     drawBookIcon(g_manual_bx+g_manual_bw/2,g_manual_by+g_manual_bh/2,COL_LIT);
   }
@@ -3539,12 +3553,14 @@ static void drawCoverPanel(){
     int psz=g_font+1;int bsz=(psz>1?psz-1:1);int ty=COVER_ART_Y+COVER_ART_H+6;gfx_setTextSize(psz);   // P4: title tracks FONT; blurb one step smaller
     ty=drawWrapped(6,ty,game.name,COVER_W-12,10*psz,2,cb,COL_LIT,COL_PANEL);
     gfx_setTextSize(bsz);
-    if(cachedNfoBlurb.length()>0)drawWrapped(6,ty+2,cachedNfoBlurb,COVER_W-12,9*bsz+1,16,cb,COL_DIM,COL_PANEL);
+    if(cachedNfoBlurb.length()>0){int te=drawWrapped(6,ty+2,cachedNfoBlurb,COVER_W-12,9*bsz+1,16,cb,COL_DIM,COL_PANEL);
+      g_nfo_bx=COVER_X;g_nfo_by=COVER_ART_Y+COVER_ART_H+2;g_nfo_bw=COVER_W;g_nfo_bh=max(min(te+2,cb),g_nfo_by+20)-g_nfo_by;}   // lab15j: title + description = tap target
     if(game.disk_count>1)drawDiskGrid(game.disk_count);
   }else{
     int rx=COVER_ART_X+COVER_ART_W+8,rw=VW-rx-6;int ty=COVER_ART_Y;gfx_setTextSize(1);
     ty=drawWrapped(rx,ty,game.name,rw,10,3,COVER_ART_Y+COVER_ART_H,COL_LIT,COL_PANEL);
-    if(cachedNfoBlurb.length()>0)drawWrapped(rx,ty+3,cachedNfoBlurb,rw,9,6,COVER_ART_Y+COVER_ART_H+2,COL_DIM,COL_PANEL);
+    if(cachedNfoBlurb.length()>0){drawWrapped(rx,ty+3,cachedNfoBlurb,rw,9,6,COVER_ART_Y+COVER_ART_H+2,COL_DIM,COL_PANEL);
+      g_nfo_bx=rx-4;g_nfo_by=COVER_ART_Y;g_nfo_bw=VW-g_nfo_bx;g_nfo_bh=COVER_ART_H+2;}   // lab15j: text beside the cover = tap target
     if(game.disk_count>1)drawDiskStepper(8,COVER_Y+COVER_H-70,VW-16,26,game.disk_count);   // full-width disk row above INSERT
     else{gfx_setTextSize(1);gfx_setTextColor(cachedHD?COL_ORANGE:COL_DIM,COL_PANEL);gfx_setCursor(12,COVER_Y+COVER_H-58);gfx_print(cachedHD?"HD 1.76MB - needs A3000/A4000":g_mode==MODE_ADF?"Single disk  -  ADF 880KB":g_mode==MODE_DSK?"Single disk  -  DSK":"Single disk");}
   }
@@ -4299,20 +4315,47 @@ static void carMicroEnsure(){
 // INNER loop walks whichever axis is contiguous in the physical framebuffer for
 // the current rotation, writing straight into the row. Same pixels, same output.
 static int g_cb_sxm[CAR_TILE+8],g_cb_sym[CAR_TILE+8];   // UI core only — drawCarousel is never re-entered
+// lab15l: the picture inside a square tile. Tiles are aspect-fit with a flat letterbox (the bar colour at build
+// time), so rows/columns that are entirely the corner colour are letterbox. No letterbox (both corners differ, or
+// the picture reaches the corner) = the whole tile. ~22k compares on a 150 px tile, once per selection.
+static void tilePicRect(const uint16_t*t,int n,int&x0,int&y0,int&w,int&h){
+  x0=0;y0=0;w=n;h=n; if(!t||n<16)return;
+  const uint16_t pad=t[0]; if(t[(size_t)n*n-1]!=pad)return;
+  auto rowPad=[&](int y){const uint16_t*r=t+(size_t)y*n;for(int x=0;x<n;x++)if(r[x]!=pad)return false;return true;};
+  auto colPad=[&](int x){for(int y=0;y<n;y++)if(t[(size_t)y*n+x]!=pad)return false;return true;};
+  int top=0,bot=n-1,lft=0,rgt=n-1;
+  while(top<bot&&rowPad(top))top++; while(bot>top&&rowPad(bot))bot--;
+  while(lft<rgt&&colPad(lft))lft++; while(rgt>lft&&colPad(rgt))rgt--;
+  if(rgt-lft+1<8||bot-top+1<8)return;   // (almost) all one colour - keep the whole tile
+  // lab15m: then trim black borders that are part of the picture itself - most Amiga screenshots are a 320x200 game in a
+  // PAL 256-line (or overscan) screen, so the cover carries black bands the letterbox pass can't see. A row/column counts
+  // when every pixel is near-black (JPEG noise allowed); at most 1/6 is trimmed from each side (PAL bands are ~11%), so a dark scene keeps most of its picture.
+  auto blk=[](uint16_t c){return ((c>>11)&31)<=3&&((c>>5)&63)<=6&&(c&31)<=3;};
+  auto rowBlk=[&](int y){const uint16_t*r=t+(size_t)y*n;for(int x=lft;x<=rgt;x++)if(!blk(r[x]))return false;return true;};
+  auto colBlk=[&](int x){for(int y=top;y<=bot;y++)if(!blk(t[(size_t)y*n+x]))return false;return true;};
+  const int capV=(bot-top+1)/6, capH=(rgt-lft+1)/6;
+  for(int k=0;k<capV&&rowBlk(top);k++)top++;  for(int k=0;k<capV&&rowBlk(bot);k++)bot--;
+  for(int k=0;k<capH&&colBlk(lft);k++)lft++;  for(int k=0;k<capH&&colBlk(rgt);k++)rgt--;
+  x0=lft;y0=top;w=rgt-lft+1;h=bot-top+1;
+}
 static void carBlit(uint16_t*tile,int srcDim,int cx,int cy,int w,int h,int dim){
   if(w<=0||h<=0||srcDim<=0)return;
   int x0=cx-w/2,y0=cy-h/2;
   if(w>CAR_TILE+8||h>CAR_TILE+8||!framebuffer){          // paranoia fallback: the old, slow, always-correct path
-    for(int dy=0;dy<h;dy++){int sy=dy*srcDim/h;
-      for(int dx=0;dx<w;dx++){int sx=dx*srcDim/w;
+    for(int dy=0;dy<h;dy++){int sy=g_cb_sw?g_cb_sy0+dy*g_cb_sh/h:dy*srcDim/h;
+      for(int dx=0;dx<w;dx++){int sx=g_cb_sw?g_cb_sx0+dx*g_cb_sw/w:dx*srcDim/w;
         gfx_drawPixel(x0+dx,y0+dy,carDim(tile?tile[sy*srcDim+sx]:COL_BAR,dim));}}
     return;
   }
   int dx0=max(0,g_clip_x0-x0),dx1=min(w,g_clip_x1-x0);   // clip once, in virtual space
   int dy0=max(0,g_clip_y0-y0),dy1=min(h,g_clip_y1-y0);
   if(dx0>=dx1||dy0>=dy1)return;
+  if(g_cb_sw){ for(int dx=dx0;dx<dx1;dx++)g_cb_sxm[dx]=g_cb_sx0+(dx*g_cb_sw)/w;      // lab15l: part of the tile
+               for(int dy=dy0;dy<dy1;dy++)g_cb_sym[dy]=g_cb_sy0+(dy*g_cb_sh)/h; }
+  else{
   for(int dx=dx0;dx<dx1;dx++)g_cb_sxm[dx]=(dx*srcDim)/w;
   for(int dy=dy0;dy<dy1;dy++)g_cb_sym[dy]=(dy*srcDim)/h;
+  }
   const uint16_t flat=swap16(carDim(COL_BAR,dim));
   if(g_rot==0||g_rot==2){                                // landscape: virtual Y is the contiguous axis
     for(int dx=dx0;dx<dx1;dx++){
@@ -6090,7 +6133,7 @@ static int rtfmSectionMenu(const std::vector<String>& sec){         // full-scre
     delay(12);
   }
 }
-static void doManual(const String& path){
+static void doManual(const String& path,const char* title=nullptr){   // lab15j: title (e.g. "NFO"); default = MANUAL
   String raw="";
   { File f=SD_MMC.open(path,FILE_READ);
     if(f){ static const char* LAT="AAAAAAECEEEEIIIIDNOOOOOxOUUUUYPsaaaaaaeceeeeiiiidnooooo/ouuuuypy";
@@ -6105,7 +6148,7 @@ static void doManual(const String& path){
         // any other high/control byte: dropped
       } f.close(); }
   }
-  if(!raw.length())raw="(no manual text)";
+  if(!raw.length())raw=title?"(no text)":"(no manual text)";
   const int margin=8, topH=22, botH=30;
   const int areaTop=topH+3, areaBot=VH-botH-2, maxW=VW-2*margin;
   int sz=g_name_sz, lineH=8*sz+(sz>=2?5:3);
@@ -6142,7 +6185,7 @@ static void doManual(const String& path){
         gfx_fillRect(VW-4,areaTop,2,trkH,COL_PANEL); gfx_fillRect(VW-4,thY,2,thH,COL_AMBER); }
       bool liteBar=(inkFor(COL_BAR)==TFT_BLACK);
       gfx_fillRect(0,0,VW,topH,COL_BAR); gfx_setTextSize(1); gfx_setTextColor(liteBar?TFT_BLACK:COL_AMBER,COL_BAR);
-      gfx_setCursor(6,7); gfx_print(T(L_MANUAL));
+      gfx_setCursor(6,7); gfx_print(title?title:T(L_MANUAL));
       { int pct=ms>0?(int)(scroll*100/ms):100; String s=String(pct)+"%"; gfx_setTextColor(liteBar?COL_MID:COL_DIM,COL_BAR); gfx_setCursor(VW/2-gfx_textWidth(s)/2,7); gfx_print(s); }   // v2: % moved to top bar
       { String nm=g_games.empty()?String(""):g_games[g_sel].name; while(gfx_textWidth(nm)>VW/2-24&&nm.length()>1)nm=nm.substring(0,nm.length()-1);
         gfx_setTextColor(liteBar?COL_MID:COL_DIM,COL_BAR); gfx_setCursor(VW-gfx_textWidth(nm)-6,7); gfx_print(nm); }
@@ -7319,6 +7362,13 @@ static void handleTap(uint16_t px,uint16_t py){
   // ── v4.9.2: book button on the cover — opens the .rtfm manual full-screen ──
   if(!g_info_showing&&g_manual_bw&&g_manual_path.length()&&px>=(uint16_t)g_manual_bx&&px<(uint16_t)(g_manual_bx+g_manual_bw)&&py>=(uint16_t)g_manual_by&&py<(uint16_t)(g_manual_by+g_manual_bh)){
     doManual(g_manual_path); drawFullUI(); gfx_flush(); return; }
+  // ── lab15j: tap the game's text (title + description) — opens the whole .nfo full-screen in the manual reader ──
+  // The list only keeps the first 400 characters (NFO_BLURB_MAX). The file is found ONCE, on the tap (one by-name
+  // lookup, R7: never while scrolling) and read by doManual (up to 16 KB, same text clean-up as the .rtfm).
+  if(!g_info_showing&&g_nfo_bw&&!g_games.empty()&&px>=(uint16_t)g_nfo_bx&&px<(uint16_t)(g_nfo_bx+g_nfo_bw)&&py>=(uint16_t)g_nfo_by&&py<(uint16_t)(g_nfo_by+g_nfo_bh)){
+    String np; if(findNFOFor(g_files[g_games[g_sel].first_file_idx],np)){ gLog("[nfo] open %s\n",np.c_str()); doManual(np,"NFO"); drawFullUI(); gfx_flush(); }
+    else gLog("[nfo] no .nfo file found for %s\n",g_games[g_sel].name.c_str());
+    return; }
 
   // ── A-Z bar (letters + toggle button) — suppressed where the INFO panel covers it ──
   if(px>=AZ_X&&py>=AZ_TOP&&py<(uint16_t)(AZ_TOP+AZ_H)&&!(g_info_showing&&px<(uint16_t)(g_info_x+g_info_w)&&py<(uint16_t)g_info_bottom)){
