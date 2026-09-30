@@ -19,12 +19,20 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.41-lab15m",
+        "ch": "beta",
+        "date": "2026-09-30",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15m-update.bin",
+        "note": "Latest (30 Sep). Same as lab15i, plus: the cover picture in the list fills its frame - the empty bands round a cover (letterbox and black PAL borders) are cut off and the frame hugs the picture; and tapping a game's text (title + description) in the list opens its whole .nfo full-screen in the manual reader (drag to scroll, tap to close). Built with ESP32 core 3.3.12.",
+        "latest": true
+      },
+      {
         "v": "5.9.41-lab15i",
         "ch": "beta",
         "date": "2026-09-29",
         "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15i-update.bin",
-        "note": "Latest (29 Sep). Same as lab15h, plus: each wireless dongle keeps its OWN save file (Game.sav.XXXX.<ext>, XXXX = 4 characters from the dongle's ID; with Webby-1.6.8 they match its Wi-Fi name GotekOMEGA-XXXX). So the Amiga on the GTi's cable and an Amiga on a dongle can play the same game without mixing their saves. Cable saves stay Game.sav.<ext>. Works with any Webby. Built with ESP32 core 3.3.12.",
-        "latest": true
+        "note": "(29 Sep) Same as lab15h, plus: each wireless dongle keeps its OWN save file (Game.sav.XXXX.<ext>, XXXX = 4 characters from the dongle's ID; with Webby-1.6.8 they match its Wi-Fi name GotekOMEGA-XXXX). So the Amiga on the GTi's cable and an Amiga on a dongle can play the same game without mixing their saves. Cable saves stay Game.sav.<ext>. Works with any Webby. Built with ESP32 core 3.3.12.",
+        "latest": false
       },
       {
         "v": "5.9.41-lab15h",

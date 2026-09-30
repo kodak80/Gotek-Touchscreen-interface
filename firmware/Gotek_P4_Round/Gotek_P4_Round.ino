@@ -53,7 +53,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15r-P4R"   // P4R-3: ROUND LIST - the games as a wheel (middle row selected, rows follow the edge), A-Z round the right rim (tap or slide), rim INSERT/REEL/CONFIG/LIB; everything that used to fall back to the square list (leaving Settings, rescan, library switch) comes home to the round reel/list | P4R-2c: the round reel stays round - save toasts, "dongle linked", SAVING GAME, the end of a disk load/eject (also from the web UI) and the dongle take-over question now come back to (or show on) the round reel instead of leaving the square list on screen | P4R-2b: FIX - a square screen shown after the round reel (Settings, list) no longer keeps the reel's leftovers round the edge | P4R-2: ROUND REEL - the reel uses the whole round glass (800x800): REELSTYLE=MOON (covers on an arc across the top, default) or FLAT, status round the rim, LIST/CONFIG/source/ROLL as curved rim buttons, boots into the reel (ROUNDHOME=LIST for the old list), ROUNDUI=OFF = the square reel; Settings: REEL STYLE, ROUND UI; TEST TOOLS: RIM TOUCH TEST | P4R: Waveshare 3.4C ROUND 800x800 bring-up (4.3" P4 15n + JD9365 panel, GT9271 touch, 4-bit SD; square UI inside the circle) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
+#define FW_VERSION "5.9.41-lab16h-P4R"   // P4R-7e: DSK art - the rainbow stripe left of centre below INSERT, the colour keys right of centre, same height | P4R-7d: the DSK rainbow stripe moved inside the circle (16f showed only a red sliver), colour keys 40 px left | P4R-7c: AMIGA theme with the DSK library: a Spectrum-style rainbow stripe and CPC-style colour keys in the background (the ball stays ADF) | P4R-6h: INSERT on the round screens: "Loading" (and too big / failed / multicast) and the dongle take-over question are round cards in the middle of the reel/list/Settings instead of the square panel | P4R-7b: the AMIGA theme's background ball is a solid red/white Boing ball (no blue tint), resting low on the right with its floor shadow | P4R-5: ROUND READER - the .nfo/manual reader uses the round glass (text column in the middle, title + % round the top, a dotted page arc on the right rim, TOP/CLOSE/SIZE/JUMP rim buttons); the last Settings option tapped has a red outline; AMIGA theme blue calmer (#1E3A5F) | P4R-7: AMIGA THEME (Workbench blue/white/black/orange); with the ADF library the round reel, list and Settings sit on a big faint Boing ball, and the screensaver is the Boing demo (spinning ball bouncing in the purple-grid room, with its shadow) | P4R-6g: the boot screen (OMEGAWARE / GTi) shows the firmware version small under GTi, on the round glass | P4R-6f: rim button labels CURVE along the rim (each letter turned to the circle, tops to the centre, edges smoothed) - they fit their buttons at 3x | P4R-6e: rim button labels back to crisp 3x letters, set 2 px apart instead of 3 (CONFIG 7% narrower, even strokes; 2.7x looked uneven) | P4R-6d: rim button labels 10% smaller (2.7x, new fractional text size) - CONFIG no longer spills past its button; Settings hides COMPACT, REEL BORDER and LIST TILE while ROUND UI is on (they only change the square screens) | P4R-6c: the reel's rim buttons in the same places and colours as the list's - from 6 o'clock round to 9: action (ROLL / INSERT), view (LIST / REEL), CONFIG, filter (ALL-FAV-MOST / ADF-DSK-GEN) | P4R-6b (from Mez's photos): round list side rows get a visible pill on every theme (the background lifted towards the text colour), rim button labels size 3, the NDSK badge size 2 | P4R-6a: ROUND SCREENSAVER + ROUND SCAN/BUILD SCREENS - SCANNING, BUILDING and "Preparing covers" (a library switch, a rescan, boot) use the whole round glass; all three savers use the whole round glass: the bounce bounces off the circle's edge (bigger pictures and names), MATRIX rain fills the circle, the SLIDES pictures sit in the middle, decoded bigger | P4R-4b: ROUND LIST AS PILLS - every row a pill with a small cover (like Settings), dimmer away from the middle, widths follow the circle; the loaded game green | P4R-4: ROUND SETTINGS - the Settings rows as pills down the middle of the glass (as wide as the circle allows), < > page circles at 9 and 3 o'clock, CLOSE on the rim at 6, title round the top; toasts and "Loading library" show on the round screens | P4R-3: ROUND LIST - the games as a wheel (middle row selected, rows follow the edge), A-Z round the right rim (tap or slide), rim INSERT/REEL/CONFIG/LIB; everything that used to fall back to the square list (leaving Settings, rescan, library switch) comes home to the round reel/list | P4R-2c: the round reel stays round - save toasts, "dongle linked", SAVING GAME, the end of a disk load/eject (also from the web UI) and the dongle take-over question now come back to (or show on) the round reel instead of leaving the square list on screen | P4R-2b: FIX - a square screen shown after the round reel (Settings, list) no longer keeps the reel's leftovers round the edge | P4R-2: ROUND REEL - the reel uses the whole round glass (800x800): REELSTYLE=MOON (covers on an arc across the top, default) or FLAT, status round the rim, LIST/CONFIG/source/ROLL as curved rim buttons, boots into the reel (ROUNDHOME=LIST for the old list), ROUNDUI=OFF = the square reel; Settings: REEL STYLE, ROUND UI; TEST TOOLS: RIM TOUCH TEST | P4R: Waveshare 3.4C ROUND 800x800 bring-up (4.3" P4 15n + JD9365 panel, GT9271 touch, 4-bit SD; square UI inside the circle) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -224,6 +224,8 @@ static uint16_t *framebuffer = NULL;   // P4: the 480x800 compose buffer (PSRAM)
 static uint16_t* g_rfb=NULL;            // 800x800 round compose (PSRAM, allocated on first use)
 static bool g_rt=false;                 // gfx layer is drawing into g_rfb
 static bool g_touch_round=false;        // the last frame shown was a round screen
+static bool     g_rbg_live=false;        // P4R-7: this round frame started from a background picture (the AMIGA theme's ball)...
+static uint16_t g_rbg_key=0;             //   ...so text whose background is this colour is drawn see-through
 static int  g_rTouchX=0,g_rTouchY=0;    // last touch in round (upright panel) coordinates
 static int  g_rRawX=0,g_rRawY=0;        // ...and as the digitizer reported it (for the rim test log)
 static int  g_rt_saveW=0,g_rt_saveH=0;
@@ -257,6 +259,7 @@ static bool roundBegin(){
   g_rt=true; gW=RW; gH=RW; g_clip_x0=0; g_clip_y0=0; g_clip_x1=RW; g_clip_y1=RW; return true;
 }
 static void roundEnd(){
+  g_rbg_live=false;   // P4R-7
   if(!g_rt) return;
   g_rt=false; gW=g_rt_saveW; gH=g_rt_saveH; g_clip_x0=0; g_clip_y0=0; g_clip_x1=gW; g_clip_y1=gH;
 }
@@ -298,15 +301,29 @@ static void gfx_fillRoundRect(int x,int y,int w,int h,int r,uint16_t c){gfx_fill
 static void gfx_drawRoundRect(int x,int y,int w,int h,int r,uint16_t c){gfx_hline(x+r,y,w-2*r,c);gfx_hline(x+r,y+h-1,w-2*r,c);gfx_vline(x,y+r,h-2*r,c);gfx_vline(x+w-1,y+r,h-2*r,c);}
 
 static void gfx_setTextColor(uint16_t f,uint16_t b){text_fg=f;text_bg=b;}
-static void gfx_setTextSize(int s){text_size=s<1?1:s;}
+static int text_t10=0;   // P4R-6d: text size in tenths (e.g. 27 = 2.7x) - 0 = the whole-number size
+static void gfx_setTextSize(int s){text_size=s<1?1:s;text_t10=0;}
+static void gfx_setTextSizeT(int t10){if(t10<10)t10=10;text_t10=t10;text_size=t10/10;}   // P4R-6d
 static void gfx_setCursor(int x,int y){text_x=x;text_y=y;}
-static int gfx_textWidth(const String&s){return s.length()*6*text_size;}
+static int gfx_textWidth(const String&s){return text_t10?(int)s.length()*((6*text_t10+5)/10):s.length()*6*text_size;}
 
 static void gfx_print(const String&text){
+  if(text_t10){   // P4R-6d: fractional size - each font pixel becomes a (t10/10)-sized block, edges rounded to whole pixels
+    const int adv=(6*text_t10+5)/10;
+    for(unsigned i=0;i<text.length();i++){char c=text[i];if(c<32||c>126)continue;
+      const uint8_t*data=font6x8[c-32];
+      for(int col=0;col<6;col++){uint8_t bits=pgm_read_byte(&data[col]); int x0=text_x+(col*text_t10)/10, x1=text_x+((col+1)*text_t10)/10;
+        for(int row=0;row<8;row++){ int y0=text_y+(row*text_t10)/10, y1=text_y+((row+1)*text_t10)/10;
+          if(!(bits&(1<<row))&&g_rbg_live&&text_bg==g_rbg_key) continue;   // P4R-7: see-through over the background picture
+          gfx_fillRect(x0,y0,x1-x0,y1-y0,(bits&(1<<row))?text_fg:text_bg);}}
+      text_x+=adv;}
+    return;
+  }
   for(unsigned i=0;i<text.length();i++){char c=text[i];if(c<32||c>126)continue;
     const uint8_t*data=font6x8[c-32];
     for(int col=0;col<6;col++){uint8_t bits=pgm_read_byte(&data[col]);
       for(int row=0;row<8;row++){uint16_t color=(bits&(1<<row))?text_fg:text_bg;
+        if(!(bits&(1<<row))&&g_rbg_live&&text_bg==g_rbg_key) continue;   // P4R-7: see-through over the background picture
         for(int dy=0;dy<text_size;dy++)for(int dx=0;dx<text_size;dx++)
           gfx_drawPixel(text_x+col*text_size+dx,text_y+row*text_size+dy,color);}}
     text_x+=6*text_size;}
@@ -1304,11 +1321,12 @@ static void drawScanFrame(int count){
   if((count%512)==0)gLog("[scan] files=%d int=%u psram=%u\n",count,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
   if(!g_scan_painted){                            // full paint: background, ball, label
     g_scan_painted=true;
-    gfx_fillScreen(0x1082);
+    if(g_roundui)roundBegin(); gfx_fillScreen(0x1082);   // P4R-6a: scan/build progress on the whole round glass
     drawScanBall(gW/2,gH/2-46);
     gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
     {const char*t="SCANNING CARD";int tw=gfx_textWidth(t);gfx_setCursor((gW-tw)/2,gH/2-20);gfx_print(t);}
   }
+  if(g_roundui)roundBegin();                      // P4R-6a: the counter goes on the round screen too
   gfx_fillRect(gW/2-110,gH/2+14,220,20,0x1082);   // counter only
   gfx_setTextSize(2);gfx_setTextColor(0x9BD6,0x1082);
   String msg=String(count)+" files";
@@ -1712,7 +1730,7 @@ static void scanImagesAnimated(PathList& out){
   String dir=g_mode==MODE_ADF?"/ADF":g_mode==MODE_DSK?"/DSK":"/GENERIC";if(g_categories&&g_libpath.length())dir+=g_libpath;String ext=g_mode==MODE_ADF?".ADF":".DSK";
   // Draw the scan screen ONCE, here. drawScanFrame() then only repaints the
   // counter, so a RESCAN gets immediate feedback without a second full paint.
-  gfx_fillScreen(0x1082);
+  if(g_roundui)roundBegin(); gfx_fillScreen(0x1082);   // P4R-6a: scan/build progress on the whole round glass
   gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
   {const char*s="SCANNING";int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-60);gfx_print(s);}
   drawScanBall(gW/2,gH/2-30);                     // static decoration - no longer animated
@@ -2144,6 +2162,8 @@ static bool g_ss_claude=false;   // /screensaver/ exists but holds no JPGs -> bo
 static uint32_t g_last_touch_ms=0;
 static uint16_t* g_ss_buf=NULL; static int g_ss_w=0, g_ss_h=0;
 #define SS_MAX      150        // longest side of the bouncing image (virtual-canvas px)
+#define SS_MAX_R    260        // P4R-6a: ...on the round 800x800 glass
+static bool g_ssR=false;       // P4R-6a: the slideshow is running on the round glass
 #define SS_IDLE_MS  600000UL   // 10 min idle (browsing / nothing loaded)
 #define SS_LOAD_MS  120000UL   // 2 min idle once a game is loaded (showcase)
 static uint32_t g_ss_idle_ms=SS_IDLE_MS, g_ss_load_ms=SS_LOAD_MS;   // hidden SS_IDLE=/SS_LOAD= override (seconds)
@@ -2449,8 +2469,12 @@ static const Theme THEMES[]={
   {"SYNTH", 0x1001,0x2003,0x3005,0x5008,0x2003,0x600C,0x900F,0xC09F,0x4BE0,0xFC1F,0xE81F,0xA01F,0x2003,0x8010,0x5008,0xE81F},
   {"GOLD",  0x1000,0x1800,0x2000,0x4200,0x1800,0x5240,0x7440,0xC5A0,0x0560,0xFCA0,0xFCC0,0xFCA0,0x1800,0x3200,0x3200,0xFCC0},
   {"OMEGA", 0x18C5,0x18E6,0x10A5,0x3A2E,0x2968,0x52CE,0x94B4,0xC63A,0x3ED0,0xFC67,0xFE2B,0x46FC,0x1126,0x4557,0x2148,TFT_WHITE},
+  // P4R-7: AMIGA - Workbench 1.3: blue #0055AA, white, black, orange #FF8800 (+ a lighter orange for selection).
+  //   action/loaded = orange, view = black, CONFIG/accent = white, filter/selection = light orange.
+  {"AMIGA", 0x19CB,0x1168,0x1107,0x2AD1,0x1107,0x6C34,0xB61A,0xFFFF,0xFC40,0xFC40,0xFD46,0x0000,0x1168,0xFFFF,0x1168,TFT_WHITE},   // P4R-5: a deeper, calmer blue (#1E3A5F; Mez: "not so blue")
 };
-static const int NUM_THEMES=7;static int g_theme_idx=0;   // +OMEGA (Dimmy); default stays 0=NAVY
+#define AMIGA_THEME 7
+static const int NUM_THEMES=8;static int g_theme_idx=0;   // +OMEGA (Dimmy); default stays 0=NAVY
 static uint16_t COL_BG,COL_PANEL,COL_BAR,COL_SEL,COL_SEP,COL_DIM,COL_MID,COL_LIT;
 static uint16_t COL_GREEN,COL_ORANGE,COL_AMBER,COL_BLUE,COL_NOW,COL_ACCENT,COL_CIRC,COL_CIRC_TEXT;
 
@@ -3651,6 +3675,7 @@ struct InfoRect { int x,y,w,h; uint8_t act; };
 static InfoRect g_ir[20]; static int g_ir_n=0;
 static int g_info_page=0, g_info_pages=1;
 static bool g_info_test=false;   // lab14k: true = Settings is showing its TEST TOOLS sub-page
+static uint8_t g_info_last=0;     // P4R-5 (Mez): the last Settings option tapped - drawn with a red outline (0 = none)
 static void drawInfoFull();   // paginated settings + INFO bottom bar + flush
 // v5.6.7: readable ink for a key's colour on the dim fill — dark key colours
 // (COL_BAR OFF-states, the dark-red RESET) get promoted to light grey so they
@@ -3659,7 +3684,9 @@ static inline uint16_t keyInk(uint16_t c){
   int r=(c>>11)&31, g=(c>>5)&63, b=c&31;
   return ((r*2+g*3+b) < 60) ? COL_LIT : c;
 }
-static void drawInfoPanel(){
+// P4R-4: the item list is built by buildInfoItems() so the round Settings page (drawRoundSettings) shows exactly
+// the same rows as the square one.
+static void buildInfoItems(){
   // v5.5.4: full-screen, single-column, paginated. Build the item list (dynamic
   // labels + conditional rows), then draw only the current page's buttons and
   // record their rects in g_ir[] so the tap handler hits exactly what's drawn.
@@ -3694,7 +3721,7 @@ static void drawInfoPanel(){
   add(String(T(L_THEME))+": "+THEMES[g_theme_idx].name, COL_ACCENT, TFT_WHITE, IA_THEME);   // Vince test: moved off the bottom bar
   add(String(T(L_CFG_LANG))+": "+LANG_NAMES[g_lang], (uint16_t)0x79D6, TFT_WHITE, IA_LANG);
   add(String(T(L_CFG_ROTATE))+": "+(g_portrait?T(L_PORTRAIT):T(L_LANDSCAPE)), COL_BLUE, TFT_WHITE, IA_ROTATE);
-  add(String(T(L_CFG_COMPACT))+": "+(g_compact?T(L_ON):T(L_OFF)), g_compact?COL_GREEN:COL_BAR, g_compact?TFT_BLACK:COL_LIT, IA_COMPACT);
+  if(!g_roundui) add(String(T(L_CFG_COMPACT))+": "+(g_compact?T(L_ON):T(L_OFF)), g_compact?COL_GREEN:COL_BAR, g_compact?TFT_BLACK:COL_LIT, IA_COMPACT);
   add(String(T(L_CFG_LIBRARY))+": "+(g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN"), COL_ACCENT, TFT_BLACK, IA_LIBMODE);   // v5.6.0: disk-format mode moved here from the mode bar
   add(String(T(L_CFG_CATEG))+": "+(g_categories?T(L_ON):T(L_OFF)), g_categories?COL_GREEN:COL_BAR, g_categories?TFT_BLACK:COL_LIT, IA_CATEG);   // library/category browse toggle (mirrors CONFIG.TXT CATEGORIES=)
   add(String(T(L_CFG_BUTTONS))+": "+(g_btn_pill?T(L_PILL):T(L_FLAT)), g_btn_pill?COL_ACCENT:COL_BAR, g_btn_pill?TFT_WHITE:COL_LIT, IA_BTNSTYLE);   // 5.8.3 reel button style
@@ -3702,11 +3729,12 @@ static void drawInfoPanel(){
   if(g_ss_enabled) add(String(T(L_CFG_SAVER))+" FX: "+(g_ss_matrix?T(L_MATRIX):(g_ss_slides?T(L_SLIDES):T(L_BOUNCE))), COL_BLUE, TFT_WHITE, IA_SSMODE);   // 5.8.3 screensaver mode (only shown when ON)
   add(String(T(L_CFG_FAVSAVER))+": "+(g_ss_fav?T(L_ON):T(L_OFF)), g_ss_fav?COL_GREEN:COL_BAR, g_ss_fav?TFT_BLACK:COL_LIT, IA_SSFAV);   // 5.8.3 favourites into slideshow
   add(String("CRACKTRO")+": "+(g_cracktro>=0?T(L_ON):T(L_OFF)), g_cracktro>=0?COL_GREEN:COL_BAR, g_cracktro>=0?TFT_BLACK:COL_LIT, IA_CRACKTRO);   // boot intro on/off -> CONFIG.TXT CRACKTRO=
-  add(String("REEL BORDER")+": "+(g_reelborder?T(L_ON):T(L_OFF)), g_reelborder?COL_GREEN:COL_BAR, g_reelborder?TFT_BLACK:COL_LIT, IA_REELBORDER);   // MasterTelly CR: frame around reel covers -> CONFIG.TXT REELBORDER=
+  if(!g_roundui) add(String("REEL BORDER")+": "+(g_reelborder?T(L_ON):T(L_OFF)), g_reelborder?COL_GREEN:COL_BAR, g_reelborder?TFT_BLACK:COL_LIT, IA_REELBORDER);   // MasterTelly CR: frame around reel covers -> CONFIG.TXT REELBORDER=
+  // P4R-6d: COMPACT, REEL BORDER and LIST TILE only change the square list/reel - hidden while ROUND UI is on (keys still work)
   add(String("ROUND UI")+": "+(g_roundui?T(L_ON):T(L_OFF)), g_roundui?COL_GREEN:COL_BAR, g_roundui?TFT_BLACK:COL_LIT, IA_ROUNDUI);   // P4R-2
   if(g_roundui) add(String("REEL STYLE")+": "+(g_reelstyle?"MOON":"FLAT"), COL_ACCENT, TFT_WHITE, IA_REELSTYLE);   // P4R-2: FLAT / MOON
   add(String("COVER ART")+": "+(g_covers_on?T(L_ON):T(L_OFF)), g_covers_on?COL_GREEN:COL_BAR, g_covers_on?TFT_BLACK:COL_LIT, IA_COVERS);   // 5.9.32-lab2 -> CONFIG.TXT COVERS=
-  add(String("LIST TILE")+": "+(g_listtile?T(L_ON):T(L_OFF)), g_listtile?COL_GREEN:COL_BAR, g_listtile?TFT_BLACK:COL_LIT, IA_LISTTILE);   // 5.9.34-lab4 -> CONFIG.TXT LISTTILE=
+  if(!g_roundui) add(String("LIST TILE")+": "+(g_listtile?T(L_ON):T(L_OFF)), g_listtile?COL_GREEN:COL_BAR, g_listtile?TFT_BLACK:COL_LIT, IA_LISTTILE);   // 5.9.34-lab4 -> CONFIG.TXT LISTTILE=
   add(String("LAST USED")+": "+(g_lastused?T(L_ON):T(L_OFF)), g_lastused?COL_GREEN:COL_BAR, g_lastused?TFT_BLACK:COL_LIT, IA_LASTUSED);   // restore last-loaded game on boot -> CONFIG.TXT LASTUSED=
   if(g_devmode) add("TEST TOOLS >", (uint16_t)0x4208, TFT_WHITE, IA_TESTPAGE);   // lab14p: DEVMODE=OFF hides it   // lab14k: SD SOAK TEST, REEL PROF, NO-CACHE, DIAG-DISP live here now
   add(T(L_RESCAN_SD), COL_BLUE, TFT_WHITE, IA_RESCAN);
@@ -3716,6 +3744,9 @@ static void drawInfoPanel(){
   add(T(L_SD_ACCESS), (uint16_t)0x05FF, TFT_BLACK, IA_SDACCESS);
   add(T(L_FW_UPDATE), COL_AMBER, TFT_BLACK, IA_FWUPDATE);
   }   // lab14k: end of the main Settings list
+}
+static void drawInfoPanel(){
+  buildInfoItems();
   int ix=0,iy=STATUS_H,iw=VW,ih=VH-STATUS_H-BOTTOM_H;
   gfx_fillRect(ix,iy,iw,ih,COL_BG);
   gfx_setTextSize(1);gfx_setTextColor(COL_DIM,COL_BG);gfx_setCursor(8,iy+5);gfx_print(g_info_test?"SETTINGS > TEST TOOLS":T(L_SETTINGS));   // lab14k
@@ -3737,6 +3768,7 @@ static void drawInfoPanel(){
     // stayed flat. PILL = solid coloured capsule + auto-contrast ink (same language as the
     // nav/reel bars); FLAT = the original v5.6.7 dim-fill + bright double border.
     uint16_t kc=g_ii[i2].bg, kfill, kink;
+    if(g_info_last&&g_ii[i2].act==g_info_last) gfx_fillRoundRect(bx-3,by-3,colW+6,bh+6,g_btn_pill?bh/2+3:11,0xF800);   // P4R-5: last option tapped
     if(g_btn_pill){
       kfill=kc; kink=inkFor(kc);                 // inkFor (not the row's fg) so every theme stays readable
       gfx_fillRoundRect(bx,by,colW,bh,bh/2,kfill);
@@ -4160,7 +4192,7 @@ static void buildThumbs(){ if(!g_covers_on){fwLocFree();return;}   // 5.9.32-lab
     if((i%1000)==0||i==n-1)gLog("[thumbs] %d/%d %lums int=%u psram=%u\n",i+1,n,(unsigned long)(millis()-t0),(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram());
     if(millis()-lastDraw>=1000||i==n-1){   // lab15f: redraw once a second (was every 25 games: 800 full-screen flushes, ~29 s, on a 20k card with no covers); log every 1000 (was 200)
       lastShown=i; lastDraw=millis();
-      gfx_fillScreen(0x1082);
+      if(g_roundui)roundBegin(); gfx_fillScreen(0x1082);   // P4R-6a: scan/build progress on the whole round glass
       gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
       {const char*s=T(L_BUILDING);int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-50);gfx_print(s);}
       gfx_setTextSize(1);gfx_setTextColor(0x9BD6,0x1082);
@@ -4337,7 +4369,7 @@ static void carMicroBuild(){
     { uint32_t dt=millis()-tg; if(dt>2000) gLog("[micro] game %d took %lums (%s)\n",i,(unsigned long)dt,g_games[i].name.c_str()); }
     if(ok)carMicroFromTile(i,tmp);
     if(millis()-lastDraw>=1000||i==n-1){ lastShown=i; lastDraw=millis();   // lab15f: was every 25 games (a ~36 ms full-screen flush each)
-      gfx_fillScreen(0x1082);
+      if(g_roundui)roundBegin(); gfx_fillScreen(0x1082);   // P4R-6a: scan/build progress on the whole round glass
       gfx_setTextSize(2);gfx_setTextColor(0xFC60,0x1082);
       {const char*s="Preparing covers";int tw=gfx_textWidth(s);gfx_setCursor((gW-tw)/2,gH/2-40);gfx_print(s);}
       gfx_setTextSize(1);gfx_setTextColor(0x9BD6,0x1082);
@@ -4495,7 +4527,7 @@ static void rlEnter();   // P4R-3 fwd (the round list is defined after the reel)
 static void doManual(const String& path,const char* title);                   // fwd (lab15j reader; default arg on its definition)
 #define RCX 400
 #define RCY 400
-static const RRim g_rrim[4]={ {24,50,4}, {54,84,1}, {96,126,2}, {130,156,3} };   // ROLL, LIST, CONFIG, source
+static const RRim g_rrim[4]={ {58,88,4}, {92,122,1}, {126,152,2}, {156,178,3} };   // ROLL, LIST, CONFIG, source - P4R-6c: the list's slots (action, view, CONFIG, filter)
 #define RRIM_R0 320
 #define RRIM_R1 396
 // geometry the tap handler needs (set by drawRoundReel)
@@ -4531,6 +4563,19 @@ static void rFillRingSeg(int a0,int a1,int r0,int r1,uint16_t c){
 static void rTextC(int cx,int y,const String&t,int sz,uint16_t fg,uint16_t bg){
   gfx_setTextSize(sz); gfx_setTextColor(fg,bg); gfx_setCursor(cx-gfx_textWidth(t)/2,y); gfx_print(t);
 }
+// P4R-6d: the same with a size in tenths (27 = 2.7x); leaves the gfx layer at a whole-number size afterwards.
+static void rTextCT(int cx,int y,const String&t,int t10,uint16_t fg,uint16_t bg){
+  gfx_setTextSizeT(t10); gfx_setTextColor(fg,bg); gfx_setCursor(cx-gfx_textWidth(t)/2,y); gfx_print(t); gfx_setTextSize(2);
+}
+// P4R-6e: whole-size letters (even strokes) set closer together: adv = pixels from one letter to the next
+// (the font's own is 6*sz; 3x with adv 17 leaves 2 px between letters instead of 3 - CONFIG 100 px instead of 108).
+static void rTextCAdv(int cx,int y,const String&t,int sz,int adv,uint16_t fg,uint16_t bg){
+  gfx_setTextSize(sz); gfx_setTextColor(fg,bg); int n=t.length(); if(!n) return;
+  int w=n*adv-(adv-5*sz), x=cx-w/2;
+  for(int k=0;k<n;k++){ gfx_setCursor(x+k*adv,y); gfx_print(String(t[k])); }
+}
+#define RIM_SZ  3    // P4R-6e: rim button labels: 3x letters (even strokes - 2.7x looked uneven on the glass)...
+#define RIM_ADV 18   //   ...normal spacing again - the labels curve along the rim now (P4R-6f), so they fit
 // Text along an arc across the top (upright letters, centred on 12 o'clock). Colour per part.
 static void rArcText(int r,int sz,const String* parts,const uint16_t* cols,int np,uint16_t bg){
   int total=0; for(int i=0;i<np;i++) total+=parts[i].length();
@@ -4545,6 +4590,81 @@ static void rArcText(int r,int sz,const String* parts,const uint16_t* cols,int n
 static String rFit(String t,int w,int sz){ gfx_setTextSize(sz); if(gfx_textWidth(t)<=w) return t;
   while(t.length()>3&&gfx_textWidth(t+"..")>w) t.remove(t.length()-1); return t+".."; }
 
+// P4R-6b: a between b (t=0) and c (t=256), RGB565.
+static inline uint16_t rMix565(uint16_t a,uint16_t b,int t){
+  int ar=(a>>11)&31,ag=(a>>5)&63,ab=a&31, br=(b>>11)&31,bg=(b>>5)&63,bb=b&31;
+  return (uint16_t)(((ar+((br-ar)*t>>8))<<11)|((ag+((bg-ag)*t>>8))<<5)|(ab+((bb-ab)*t>>8)));
+}
+// ── P4R-7: the AMIGA theme on the round glass ─────────────────────────────────────────────────────────────
+// With THEME=AMIGA and the ADF library, the round reel, list and Settings have a solid Boing ball in the background (P4R-7b; was big + faint). It is drawn
+// ONCE into its own 800x800 picture (g_rbg); each frame starts with a copy of it instead of a plain fill, so the ball
+// costs nothing while scrolling. Text on the background colour is drawn see-through over it (g_rbg_live).
+static uint16_t* g_rbg=NULL; static uint16_t g_rbg_col=0; static bool g_rbg_ok=false; static int g_rbg_mode=-1;   // P4R-7c: which library the picture was drawn for
+static bool rAmigaBall(){ return g_roundui && g_theme_idx==AMIGA_THEME && (g_mode==MODE_ADF||g_mode==MODE_DSK); }   // P4R-7c: DSK gets its own art
+static void rBuildBallBg(){
+  if(!g_rbg) g_rbg=(uint16_t*)heap_caps_malloc((size_t)RW*RW*2,MALLOC_CAP_SPIRAM);
+  if(!g_rbg){ g_rbg_ok=false; return; }
+  const uint16_t bg=COL_BG; for(int i=0;i<RW*RW;i++) g_rbg[i]=bg;
+  g_rbg_mode=(int)g_mode;
+  if(g_mode==MODE_DSK){   // P4R-7c: DSK = Spectrum +3 or CPC, so a nod to both (the looks, not the makers' logos):
+    // a rainbow stripe below INSERT, left of centre ...
+    static const uint16_t SC[4]={0xD000,0xFEA0,0x0640,0x065A};   // red, yellow, green, cyan
+    for(int y=576;y<=658;y++){ float tt=(float)(658-y)/82.0f;   // P4R-7e (Mez): left of centre, the same height as the colour keys on the right
+      for(int b=0;b<4;b++){ int x0=262+b*16+(int)(tt*56.0f);
+        for(int x=x0;x<x0+16;x++){ int dx=x-RCX, dy=y-RCY; if(dx*dx+dy*dy>350*350||x>=RW) continue; g_rbg[y*RW+x]=SC[b]; } } }
+    // ... and three colour keys (red, green, blue) right of centre
+    static const uint16_t KC[3]={0xE145,0x25E7,0x337E};
+    for(int k=0;k<3;k++){ int ky=576+k*30;
+      for(int y=ky;y<ky+22;y++) for(int x=430;x<550;x++){          // P4R-7d: 40 px left, clear of the stripe
+        int cx=(x<438)?438:((x>541)?541:x), cy=(y<ky+8)?ky+8:((y>ky+13)?ky+13:y);   // rounded ends (radius 8)
+        if((x-cx)*(x-cx)+(y-cy)*(y-cy)<=64) g_rbg[y*RW+x]=KC[k]; } }
+    g_rbg_col=bg; g_rbg_ok=true; return;
+  }
+  // P4R-7b (Mez: "the amiga ball shouldn't be blue... red and white, like in B"): a solid, full-colour Boing ball
+  // resting low on the right (clear of the title, the rim buttons and the list's A-Z), with its shadow on the floor.
+  const int bx=605, by=555, r=92; const float tilt=0.31f, ct=cosf(tilt), st=sinf(tilt), seg=3.14159265f/8.0f;
+  { const int sx=bx+14, sy=by+r+8, hw=(int)(r*0.9f), hh=10;          // floor shadow
+    for(int y=-hh;y<=hh;y++){ int w=(int)(hw*sqrtf(fmaxf(0.0f,1.0f-(float)(y*y)/(hh*hh)))); int yy=sy+y; if(yy<0||yy>=RW) continue;
+      for(int x=-w;x<=w;x++){ int xx=sx+x; if(xx>=0&&xx<RW) g_rbg[yy*RW+xx]=rMix565(bg,0x0000,120); } } }
+  for(int y=-r;y<=r;y++){ int yy=by+y; if(yy<0||yy>=RW) continue; int hw=(int)sqrtf((float)(r*r-y*y));
+    for(int x=-hw;x<=hw;x++){ int xx=bx+x; if(xx<0||xx>=RW) continue;
+      float nx=(float)x/r, ny=(float)y/r, nz=sqrtf(fmaxf(0.0f,1.0f-nx*nx-ny*ny));
+      float rx=nx*ct-ny*st, ry=nx*st+ny*ct; float lon=atan2f(rx,nz), lat=asinf(fmaxf(-1.0f,fminf(1.0f,ry)));
+      int c=(((int)floorf(lon/seg))+((int)floorf(lat/seg)))&1;
+      g_rbg[yy*RW+xx]=rMix565(0x0000,c?0xE8C3:0xFFDF,(int)(110.0f+146.0f*nz)); } }   // Boing red / white, lit from the front
+  g_rbg_col=bg; g_rbg_ok=true;
+}
+// Start a round frame: the Boing picture (AMIGA theme + ADF) or the plain background colour.
+static void rClearBg(){
+  if(g_rt&&rAmigaBall()){
+    if(!g_rbg_ok||g_rbg_col!=COL_BG||g_rbg_mode!=(int)g_mode) rBuildBallBg();   // P4R-7c: rebuild when the library changes too
+    if(g_rbg_ok){ memcpy(g_rfb,g_rbg,(size_t)RW*RW*2); g_rbg_live=true; g_rbg_key=COL_BG; return; }
+  }
+  gfx_fillScreen(COL_BG);
+}
+// P4R-6f: a label that CURVES along the rim (like the writing round the bottom of a coin): each letter is turned to
+// the circle at its own angle, tops towards the centre, reading left to right. am = the label's middle (radians,
+// clockwise from 3 o'clock, bottom half), r = radius of the letters' middle line. Each screen pixel near a letter is
+// sampled 4x4 inside the (turned) font cell, so edges are smoothed against bg (the button colour).
+static void rArcLabel(int r,float am,const String& t,int sz,int adv,uint16_t fg,uint16_t bg){
+  int n=t.length(); if(!n||r<=0) return;
+  float w=(float)(n*adv-(adv-5*sz)), half=5.0f*sz, fsz=(float)sz;
+  for(int k=0;k<n;k++){ char c=t[k]; if(c<33||c>126) continue;
+    const uint8_t* data=font6x8[c-32]; uint8_t colb[5]; for(int q=0;q<5;q++) colb[q]=pgm_read_byte(&data[q]);
+    float xc=k*adv+2.5f*sz-w*0.5f, a=am-xc/(float)r;            // moving right along the bottom rim = a smaller angle
+    float ca=cosf(a), sa=sinf(a), Cx=RCX+r*ca, Cy=RCY+r*sa;      // letter centre
+    float rx=sa, ry=-ca, dx_=ca, dy_=sa;                          // letter's right and down (down = outwards)
+    int x0=(int)(Cx-half), x1=(int)(Cx+half), y0=(int)(Cy-half), y1=(int)(Cy+half);
+    for(int py=y0;py<=y1;py++) for(int px=x0;px<=x1;px++){
+      int cov=0;
+      for(int sy=0;sy<4;sy++) for(int sx=0;sx<4;sx++){
+        float qx=px+(sx+0.5f)*0.25f-0.5f-Cx, qy=py+(sy+0.5f)*0.25f-0.5f-Cy;
+        float u=qx*rx+qy*ry+2.5f*fsz, v=qx*dx_+qy*dy_+4.0f*fsz;
+        if(u<0||v<0) continue; int col=(int)(u/fsz), row=(int)(v/fsz);
+        if(col<5&&row<8&&(colb[col]>>row&1)) cov++; }
+      if(cov) gfx_drawPixel(px,py,cov>=16?fg:rMix565(bg,fg,cov*16)); }
+  }
+}
 // One cover at centre (cx,cy), fitted inside bw x bh, letterbox + black bands trimmed (lab15l/m).
 static void rCover(int gi,int cx,int cy,int bw,int bh,int dim,bool moving,bool sel,bool isLd,int* ow,int* oh){
   auto&gm=g_games[gi];
@@ -4562,9 +4682,19 @@ static void rCover(int gi,int cx,int cy,int bw,int bh,int dim,bool moving,bool s
   if(ow)*ow=dw; if(oh)*oh=dh;
 }
 
+// P4R-6c: the reel's rim buttons - drawn LAST, so the far MOON cover at 8 o'clock tucks under the filter button
+// instead of covering it (the buttons moved to the list's slots).
+static void drawReelRim(){
+  for(int i=0;i<4;i++){ uint8_t id=g_rrim[i].id;
+    uint16_t bc=(id==1)?COL_BLUE:(id==2)?COL_ACCENT:(id==3)?COL_AMBER:COL_GREEN;   // P4R-6c: same colour per slot as the list (view blue, CONFIG accent, filter amber, action green)
+    rFillRingSeg(g_rrim[i].a0,g_rrim[i].a1,RRIM_R0,RRIM_R1,bc);
+    float am=(g_rrim[i].a0+g_rrim[i].a1)*0.5f*0.0174533f;
+    String lb=(id==1)?String(T(L_LIST)):(id==2)?String("CONFIG"):(id==3)?String(carSrcName()):String(T(L_ROLL));
+    rArcLabel(358,am,lb,RIM_SZ,RIM_ADV,inkFor(bc),bc); }   // P4R-6f: rim labels curve along the rim
+}
 static void drawRoundReel(){
   const bool moon=(g_reelstyle!=0);
-  gfx_fillScreen(COL_BG);
+  rClearBg();   // P4R-7: AMIGA theme ball (ADF) or the plain colour
   int n=carN();
   // ── status round the top rim ──
   { String p[4]; uint16_t c[4];
@@ -4573,15 +4703,8 @@ static void drawRoundReel(){
     p[2]=String("  ")+(g_loaded?(String("DISK")+(g_loaded_game_idx>=0&&g_loaded_game_idx<(int)g_games.size()&&g_games[g_loaded_game_idx].disk_count>1?(" "+String(g_loaded_disk_idx+1)):String(""))):String("EMPTY")); c[2]=g_loaded?COL_GREEN:COL_DIM;
     p[3]=n?(String("  ")+String(carWrap((int)lroundf(g_car_pos))+1)+"/"+String(n)+" "+carSrcName()):String(""); c[3]=COL_MID;
     rArcText(moon?366:352,2,p,c,4,COL_BG); }
-  // ── rim buttons ──
-  for(int i=0;i<4;i++){ uint8_t id=g_rrim[i].id;
-    uint16_t bc=(id==1)?COL_BLUE:(id==2)?COL_GREEN:(id==3)?COL_AMBER:COL_ACCENT;
-    rFillRingSeg(g_rrim[i].a0,g_rrim[i].a1,RRIM_R0,RRIM_R1,bc);
-    float am=(g_rrim[i].a0+g_rrim[i].a1)*0.5f*0.0174533f; int lx=RCX+(int)(358*cosf(am)), ly=RCY+(int)(358*sinf(am));
-    String lb=(id==1)?String(T(L_LIST)):(id==2)?String("CONFIG"):(id==3)?String(carSrcName()):String(T(L_ROLL));
-    rTextC(lx,ly-8,lb,2,inkFor(bc),bc); }
   g_rr_dn=0; g_rr_cw=0;
-  if(n==0){ rTextC(RCX,380,(g_car_src==1)?String(T(L_NO_FAVS)):String(T(L_NO_GAMES)),3,COL_LIT,COL_BG); return; }
+  if(n==0){ rTextC(RCX,380,(g_car_src==1)?String(T(L_NO_FAVS)):String(T(L_NO_GAMES)),3,COL_LIT,COL_BG); drawReelRim(); return; }
   int ci=(int)lroundf(g_car_pos); float frac=g_car_pos-(float)ci;
   bool moving=(g_car_touch&&g_car_moved)||g_car_coast||g_car_spin;
   int maxOff=(n>=5)?2:((n>=2)?1:0);
@@ -4634,13 +4757,14 @@ static void drawRoundReel(){
   if(g_car_dieShow){ g_die_ox=RCX+g_rr_iw/2+22; g_die_oy=g_rr_iy+17; carDrawDie(); g_die_ox=-1; }
   if(g_rr_toast.length()){ String t=rFit(g_rr_toast,520,2); gfx_setTextSize(2); int w=gfx_textWidth(t)+40;   // P4R-2c
     gfx_fillRoundRect(RCX-w/2,74,w,40,20,g_rr_toast_col); rTextC(RCX,86,t,2,inkFor(g_rr_toast_col),g_rr_toast_col); }
+  drawReelRim();   // P4R-6c: last
 }
 
 // Tap on the round reel (800x800 coordinates).
 static void roundReelTap(int px,int py){
   uint8_t rim=rRimHitId(px,py);
   if(rim==1){ int nn=carN(); if(nn){ g_sel=g_car_list[carWrap((int)lroundf(g_car_pos))]; } rlEnter(); return; }   // LIST -> the round list on this game (P4R-3)
-  if(rim==2){ g_car_active=false; g_info_showing=true; g_info_page=0; g_info_test=false; drawInfoFull(); return; }   // CONFIG
+  if(rim==2){ g_car_active=false; g_info_showing=true; g_info_page=0; g_info_test=false; g_info_last=0; drawInfoFull(); return; }   // CONFIG
   if(rim==3){ carCycleSrc(); return; }                                          // ALL / FAV / MOST
   if(rim==4){ carRollDice(); return; }                                          // ROLL
   int n=carN(); if(!n) return;
@@ -4745,7 +4869,7 @@ static char rlAzAt(int x,int y){
   int k=(int)lroundf((a+50.0f)*25.0f/100.0f); if(k<0)k=0; if(k>25)k=25; return (char)('A'+k);
 }
 static void drawRoundList(){
-  gfx_fillScreen(COL_BG);
+  rClearBg();   // P4R-7: AMIGA theme ball (ADF) or the plain colour
   int n=rlN(); if(n){ if(g_rl_pos>n-1)g_rl_pos=(float)(n-1); if(g_rl_pos<0)g_rl_pos=0; }
   int ci=(int)lroundf(g_rl_pos); if(ci<0)ci=0; if(n&&ci>n-1)ci=n-1; float frac=g_rl_pos-(float)ci;
   bool moving=(g_rl_touch&&g_rl_moved)||g_rl_coast||g_rl_target>=0;
@@ -4767,29 +4891,35 @@ static void drawRoundList(){
     uint16_t bc=(id==11)?COL_GREEN:(id==12)?COL_BLUE:(id==13)?COL_ACCENT:COL_AMBER;
     bool isLd=(id==11)&&n&&g_loaded&&g_loaded_game_idx==ci; if(isLd) bc=0xC000;
     rFillRingSeg(g_rlrim[i].a0,g_rlrim[i].a1,RRIM_R0,RRIM_R1,bc);
-    float am=(g_rlrim[i].a0+g_rlrim[i].a1)*0.5f*0.0174533f; int lx=RCX+(int)(358*cosf(am)), ly=RCY+(int)(358*sinf(am));
+    float am=(g_rlrim[i].a0+g_rlrim[i].a1)*0.5f*0.0174533f;
     String lb=(id==11)?String(isLd?T(L_EJECT):T(L_INSERT)):(id==12)?String(T(L_REEL)):(id==13)?String("CONFIG"):String(g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN");
-    rTextC(lx,ly-8,lb,2,inkFor(bc),bc); }
+    rArcLabel(358,am,lb,RIM_SZ,RIM_ADV,inkFor(bc),bc); }   // P4R-6f: rim labels curve along the rim
   if(!n){ rTextC(RCX,380,T(L_NO_GAMES),3,COL_LIT,COL_BG); return; }
   // the wheel: far rows first, the middle row last
   for(int pass=0;pass<2;pass++) for(int d=-4;d<=4;d++){
     int gi=ci+d; if(gi<0||gi>=n) continue; float rel=(float)d-frac, ar=fabsf(rel);
     bool mid=(ar<0.5f); if((pass==1)!=mid) continue;
     int y=RCY+(int)(rel*RL_ROW); if(y<96||y>704) continue;
-    float hc=sqrtf(fmaxf(0.0f,376.0f*376.0f-(float)(y-RCY)*(y-RCY)));
-    int left=RCX-(int)hc+44, right=RCX+(int)hc-78; int w=right-left; if(w<80) continue;
+    int ph=mid?72:58, ey=abs(y-RCY)+ph/2;                      // P4R-4b: every row a pill, as wide as the circle allows at its far edge
+    float hc=sqrtf(fmaxf(0.0f,350.0f*350.0f-(float)ey*ey));
+    int left=RCX-(int)hc+40, right=RCX+(int)hc-72; int w=right-left; if(w<120) continue;
     auto&gm=g_games[gi]; bool isLd=(g_loaded&&g_loaded_game_idx==gi);
     if(mid){
       uint16_t pb=COL_PANEL; gfx_fillRoundRect(left,y-36,w,72,36,isLd?COL_GREEN:COL_AMBER); gfx_fillRoundRect(left+3,y-33,w-6,66,33,pb);
       rCover(gi,left+62,y,78,54,0,moving,true,isLd,NULL,NULL);
-      String nm=rFit(gm.name,w-150-(gm.disk_count>1?52:0),3); gfx_setTextSize(3); gfx_setTextColor(COL_LIT,pb); gfx_setCursor(left+112,y-12); gfx_print(nm);
-      if(gm.disk_count>1){ String b=String(gm.disk_count)+"DSK"; gfx_setTextSize(1); int bw=gfx_textWidth(b)+12;
-        gfx_fillRoundRect(right-bw-22,y-9,bw,18,9,COL_BLUE); gfx_setTextColor(inkFor(COL_BLUE),COL_BLUE); gfx_setCursor(right-bw-16,y-4); gfx_print(b); }
+      String nm=rFit(gm.name,w-150-(gm.disk_count>1?96:0),3); gfx_setTextSize(3); gfx_setTextColor(COL_LIT,pb); gfx_setCursor(left+112,y-12); gfx_print(nm);
+      if(gm.disk_count>1){ String b=String(gm.disk_count)+" DSK"; gfx_setTextSize(2); int bw=gfx_textWidth(b)+20;   // P4R-6b: badge size 2 (was 1, too small on the glass)
+        gfx_fillRoundRect(right-bw-22,y-14,bw,28,14,COL_BLUE); gfx_setTextColor(inkFor(COL_BLUE),COL_BLUE); gfx_setCursor(right-bw-12,y-8); gfx_print(b); }
       if(gm.fav) gfx_fillStar(left+30,y-26,8.0f,COL_STAR);
-    } else {
-      int dim=(ar<1.5f)?0:((ar<2.5f)?1:2); int sz=(ar<1.5f)?2:((ar<3.0f)?2:1);
-      uint16_t col=carDim(isLd?COL_GREEN:COL_LIT,dim);
-      String nm=rFit(gm.name,w-20,sz); rTextC((left+right)/2,y-4*sz,nm,sz,col,COL_BG);
+    } else {                                                   // P4R-4b: a pill with a small cover, dimmer away from the middle
+      int dim=(ar<1.5f)?0:((ar<2.5f)?1:2);
+      uint16_t pf=rMix565(COL_BG,COL_LIT,dim==0?44:(dim==1?30:18)), col=carDim(isLd?COL_GREEN:COL_LIT,dim);   // P4R-6b: the background lifted towards the text colour - COL_PANEL vanished on some themes
+      if(isLd){ gfx_fillRoundRect(left,y-29,w,58,29,carDim(COL_GREEN,dim)); gfx_fillRoundRect(left+2,y-27,w-4,54,27,pf); }   // the loaded game: a green edge
+      else gfx_fillRoundRect(left,y-29,w,58,29,pf);
+      rCover(gi,left+52,y,50,38,dim,moving,false,isLd,NULL,NULL);   // moving: the small quick cover; settled: the full one
+      int tx=left+90, tw=right-tx-(gm.fav?40:24);
+      String nm=rFit(gm.name,tw,2); gfx_setTextSize(2); gfx_setTextColor(col,pf); gfx_setCursor(tx,y-8); gfx_print(nm);
+      if(gm.fav) gfx_fillStar(right-30,y,7.0f,carDim(COL_STAR,dim));
     }
   }
   if(g_rl_az&&g_rl_azL){ gfx_fillCircle(250,RCY,64,COL_AMBER); gfx_drawCircle(250,RCY,66,COL_LIT);
@@ -4806,7 +4936,7 @@ static void rlSettle(){ int n=rlN(); if(!n) return; int ci=(int)lroundf(g_rl_pos
 static void rlTap(int px,int py){
   uint8_t rim=rRimHitSet(g_rlrim,4,px,py); int n=rlN();
   if(rim==12){ g_rl_active=false; g_round_last=0; carEnter(); return; }                                   // REEL (on this game)
-  if(rim==13){ g_rl_active=false; g_info_showing=true; g_info_page=0; g_info_test=false; drawInfoFull(); return; }   // CONFIG
+  if(rim==13){ g_rl_active=false; g_info_showing=true; g_info_page=0; g_info_test=false; g_info_last=0; drawInfoFull(); return; }   // CONFIG
   if(rim==14){ switchLib((g_mode+1)%3); return; }                                                        // LIB: ADF -> DSK -> GEN
   if(rim==11&&n){ auto&gm=g_games[g_sel];                                                                  // INSERT / EJECT
     if(g_loaded&&g_loaded_game_idx==g_sel) doUnload();
@@ -4855,11 +4985,68 @@ static void rlTick(bool touch,uint16_t px,uint16_t py,uint32_t now){
   if(g_ss_enabled&&g_ss_have&&!g_rl_touch){ uint32_t thr=g_loaded?g_ss_load_ms:g_ss_idle_ms;
     if(now-g_last_touch_ms>=thr){ runScreensaver(); return; } }
 }
+// ── P4R-4 (lab15s): ROUND SETTINGS ─────────────────────────────────────────────────────────────────────
+// The same rows as the square page (buildInfoItems), as pills down the middle of the glass - each as wide as the
+// circle allows at its height. Up to 7 per page; < and > circles at 9 and 3 o'clock turn the page, CLOSE is the
+// rim button at 6 o'clock. Title and page number round the top rim. The pill rects go into g_ir[] (800x800
+// coordinates) so handleTap()'s row loop works unchanged.
+static const RRim g_rsrim[1]={ {70,110,21} };   // CLOSE
+#define RS_ROWS  7
+#define RS_BH    58
+#define RS_PITCH 68
+#define RS_AXL   64     // page circles: centres (x) at y = RCY
+#define RS_AXR   736
+#define RS_AR    40
+static void drawRoundSettings(){
+  buildInfoItems();
+  rClearBg();   // P4R-7: AMIGA theme ball (ADF) or the plain colour
+  g_info_pages=(g_ii_n+RS_ROWS-1)/RS_ROWS; if(g_info_pages<1)g_info_pages=1;
+  if(g_info_page>=g_info_pages)g_info_page=g_info_pages-1; if(g_info_page<0)g_info_page=0;
+  { String p[2]; uint16_t c[2];
+    p[0]=g_info_test?String("SETTINGS > TEST TOOLS"):String(T(L_SETTINGS)); c[0]=COL_ORANGE;
+    p[1]=(g_info_pages>1)?(String("  ")+String(g_info_page+1)+"/"+String(g_info_pages)):String(""); c[1]=COL_MID;
+    rArcText(366,2,p,c,2,COL_BG); }
+  int start=g_info_page*RS_ROWS, end=min(g_ii_n,start+RS_ROWS), cnt=end-start;
+  int top=RCY-(cnt*RS_PITCH-(RS_PITCH-RS_BH))/2;               // the page's rows centred on the glass
+  g_ir_n=0;
+  for(int i=start;i<end;i++){
+    int by=top+(i-start)*RS_PITCH, ey=max(abs(by-RCY),abs(by+RS_BH-RCY));
+    float hc=sqrtf(fmaxf(0.0f,318.0f*318.0f-(float)ey*ey));   // half the circle's width at the pill's far edge
+    int w=min(520,(int)(2.0f*hc)-24); if(w<160)w=160; int bx=RCX-w/2;
+    uint16_t kc=g_ii[i].bg, kfill, kink; int rad=g_btn_pill?RS_BH/2:12;
+    if(g_info_last&&g_ii[i].act==g_info_last) gfx_fillRoundRect(bx-5,by-5,w+10,RS_BH+10,rad+5,0xF800);   // P4R-5: the last option tapped - red outline
+    if(g_btn_pill){ kfill=kc; kink=inkFor(kc); gfx_fillRoundRect(bx,by,w,RS_BH,rad,kfill); }
+    else { kfill=(uint16_t)((kc>>2)&0x39E7); kink=keyInk(kc); gfx_fillRoundRect(bx,by,w,RS_BH,rad,kink); gfx_fillRoundRect(bx+2,by+2,w-4,RS_BH-4,rad-2,kfill); }
+    String lb=g_ii[i].lbl; int sz=3; gfx_setTextSize(sz);
+    if(gfx_textWidth(lb)>w-2*rad){ sz=2; lb=rFit(lb,w-2*rad,2); }
+    rTextC(RCX,by+(RS_BH-8*sz)/2,lb,sz,kink,kfill);
+    if(g_ir_n<20){ g_ir[g_ir_n].x=bx; g_ir[g_ir_n].y=by; g_ir[g_ir_n].w=w; g_ir[g_ir_n].h=RS_BH; g_ir[g_ir_n].act=g_ii[i].act; g_ir_n++; }
+  }
+  if(g_info_pages>1) for(int s=0;s<2;s++){                      // < >
+    bool on=s?(g_info_page<g_info_pages-1):(g_info_page>0); int ax=s?RS_AXR:RS_AXL; uint16_t bc=on?COL_BLUE:COL_BAR;
+    gfx_fillCircle(ax,RCY,RS_AR,bc); rTextC(ax,RCY-12,s?">":"<",3,on?inkFor(bc):COL_DIM,bc); }
+  rFillRingSeg(g_rsrim[0].a0,g_rsrim[0].a1,RRIM_R0,RRIM_R1,COL_ACCENT);   // CLOSE
+  rArcLabel(358,1.570796f,"CLOSE",RIM_SZ,RIM_ADV,inkFor(COL_ACCENT),COL_ACCENT);   // P4R-6f: curved like the other rim labels
+  rTextC(RCX,RCY+252,"Heap:"+String(ESP.getFreeHeap()/1024)+"K PSRAM:"+String(ESP.getFreePsram()/1024)+"K  Games:"+String(g_games.size()),1,COL_DIM,COL_BG);
+  if(g_rr_toast.length()){ String t=rFit(g_rr_toast,520,2); gfx_setTextSize(2); int tw=gfx_textWidth(t)+40;
+    gfx_fillRoundRect(RCX-tw/2,74,tw,40,20,g_rr_toast_col); rTextC(RCX,86,t,2,inkFor(g_rr_toast_col),g_rr_toast_col); }
+}
+// CLOSE and the page circles. true = handled (the caller then skips the row loop).
+static bool roundSettingsNav(int px,int py){
+  if(rRimHitSet(g_rsrim,1,px,py)==21){ g_info_showing=false; g_info_test=false; drawFullUI(); gfx_flush(); return true; }   // back to the round reel/list
+  if(g_info_pages>1) for(int s=0;s<2;s++){ int dx=px-(s?RS_AXR:RS_AXL), dy=py-RCY;
+    if(dx*dx+dy*dy<=(RS_AR+16)*(RS_AR+16)){
+      if(s&&g_info_page<g_info_pages-1){ g_info_page++; drawInfoFull(); }
+      else if(!s&&g_info_page>0){ g_info_page--; drawInfoFull(); }
+      return true; } }
+  return false;
+}
 // P4R-3: "home" for the round UI. Called by drawFullUI(): any screen that used to fall back to the square list
 // (leaving Settings, a finished rescan, a library switch...) lands on the round reel or round list instead.
 // Draws only - the caller's gfx_flush() shows it.
 static bool roundHomeDraw(){
-  if(!g_roundui||g_info_showing) return false;
+  if(!g_roundui) return false;
+  if(g_info_showing){ if(!roundBegin()) return false; drawRoundSettings(); return true; }   // P4R-4: Settings stay round (drawFullUI while Settings is open)
   if(!g_car_active&&!g_rl_active){
     if(g_round_last==1) rlEnterNoDraw();
     else { carBuildList(); carMicroEnsure(); g_car_active=true; g_car_touch=false; g_car_coast=false;
@@ -5389,12 +5576,13 @@ static bool svPatchCore(const String&master,const String&sav,const uint8_t*map,u
 }
 // P4R-2c: redraw whatever screen is current (the reel if it is up, else the list) - so a job that finishes while the
 // round reel is showing puts the round reel back instead of leaving the square list on the glass.
+static void roundRedrawNow(){ if(g_info_showing) drawInfoFull(); else redrawRound(); }   // P4R-4: whichever round screen is up
 static void redrawCurrent(){ if(g_car_active){drawCarousel();gfx_flush();} else {drawFullUI();gfx_flush();} }   // (drawFullUI draws the round list when that is up)
 // P4R-2c: a short message. Square screens: in the status bar (as before). Round reel: a pill at the top of the reel.
 // ms=0 leaves it up (the next redraw clears it on the square screens; the round one keeps it until the next toast).
 static void uiToast(const String&msg,uint16_t col,uint32_t ms){
-  if((g_car_active||g_rl_active)&&g_roundui){ g_rr_toast=msg; g_rr_toast_col=col; redrawRound();
-    if(ms){ delay(ms); g_rr_toast=""; redrawRound(); } return; }
+  if((g_car_active||g_rl_active||g_info_showing)&&g_roundui){ g_rr_toast=msg; g_rr_toast_col=col; roundRedrawNow();   // P4R-4: round Settings too
+    if(ms){ delay(ms); g_rr_toast=""; roundRedrawNow(); } return; }
   gfx_fillRect(0,0,VW,STATUS_H,col);gfx_setTextSize(1);gfx_setTextColor(TFT_BLACK,col);
   int tw=gfx_textWidth(msg);gfx_setCursor((VW-tw)/2,6);gfx_print(msg);gfx_flush();
   if(ms){ delay(ms);drawStatusBar();gfx_flush(); }
@@ -5488,6 +5676,30 @@ static void svFetchWireless(){
 // dirty = that screen's saves have not been handed back yet (taking over loses them). true = take over.
 static bool claimAskUI(bool dirty, const char* who){
   uint32_t r0=millis(); while(Touch_ReadFrame()&&millis()-r0<1500) delay(10);   // let go of the tap that started the load
+  if(g_roundui&&(g_car_active||g_rl_active||g_info_showing)&&roundBegin()){   // P4R-6h: the question as a round card over the reel/list
+    if(g_info_showing) drawRoundSettings(); else if(g_rl_active) drawRoundList(); else drawRoundReel();
+    roundBegin();
+    gfx_fillCircle(RCX,RCY,236,COL_AMBER); gfx_fillCircle(RCX,RCY,229,COL_PANEL);
+    rTextC(RCX,RCY-150,"DONGLE IN USE",3,COL_AMBER,COL_PANEL);
+    rTextC(RCX,RCY-104,rFit(String("It holds a disk from ")+who,400,2),2,COL_LIT,COL_PANEL);
+    if(dirty){ rTextC(RCX,RCY-66,"Its game saves are NOT",2,(uint16_t)0xE8C4,COL_PANEL); rTextC(RCX,RCY-40,"handed back yet - taking",2,(uint16_t)0xE8C4,COL_PANEL);
+               rTextC(RCX,RCY-14,"over now LOSES them.",2,(uint16_t)0xE8C4,COL_PANEL); }
+    else rTextC(RCX,RCY-50,"Take it over for this game?",2,COL_LIT,COL_PANEL);
+    const int bw=170, bh=60, by=RCY+50, bxT=RCX-bw-10, bxC=RCX+10;
+    uint16_t cT=dirty?(uint16_t)0x8000:COL_ORANGE, cC=COL_BAR;
+    gfx_fillRoundRect(bxT,by,bw,bh,30,cT); rTextC(bxT+bw/2,by+18,"TAKE OVER",2,inkFor(cT),cT);
+    gfx_fillRoundRect(bxC,by,bw,bh,30,cC); rTextC(bxC+bw/2,by+18,"CANCEL",2,inkFor(cC),cC);
+    gfx_flush();
+    bool take=false, down=false; uint16_t lx=0,ly=0; uint32_t t0=millis();
+    while(millis()-t0<30000){                         // no answer in 30 s = CANCEL
+      bool tt=Touch_ReadFrame(); uint16_t tx=0,ty=0; if(tt)tt=getTouchXY(&tx,&ty);
+      if(tt){down=true;lx=tx;ly=ty;}
+      else if(down){down=false;
+        if(ly>=by&&ly<by+bh){ if(lx>=bxT&&lx<bxT+bw){take=true;break;} if(lx>=bxC&&lx<bxC+bw){break;} } }
+      delay(15);
+    }
+    redrawCurrent(); return take;
+  }
   gfx_fillScreen(COL_BG);
   gfx_setTextSize(2); gfx_setTextColor(COL_AMBER,COL_BG);
   {const char*s="DONGLE IN USE"; gfx_setCursor((VW-gfx_textWidth(s))/2,VH/2-86); gfx_print(s);}
@@ -5514,6 +5726,21 @@ static bool claimAskUI(bool dirty, const char* who){
   return take;
 }
 
+// P4R-6h: a disk load's messages ("Loading", "too big", "failed"...) on the ROUND screen: the screen you were on
+// (reel, list or Settings) stays underneath and a round card in the middle says it. false = not on a round
+// screen - the caller draws the old square panel.
+static bool rLoadCard(const String& l1,uint16_t c1,const String& l2,const String& l3,const String& l4){
+  if(!(g_roundui&&(g_car_active||g_rl_active||g_info_showing))) return false;
+  if(!roundBegin()) return false;
+  if(g_info_showing) drawRoundSettings(); else if(g_rl_active) drawRoundList(); else drawRoundReel();
+  roundBegin();
+  gfx_fillCircle(RCX,RCY,214,COL_AMBER); gfx_fillCircle(RCX,RCY,207,COL_PANEL);
+  int y=RCY-70;
+  rTextC(RCX,y,rFit(l1,380,3),3,c1,COL_PANEL); y+=48;
+  const String* ls[3]={&l2,&l3,&l4};
+  for(int i=0;i<3;i++) if(ls[i]->length()){ rTextC(RCX,y,rFit(*ls[i],360,2),2,i==0?COL_LIT:COL_MID,COL_PANEL); y+=30; }
+  gfx_flush(); return true;
+}
 static bool doLoadSelected(const String&adfPath){
   // v4.9 / v5.x: HD (1.76MB) over wireless is now gated by the dongle's advertised
   // capability (pad[1] of the pairing reply). An HD-capable XIAO (2MB ramdisk,
@@ -5523,6 +5750,7 @@ static bool doLoadSelected(const String&adfPath){
   // Standalone HD load (cable) is unaffected either way.
   bool hdDongleReady = espnowIsPaired() && g_espnow_dongle_board==1 && !g_hivemind;
   if(g_wireless_mode && g_mode==MODE_ADF && isHDImage(adfPath) && !hdDongleReady){
+    if(rLoadCard(T(L_HD_NO_WIRELESS),0xE8C4,T(L_NO_WIRELESS_DEV),T(L_AVAIL_HD),T(L_USE_CABLE))){ delay(2200); redrawCurrent(); return false; }   // P4R-6h
     gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
     gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_HD_NO_WIRELESS));
     gfx_setTextColor(COL_LIT,COL_PANEL);
@@ -5553,17 +5781,22 @@ static bool doLoadSelected(const String&adfPath){
       }
     }
   }
+  String tn=basenameNoExt(filenameOnly(adfPath));
+  String rnm=(g_sel>=0&&g_sel<(int)g_games.size())?g_games[g_sel].name:tn;   // P4R-6h: the round card shows the game's name
+  const bool rcard=rLoadCard(rnm,0x07FF,T(L_LOADING),g_wireless_mode?String("sending to the dongle..."):String(""),"");
+  if(!rcard){
   gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
-  gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);String tn=basenameNoExt(filenameOnly(adfPath));if(tn.length()>16)tn=tn.substring(0,16);
+  gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);if(tn.length()>16)tn=tn.substring(0,16);
   gfx_setCursor(6,STATUS_H+16);gfx_print(tn);gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(6,STATUS_H+28);gfx_print(T(L_LOADING));
-  gfx_flush();
+  gfx_flush(); }
   // Clean swap: if a disk is already mounted, cleanly eject first so the host re-reads the new media.
   // FORCESWAP=ON skips this and swaps the bytes in place (faster, but the host may not notice).
   if(g_loaded && !g_forceswap) hardDetach();
-  File f=SD_MMC.open(loadPath.c_str(),FILE_READ);if(!f){gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_FAILED));gfx_flush();delay(1000);redrawCurrent();return false;}
+  File f=SD_MMC.open(loadPath.c_str(),FILE_READ);if(!f&&rcard){rLoadCard(rnm,0x07FF,T(L_FAILED),"","");delay(1000);redrawCurrent();return false;}if(!f){gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_FAILED));gfx_flush();delay(1000);redrawCurrent();return false;}
   // Use VFS to get real file size (SD_MMC f.size() returns 0 for subdirectory files)
   String vfsLoad="/sdcard"+loadPath;
   struct stat stLoad;
+  if((stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0)&&rcard){f.close();rLoadCard(rnm,0x07FF,T(L_SIZE_ERR),"","");delay(1000);redrawCurrent();return false;}   // P4R-6h
   if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);redrawCurrent();return false;}
   uint32_t fsz=(uint32_t)stLoad.st_size;
   uint32_t copied=0;
@@ -5573,6 +5806,7 @@ static bool doLoadSelected(const String&adfPath){
     //    and the BIGDISK size remains the hard ceiling for anything sent by radio.
     if(fsz>MAX_FILE_BYTES){
       f.close();
+      if(rLoadCard(T(L_TOO_BIG),0xE8C4,String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB",T(L_HD_NO_WIRELESS),T(L_USE_CABLE))){ delay(2200); redrawCurrent(); return false; }   // P4R-6h
       gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
       gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
       gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_TOO_BIG));
@@ -5609,6 +5843,7 @@ static bool doLoadSelected(const String&adfPath){
     String vn = presentName(adfPath);   // lab14q: GEN real name, ADF/DSK DISK.xxx unless LONGNAME=ON
     if(!geomOk || !aliasMount(loadPath,fsz,vn.c_str(),pS,pC,&aerr)){
       g_alias=false;
+      if(rLoadCard(T(L_FAILED),0xE8C4,String(fsz/1024)+"KB",aerr,"")){ delay(2200); redrawCurrent(); return false; }   // P4R-6h
       gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
       gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
       gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_FAILED));
@@ -5640,8 +5875,9 @@ static bool doLoadSelected(const String&adfPath){
     if(mcN>0&&g_hivemind){                                  // multicast: fan the disk out to every MuCa- dongle in turn (v4.8.1: only when HIVEMIND=ON)
       g_sv_wl_path="";g_sv_wl_loadid=0;g_sv_wl_tag="";g_sv_wl_orig="";   // Hivemind saves: PINNED — no writeback mapping for multicast
       for(int i=0;i<mcN;i++){
+        if(!rLoadCard(rnm,0x07FF,T(L_LOADING),"Multicast "+String(i+1)+"/"+String(mcN),"")){   // P4R-6h
         gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_fillRect(4,STATUS_H+24,150,12,COL_PANEL);
-        gfx_setCursor(6,STATUS_H+26);gfx_print("Multicast "+String(i+1)+"/"+String(mcN));gfx_flush();
+        gfx_setCursor(6,STATUS_H+26);gfx_print("Multicast "+String(i+1)+"/"+String(mcN));gfx_flush(); }
         espnowSendDiskTo(mcMacs[i],copied);
       }
     } else if(g_link_home && g_home_ssid.length()){         // 5.8.6: home-WiFi transport — route via the router to the dongle's gotek.local
@@ -5730,9 +5966,10 @@ static void diagInflate(const uint8_t*src,uint32_t slen,uint8_t*dst){
 // Mount the built-in Amiga Test Kit as the emulated disk — works with no SD card inserted.
 static void doLoadDiag(){
   g_info_showing=false;
+  if(!rLoadCard("AMIGA TEST KIT",0x07FF,T(L_LOADING_DIAG),"","")){   // P4R-6h
   gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
   gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_setCursor(6,STATUS_H+16);gfx_print("AMIGA TEST KIT");
-  gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(6,STATUS_H+28);gfx_print(T(L_LOADING_DIAG));gfx_flush();
+  gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(6,STATUS_H+28);gfx_print(T(L_LOADING_DIAG));gfx_flush(); }
   if(g_loaded && !g_forceswap) hardDetach();
   g_alias=false;mscAnnounce(TOTAL_SECTORS);               // 5.9.37: diag disk is a RAM-disk mount
   build_volume("DISK.ADF",DIAG_ADF_SIZE);                 // force an .ADF image regardless of MODE
@@ -5778,7 +6015,7 @@ static bool ssDecode(const String&path){                     // decode one JPG -
     memset(jpeg_tmp_buf,0,(size_t)jw*jh*2); jpeg_tmp_w=jw; jpeg_tmp_h=jh;
     jpegdec.decode(0,0,0); jpegdec.close(); free(buf);
   }
-  float sc=(float)SS_MAX/(jw>jh?jw:jh); if(sc>1.0f)sc=1.0f;
+  float sc=(float)(g_roundui?SS_MAX_R:SS_MAX)/(jw>jh?jw:jh); if(sc>1.0f)sc=1.0f;   // P4R-6a: bigger on the round glass
   int dw=(int)(jw*sc),dh=(int)(jh*sc); if(dw<1)dw=1; if(dh<1)dh=1;
   g_ss_buf=(uint16_t*)ps_malloc((size_t)dw*dh*2);
   if(!g_ss_buf){free(jpeg_tmp_buf);jpeg_tmp_buf=NULL;return false;}
@@ -5959,8 +6196,9 @@ static const int N_NAMES=(int)(sizeof(NAMES)/sizeof(NAMES[0]));
 #define SSFX_DISS 2
 #define SSFX_SLIDE 3
 #define SSFX_CUT  4
+static inline size_t ssSlidePx(){ return g_ssR?(size_t)RW*RW:(size_t)LCD_WIDTH*LCD_HEIGHT; }   // P4R-6a
 static bool ssSlideAlloc(){
-  size_t px=(size_t)LCD_WIDTH*LCD_HEIGHT;
+  size_t px=ssSlidePx();
   if(!g_slA)g_slA=(uint16_t*)ps_malloc(px*2);
   if(!g_slB)g_slB=(uint16_t*)ps_malloc(px*2);
   return g_slA&&g_slB;
@@ -5974,7 +6212,25 @@ static inline uint16_t ssLerp565(uint16_t a,uint16_t b,int t){
   return (uint16_t)((r<<11)|(g<<5)|bl);
 }
 // render one image fit-to-screen into the live framebuffer (no flush); optionally snapshot it
+// P4R-6a: the round glass - the picture decoded bigger than a cover (own decode, the cover cache is left empty)
+// and fitted into a 640x640 box in the middle (a 4:3 picture's corners just touch the edge).
+static void ssSlideRenderR(const String&path,uint16_t*snap){
+  roundBegin(); gfx_fillScreen(TFT_BLACK);
+  if(jpeg_tmp_buf!=NULL&&jpeg_tmp_buf==g_dec_buf) free(jpeg_tmp_buf);
+  jpeg_tmp_buf=NULL; g_dec_buf=NULL; g_dec_path=""; g_dec_failed=false;
+  if(_coverDecodeRaw(path,360)){
+    int jw=jpeg_tmp_w, jh=jpeg_tmp_h; float sc=min(640.0f/jw,640.0f/jh); if(sc>2.0f)sc=2.0f;
+    int dw=(int)(jw*sc), dh=(int)(jh*sc), ox=RCX-dw/2, oy=RCY-dh/2;
+    for(int r=0;r<dh;r++){ int sy=(int)(r/sc); if(sy>=jh)sy=jh-1; int vy=oy+r; if(vy<0||vy>=RW)continue;
+      uint16_t* row=&g_rfb[vy*RW]; const uint16_t* src=&jpeg_tmp_buf[sy*jw];
+      for(int c=0;c<dw;c++){ int vx=ox+c; if(vx<0||vx>=RW)continue; int sx=(int)(c/sc); if(sx>=jw)sx=jw-1; row[vx]=src[sx]; }
+      if((r&31)==0)yield(); }
+    free(jpeg_tmp_buf); jpeg_tmp_buf=NULL;
+  }
+  if(snap)memcpy(snap,g_rfb,(size_t)RW*RW*2);
+}
 static void ssSlideRender(const String&path,uint16_t*snap){
+  if(g_ssR){ ssSlideRenderR(path,snap); return; }   // P4R-6a
   gfx_fillScreen(TFT_BLACK);
   gfx_drawJpgFile(path,0,0,gW,gH);
   if(snap)memcpy(snap,framebuffer,(size_t)LCD_WIDTH*LCD_HEIGHT*2);
@@ -5987,15 +6243,19 @@ static bool ssSlideHold(uint32_t ms){
 }
 // transition g_slA (outgoing) -> g_slB (incoming), both raw physical fb words. true=touched
 static bool ssSlideFx(int fx){
-  const int N=LCD_WIDTH*LCD_HEIGHT;
-  if(fx==SSFX_CUT){ memcpy(framebuffer,g_slB,(size_t)N*2); gfx_flush(); return false; }
+  // P4R-6a: on the round glass the frames live in g_rfb (800x800, same pixel format) and every step re-arms the
+  // round target before it is shown; otherwise the square compose buffer as before.
+  uint16_t* const fb=g_ssR?g_rfb:framebuffer;
+  const int W=g_ssR?RW:LCD_WIDTH, H=g_ssR?RW:LCD_HEIGHT, N=W*H;
+  auto show=[&](){ if(g_ssR) roundBegin(); gfx_flush(); };
+  if(fx==SSFX_CUT){ memcpy(fb,g_slB,(size_t)N*2); show(); return false; }
   if(fx==SSFX_FADE){
     const int STEPS=16;
     for(int s=1;s<=STEPS;s++){ if(Touch_ReadFrame())return true;
       int t=s*32/STEPS;
       for(int i=0;i<N;i++){ uint16_t a=swap16(g_slA[i]),b=swap16(g_slB[i]);
-        framebuffer[i]=swap16(ssLerp565(a,b,t)); if((i&4095)==0)yield(); }
-      gfx_flush(); }
+        fb[i]=swap16(ssLerp565(a,b,t)); if((i&4095)==0)yield(); }
+      show(); }
     return false;
   }
   if(fx==SSFX_DISS){
@@ -6003,23 +6263,23 @@ static bool ssSlideFx(int fx){
     for(int s=1;s<=STEPS;s++){ if(Touch_ReadFrame())return true;
       uint32_t thr=(uint32_t)s*256/STEPS;
       for(int i=0;i<N;i++){ uint32_t h=((uint32_t)i*2654435761u)>>24;   // stable per-pixel 0..255
-        framebuffer[i]=(h<thr)?g_slB[i]:g_slA[i]; if((i&4095)==0)yield(); }
-      gfx_flush(); }
+        fb[i]=(h<thr)?g_slB[i]:g_slA[i]; if((i&4095)==0)yield(); }
+      show(); }
     return false;
   }
-  // SSFX_SLIDE — push along the physical X axis (outgoing exits, incoming enters)
+  // SSFX_SLIDE — push along the buffer's X axis (outgoing exits, incoming enters)
   { const int STEPS=16;
     for(int s=1;s<=STEPS;s++){ if(Touch_ReadFrame())return true;
-      int off=s*LCD_WIDTH/STEPS; if(off>LCD_WIDTH)off=LCD_WIDTH;
-      for(int py=0;py<LCD_HEIGHT;py++){
-        uint16_t*fr=&framebuffer[py*LCD_WIDTH];
-        uint16_t*ra=&g_slA[py*LCD_WIDTH];
-        uint16_t*rb=&g_slB[py*LCD_WIDTH];
-        for(int px=0;px<LCD_WIDTH;px++){ int sa=px+off;
-          fr[px]=(sa<LCD_WIDTH)?ra[sa]:rb[sa-LCD_WIDTH]; }
+      int off=s*W/STEPS; if(off>W)off=W;
+      for(int py=0;py<H;py++){
+        uint16_t*fr=&fb[py*W];
+        uint16_t*ra=&g_slA[py*W];
+        uint16_t*rb=&g_slB[py*W];
+        for(int px=0;px<W;px++){ int sa=px+off;
+          fr[px]=(sa<W)?ra[sa]:rb[sa-W]; }
         if((py&31)==0)yield();
       }
-      gfx_flush(); }
+      show(); }
     return false;
   }
   return false;
@@ -6053,7 +6313,7 @@ static void runSlideshow(std::vector<String>&pool){
       ssSlideRender(pool[ni], g_slB);                 // decode incoming into g_slB (screen still shows outgoing)
       int fx = g_ss_fx? g_ss_fx : (SSFX_FADE+(int)(esp_random()%3));   // SHUFFLE -> fade/dissolve/slide
       bool touched=ssSlideFx(fx);
-      memcpy(g_slA,g_slB,(size_t)LCD_WIDTH*LCD_HEIGHT*2);   // incoming becomes the new outgoing
+      memcpy(g_slA,g_slB,ssSlidePx()*2);   // incoming becomes the new outgoing (P4R-6a: round or square size)
       if(touched)break;
     } else {
       ssSlideRender(pool[ni], NULL); gfx_flush();      // tight PSRAM: hard cut
@@ -6068,26 +6328,29 @@ static void runSlideshow(std::vector<String>&pool){
 // contract as bounce/slideshow). Cheap: full-frame redraw of short per-column
 // glyph trails at ~16 fps.
 static void runMatrixRain(){
+  const bool rnd=g_roundui&&roundBegin();       // P4R-6a: the whole round glass (gW/gH = 800 while it is armed)
   const int CW=12, CH=16;                       // cell (text size 2)
-  int cols=gW/CW; if(cols>64)cols=64; if(cols<1)cols=1;
+  int cols=gW/CW; if(cols>72)cols=72; if(cols<1)cols=1;
   int rows=gH/CH; if(rows<1)rows=1;
-  int head[64], spd[64];
+  int head[72], spd[72];
   for(int c=0;c<cols;c++){ head[c]=-(int)(esp_random()%(uint32_t)(rows+1)); spd[c]=1+(int)(esp_random()%2); }
   static const char GL[]="0123456789ABCDEFGHKMNPRXZ<>[]=+*/";
   const int NG=(int)sizeof(GL)-1;
   gfx_setTextSize(2);
   gfx_fillScreen(TFT_BLACK); gfx_flush();
   uint32_t last=millis(), seed=1;
+  const int mrows=rows;                         // P4R-6a: gH changes back after each flush - keep the round size
   while(true){
     webPanelService();   // keep the web UI (and its queued loads) alive while the saver owns the screen
     if(Touch_ReadFrame()){ uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<400)delay(10); break; }
     uint32_t nf=millis();
     if(nf-last>=60){ last=nf; seed++;
+      if(rnd) roundBegin();                     // P4R-6a
       gfx_fillScreen(TFT_BLACK);
       for(int c=0;c<cols;c++){
         int hy=head[c];
         for(int tl=0;tl<14;tl++){
-          int ry=hy-tl; if(ry<0||ry>=rows) continue;
+          int ry=hy-tl; if(ry<0||ry>=mrows) continue;
           uint16_t col;
           if(tl==0) col=0xFFFF;                                  // bright head
           else { int g=60-tl*4; if(g<8)g=8; col=(uint16_t)((g&0x3F)<<5); }   // fading green trail
@@ -6098,7 +6361,7 @@ static void runMatrixRain(){
           gfx_print(s);
         }
         head[c]+=spd[c];
-        if(head[c]-14>rows){ head[c]=0; spd[c]=1+(int)(esp_random()%2); }
+        if(head[c]-14>mrows){ head[c]=0; spd[c]=1+(int)(esp_random()%2); }
       }
       gfx_flush();
     } else delay(5);
@@ -6107,15 +6370,88 @@ static void runMatrixRain(){
   if(g_car_active){drawCarousel();gfx_flush();} else {drawFullUI();gfx_flush();}
 }
 
+// ── P4R-7: the BOING screensaver (AMIGA theme + ADF library, round glass) ──────────────────────────────────────
+// The 1985 demo: a grey room with a purple grid and floor, a red/white ball that spins as it bounces, its shadow
+// on the wall. The room is drawn once into its own buffer; each frame puts back the ball's old corner of the room,
+// then draws the shadow and the ball. The ball's shape (longitude/latitude/shade per pixel) is worked out once,
+// so a frame is table look-ups only. Any touch wakes it.
+static void runBoingSaver(){
+  if(!roundBegin()) return;
+  const int R=96, D=2*R+1, FLOORY=612, SOX=34, SOY=22;
+  uint16_t* room=(uint16_t*)heap_caps_malloc((size_t)RW*RW*2,MALLOC_CAP_SPIRAM);
+  int16_t* lonq=(int16_t*)heap_caps_malloc((size_t)D*D*2,MALLOC_CAP_SPIRAM);
+  uint8_t* latsh=(uint8_t*)heap_caps_malloc((size_t)D*D,MALLOC_CAP_SPIRAM);
+  if(!room||!lonq||!latsh){ if(room)free(room); if(lonq)free(lonq); if(latsh)free(latsh); roundEnd(); return; }
+  const uint16_t GREY=0xAD55, PURP=0xA815;
+  for(int y=0;y<RW;y++) for(int x=0;x<RW;x++){ uint16_t c=GREY;
+    if(y<FLOORY){ if(x%50==0||y%50==0) c=PURP; }                          // back wall: square grid
+    else { float tt=1.0f+(float)(y-FLOORY)/90.0f; float xw=(float)(x-RCX)/tt+1000.0f;   // floor: lines fan out towards you
+           if(fmodf(xw,50.0f)<1.3f) c=PURP; int k=(int)sqrtf((float)(y-FLOORY)*6.0f); int ys=FLOORY+(k*k)/6; if(y==ys||y==FLOORY) c=PURP; }
+    room[y*RW+x]=c; }
+  { const float tilt=0.31f, ct=cosf(tilt), st=sinf(tilt), seg=3.14159265f/8.0f;
+    for(int j=0;j<D;j++) for(int i=0;i<D;i++){ int x=i-R, y=j-R, k=j*D+i;
+      if(x*x+y*y>R*R){ lonq[k]=-1; latsh[k]=0; continue; }
+      float nx=(float)x/R, ny=(float)y/R, nz=sqrtf(fmaxf(0.0f,1.0f-nx*nx-ny*ny)), rx=nx*ct-ny*st, ry=nx*st+ny*ct;
+      float lon=atan2f(rx,nz)+3.14159265f, lat=asinf(fmaxf(-1.0f,fminf(1.0f,ry)));
+      lonq[k]=(int16_t)(lon*512.0f/6.2831853f); int li=((int)floorf(lat/seg))&1; int sh=(int)(nz*15.0f+0.5f);   // shade 0..15
+      latsh[k]=(uint8_t)(li|(sh<<1)); } }
+  uint16_t redT[16], whtT[16]; for(int s=0;s<16;s++){ int lv=110+s*146/15; redT[s]=rMix565(0x0000,0xE8C3,lv); whtT[s]=rMix565(0x0000,0xFFDF,lv); }
+  memcpy(g_rfb,room,(size_t)RW*RW*2);
+  float x=RCX, y=300, vx=2.6f, vy=0; const float G=0.5f; const float VUP=sqrtf(2.0f*G*(float)(FLOORY-R-250));
+  int phase=0, px=-1000, py=-1000; uint32_t last=millis();
+  auto restore=[&](int cx,int cy){ int x0=cx-R-2, x1=cx+R+SOX+2, y0=cy-R-2, y1=cy+R+SOY+2;
+    if(x0<0)x0=0; if(y0<0)y0=0; if(x1>RW-1)x1=RW-1; if(y1>RW-1)y1=RW-1;
+    for(int yy=y0;yy<=y1;yy++) memcpy(&g_rfb[yy*RW+x0],&room[yy*RW+x0],(size_t)(x1-x0+1)*2); };
+  while(true){
+    webPanelService();
+    if(Touch_ReadFrame()){ uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<400)delay(10); break; }
+    uint32_t nf=millis(); if(nf-last<33){ delay(4); continue; } last=nf;
+    x+=vx; vy+=G; y+=vy;
+    if(y+R>FLOORY){ y=(float)(FLOORY-R); vy=-VUP; }
+    { float dy=y-RCY, lim=392.0f-R; float hw=sqrtf(fmaxf(0.0f,lim*lim-dy*dy));
+      if(x-RCX>hw){ x=RCX+hw; vx=-fabsf(vx); } else if(RCX-x>hw){ x=RCX-hw; vx=fabsf(vx); } }
+    phase=(phase+(vx>0?6:-6))&511;
+    if(px>-1000) restore(px,py);
+    int cx=(int)x, cy=(int)y; px=cx; py=cy;
+    for(int j=0;j<D;j++){ int yy=cy-R+j+SOY; if(yy<0||yy>=RW) continue;              // shadow on the wall/floor
+      for(int i=0;i<D;i++){ if(lonq[j*D+i]<0) continue; int xx=cx-R+i+SOX; if(xx<0||xx>=RW) continue;
+        uint16_t b=room[yy*RW+xx]; g_rfb[yy*RW+xx]=rMix565(b,0x0000,110); } }
+    for(int j=0;j<D;j++){ int yy=cy-R+j; if(yy<0||yy>=RW) continue;                 // the ball
+      for(int i=0;i<D;i++){ int k=j*D+i; int lq=lonq[k]; if(lq<0) continue; int xx=cx-R+i; if(xx<0||xx>=RW) continue;
+        uint8_t ls=latsh[k]; int c=((((lq+phase)&511)>>5)+(ls&1))&1; g_rfb[yy*RW+xx]=c?redT[ls>>1]:whtT[ls>>1]; } }
+    roundBegin(); gfx_flush();
+  }
+  free(room); free(lonq); free(latsh); roundEnd();
+  g_touch_active=false; g_touch_release=0; g_last_touch_ms=millis();
+  if(g_car_active){drawCarousel();gfx_flush();} else {drawFullUI();gfx_flush();}
+}
+// P4R-6a: one step of the bounce on the round glass - the sprite (g_ss_w x g_ss_h, top-left x,y) moves and bounces off
+// the circle's edge instead of the box's. Reflect the velocity about the edge normal, keep the speed, add a small random
+// turn so it never settles into one line through the middle. true = it hit the edge.
+static bool ssRoundStep(float&x,float&y,float&vx,float&vy){
+  x+=vx; y+=vy;
+  float cx=x+g_ss_w*0.5f, cy=y+g_ss_h*0.5f, dx=cx-RCX, dy=cy-RCY, d=sqrtf(dx*dx+dy*dy);
+  float rr=0.43f*sqrtf((float)g_ss_w*g_ss_w+(float)g_ss_h*g_ss_h);   // ~0.85 x half the diagonal: the corners may just touch the edge
+  float lim=396.0f-rr; if(lim<20.0f)lim=20.0f;
+  if(d<=lim||d<0.001f) return false;
+  float nx=dx/d, ny=dy/d, sp=sqrtf(vx*vx+vy*vy), dot=vx*nx+vy*ny;
+  if(dot>0){ vx-=2.0f*dot*nx; vy-=2.0f*dot*ny; }
+  float a=atan2f(vy,vx)+((float)(esp_random()%1000)/1000.0f-0.5f)*0.30f; vx=sp*cosf(a); vy=sp*sinf(a);
+  x=RCX+nx*lim-g_ss_w*0.5f; y=RCY+ny*lim-g_ss_h*0.5f;
+  return true;
+}
 static void runScreensaver(){                                // blocking bounce loop; any touch exits
   // v5.7.2: slideshow mode — real images (folder + favourited covers) with transitions.
   // Only engages when there's genuine content; otherwise falls through to the sprite bounce.
+  if(g_roundui&&g_theme_idx==AMIGA_THEME&&g_mode==MODE_ADF){ runBoingSaver(); return; }   // P4R-7: AMIGA theme = the Boing demo
   if(g_ss_matrix){ runMatrixRain(); return; }                 // 5.8.3: falling-code saver
   if(g_ss_slides && g_cracktro!=7 && g_cracktro!=8){
     std::vector<String> pool=ssBuildSlidePool();
     if(!pool.empty()){
+      g_ssR=g_roundui&&roundBegin();                           // P4R-6a: round glass
       gfx_fillScreen(TFT_BLACK); gfx_flush();
       runSlideshow(pool);
+      g_ssR=false;
       { uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<400)delay(10); }   // drain the wake touch
       g_touch_active=false; g_touch_release=0; g_last_touch_ms=millis();
       if(g_car_active){drawCarousel();gfx_flush();} else {drawFullUI(); gfx_flush();}
@@ -6123,29 +6459,31 @@ static void runScreensaver(){                                // blocking bounce 
     }
   }
   int idx=0;
+  const bool rnd=g_roundui&&roundBegin();                   // P4R-6a: bounce round the whole round glass (gW/gH = 800 while armed)
+  const int nsz0=rnd?5:3;                                    //   ...with bigger names
   bool deniseMode=(g_cracktro==8);                          // 5.4.0: hidden Denise theme
   bool vincent=false;
   bool wranglerMode=(g_cracktro==9);                        // v5.5.2: bounce the @wrangler_amiga wordmark
   bool retronautMode=(g_cracktro==10);                       // P4.9: bounce the Retronaut helmet
   bool claudeMode=(!deniseMode)&&(!wranglerMode)&&(!retronautMode)&&g_ss_paths.empty();
   int ssForm=0;                                              // v4.8.1 ghost + v4.9.6 lolly: cycles on every wall hit
-  bool showName=false; const char* curName=NAMES[0]; int nameSz=3;   // v5.5.1: bounce can flip to a contributor name
+  bool showName=false; const char* curName=NAMES[0]; int nameSz=nsz0;   // v5.5.1: bounce can flip to a contributor name
   float ph=0;
   if(deniseMode){
-    if(!ssMakeName(false)){g_ss_have=false;return;}
+    if(!ssMakeName(false)){g_ss_have=false;roundEnd();return;}
   } else if(wranglerMode){
-    curName="@wrangler_amiga"; nameSz=3; gfx_setTextSize(nameSz);
+    curName="@wrangler_amiga"; nameSz=nsz0; gfx_setTextSize(nameSz);
     while(nameSz>1&&gfx_textWidth(curName)>gW-8){nameSz--;gfx_setTextSize(nameSz);}
-    if(!ssMakeClaude(0)){g_ss_have=false;return;}   // v5.5.5: start on a sprite; wall hits flip @wrangler_amiga <-> sprite
+    if(!ssMakeClaude(0)){g_ss_have=false;roundEnd();return;}   // v5.5.5: start on a sprite; wall hits flip @wrangler_amiga <-> sprite
   } else if(retronautMode){
-    if(!retroHelmDecode()){g_ss_have=false;return;}
+    if(!retroHelmDecode()){g_ss_have=false;roundEnd();return;}
   } else if(claudeMode){
     // Empty /screensaver/ folder: bounce the (slowly spinning) Claude starburst
-    if(!g_ss_claude||!ssMakeClaude(0)){g_ss_have=false;return;}
+    if(!g_ss_claude||!ssMakeClaude(0)){g_ss_have=false;roundEnd();return;}
   } else {
     bool ok=false;
     for(int t=0;t<(int)g_ss_paths.size();t++){ if(ssDecode(g_ss_paths[t])){idx=t;ok=true;break;} }
-    if(!ok){ssFree();g_ss_have=false;return;}   // no decodable image -> disarm, back to UI
+    if(!ok){ssFree();g_ss_have=false;roundEnd();return;}   // no decodable image -> disarm, back to UI
   }
   int x,y,vx,vy;
   if(deniseMode||wranglerMode||retronautMode){             // 5.4.0/5.5.2/P4.9: random start pos + direction (no two-corner lock)
@@ -6154,6 +6492,8 @@ static void runScreensaver(){                                // blocking bounce 
     vx=1+(int)(esp_random()%3); if(esp_random()&1)vx=-vx;
     vy=1+(int)(esp_random()%3); if(esp_random()&1)vy=-vy;
   } else { x=(gW-g_ss_w)/2; y=(gH-g_ss_h)/2; vx=2; vy=2; }
+  float fx=0,fy=0,fvx=0,fvy=0;                               // P4R-6a: round - float position/speed, starts in the middle
+  if(rnd){ fx=RCX-g_ss_w*0.5f; fy=RCY-g_ss_h*0.5f; float a=(float)(esp_random()%6283)/1000.0f; fvx=2.6f*cosf(a); fvy=2.6f*sinf(a); x=(int)fx; y=(int)fy; }
   gfx_fillScreen(TFT_BLACK);
   uint32_t last=millis();
   while(true){
@@ -6161,15 +6501,21 @@ static void runScreensaver(){                                // blocking bounce 
     if(Touch_ReadFrame()){ uint32_t t0=millis(); while(Touch_ReadFrame()&&millis()-t0<400)delay(10); break; }
     uint32_t nf=millis();
     if(nf-last>=33){ last=nf;
-      x+=vx; y+=vy; bool hit=false;
+      if(rnd) roundBegin();                                  // P4R-6a: every frame (the flush drops back to square)
+      bool hit=false;
+      if(rnd){ hit=ssRoundStep(fx,fy,fvx,fvy); x=(int)fx; y=(int)fy; }
+      else {
+      x+=vx; y+=vy;
       if(x<=0){x=0;vx=-vx;hit=true;} else if(x>=gW-g_ss_w){x=gW-g_ss_w;vx=-vx;hit=true;}
       if(y<=0){y=0;vy=-vy;hit=true;} else if(y>=gH-g_ss_h){y=gH-g_ss_h;vy=-vy;hit=true;}
+      }
       if(deniseMode&&hit){ vincent=!vincent; ssMakeName(vincent);   // 5.4.0: swap Denise <-> Vincent on each wall hit
         if(x>gW-g_ss_w)x=gW-g_ss_w; if(y>gH-g_ss_h)y=gH-g_ss_h; if(x<0)x=0; if(y<0)y=0; }
       else if(hit&&!claudeMode&&!wranglerMode&&g_ss_paths.size()>1){ int ni=(idx+1)%(int)g_ss_paths.size();
         if(ssDecode(g_ss_paths[ni]))idx=ni; else ssDecode(g_ss_paths[idx]);   // skip undecodable, keep a valid buffer
         if(x>gW-g_ss_w)x=gW-g_ss_w; if(y>gH-g_ss_h)y=gH-g_ss_h; if(x<0)x=0; if(y<0)y=0; }
-      if((claudeMode||wranglerMode)&&hit){ if((esp_random()%5)<2){ showName=true; curName=wranglerMode?"@wrangler_amiga":NAMES[(int)(esp_random()%(uint32_t)N_NAMES)]; nameSz=3; gfx_setTextSize(nameSz); while(nameSz>1&&gfx_textWidth(curName)>gW-8){nameSz--;gfx_setTextSize(nameSz);} g_ss_w=gfx_textWidth(curName); g_ss_h=8*nameSz; if(x>gW-g_ss_w)x=gW-g_ss_w; if(y>gH-g_ss_h)y=gH-g_ss_h; if(x<0)x=0; if(y<0)y=0; } else { showName=false; ssForm=(int)(esp_random()%3); if(x>gW-96)x=gW-96; if(y>gH-96)y=gH-96; if(x<0)x=0; if(y<0)y=0; } }   // v5.5.1: ~40% of bounces flip to a name
+      if((claudeMode||wranglerMode)&&hit){ if((esp_random()%5)<2){ showName=true; curName=wranglerMode?"@wrangler_amiga":NAMES[(int)(esp_random()%(uint32_t)N_NAMES)]; nameSz=nsz0; gfx_setTextSize(nameSz); while(nameSz>1&&gfx_textWidth(curName)>gW-8){nameSz--;gfx_setTextSize(nameSz);} g_ss_w=gfx_textWidth(curName); g_ss_h=8*nameSz; if(x>gW-g_ss_w)x=gW-g_ss_w; if(y>gH-g_ss_h)y=gH-g_ss_h; if(x<0)x=0; if(y<0)y=0; } else { showName=false; ssForm=(int)(esp_random()%3); if(x>gW-96)x=gW-96; if(y>gH-96)y=gH-96; if(x<0)x=0; if(y<0)y=0; } }   // v5.5.1: ~40% of bounces flip to a name
+      if(rnd&&hit){ fx=(float)x; fy=(float)y; }             // P4R-6a: keep the float position after a sprite/size swap
       if((claudeMode||wranglerMode)&&!showName){ ph+=0.02f; if(ssForm==1)ssMakeGhost(ph); else if(ssForm==2)ssMakeLolly(ph); else ssMakeClaude(ph); }   // re-render each frame
       gfx_fillScreen(TFT_BLACK); if((claudeMode||wranglerMode)&&showName){ gfx_setTextSize(nameSz); gfx_setTextColor(CRK_RGB(244,238,225),TFT_BLACK); gfx_setCursor(x,y); gfx_print(curName); } else ssBlit(x,y); gfx_flush();
     } else delay(5);
@@ -6610,6 +6956,8 @@ static int rtfmSectionMenu(const std::vector<String>& sec){         // full-scre
     delay(12);
   }
 }
+// P4R-5: the round reader's rim buttons: TOP (right), CLOSE (6 o'clock, as in Settings), SIZE, SECTIONS (left)
+static const RRim g_rdrim[4]={ {28,56,32}, {70,110,34}, {124,152,31}, {156,178,33} };
 static void doManual(const String& path,const char* title=nullptr){   // lab15j: title (e.g. "NFO"); default = MANUAL
   String raw="";
   { File f=SD_MMC.open(path,FILE_READ);
@@ -6626,8 +6974,9 @@ static void doManual(const String& path,const char* title=nullptr){   // lab15j:
       } f.close(); }
   }
   if(!raw.length())raw=title?"(no text)":"(no manual text)";
-  const int margin=8, topH=22, botH=30;
-  const int areaTop=topH+3, areaBot=VH-botH-2, maxW=VW-2*margin;
+  const bool rnd=g_roundui;   // P4R-5: the ROUND reader - a 540 px column in the middle of the glass, buttons on the rim
+  const int margin=rnd?130:8, topH=22, botH=30;
+  const int areaTop=rnd?140:topH+3, areaBot=rnd?660:VH-botH-2, maxW=rnd?540:VW-2*margin;
   int sz=g_name_sz, lineH=8*sz+(sz>=2?5:3);
   std::vector<String> lines; std::vector<uint8_t> head; std::vector<int> secLine; std::vector<String> secName;   // v2: head[i]=heading; sec* = jump index
   auto rewrap=[&](){ lines.clear(); head.clear(); secLine.clear(); secName.clear(); sz=g_name_sz; lineH=8*sz+(sz>=2?5:3); gfx_setTextSize(sz);
@@ -6651,7 +7000,31 @@ static void doManual(const String& path,const char* title=nullptr){   // lab15j:
   while(true){
     int nbtn = secName.size()? 4 : 3;   // v2 buttons: SIZE, TOP, [SECTIONS], CLOSE
     int bw = VW/nbtn;
-    if(dirty||vel!=0){ dirty=false;
+    if((dirty||vel!=0)&&rnd&&roundBegin()){ dirty=false;   // P4R-5: round page
+      gfx_fillScreen(COL_BG);
+      gfx_setTextSize(sz);
+      int first=(int)(scroll/lineH); if(first<0)first=0;
+      int yy=areaTop-((int)scroll-first*lineH);
+      g_clip_y0=areaTop; g_clip_y1=areaBot;                      // lines slide in and out at the window's edges
+      for(int i=first;i<(int)lines.size()&&yy<areaBot;i++){ gfx_setTextColor(head[i]?COL_ACCENT:COL_LIT,COL_BG); gfx_setCursor(margin,yy); gfx_print(lines[i]); yy+=lineH; }
+      g_clip_y0=0; g_clip_y1=RW;
+      float ms=maxScroll(); int pct=ms>0?(int)(scroll*100/ms):100;
+      { String nm=g_games.empty()?String(""):g_games[g_sel].name; if(nm.length()>22) nm=nm.substring(0,21)+"..";
+        String pp[3]; uint16_t cc[3]; pp[0]=title?title:T(L_MANUAL); cc[0]=COL_ORANGE; pp[1]=String("  ")+nm; cc[1]=COL_LIT; pp[2]=String("  ")+String(pct)+"%"; cc[2]=COL_MID;
+        rArcText(366,2,pp,cc,3,COL_BG); }
+      if(ms>0){                                                   // where you are: a dotted arc on the right rim, the bright part = this page
+        for(int a=-40;a<=40;a+=2){ float ar=a*0.0174533f; gfx_fillCircle(RCX+(int)(382*cosf(ar)),RCY+(int)(382*sinf(ar)),2,COL_PANEL); }
+        float span=80.0f*(float)(areaBot-areaTop)/((float)lines.size()*lineH); if(span<8)span=8; if(span>80)span=80;
+        float a0=-40.0f+(80.0f-span)*(scroll/ms);
+        for(float a=a0;a<=a0+span;a+=1.5f){ float ar=a*0.0174533f; gfx_fillCircle(RCX+(int)(382*cosf(ar)),RCY+(int)(382*sinf(ar)),3,COL_AMBER); } }
+      for(int i=0;i<4;i++){ uint8_t id=g_rdrim[i].id; if(id==33&&!secName.size()) continue;
+        uint16_t bc=(id==34)?COL_ACCENT:(id==31)?COL_BLUE:(id==32)?COL_GREEN:COL_AMBER;
+        rFillRingSeg(g_rdrim[i].a0,g_rdrim[i].a1,RRIM_R0,RRIM_R1,bc);
+        float am=(g_rdrim[i].a0+g_rdrim[i].a1)*0.5f*0.0174533f;
+        rArcLabel(358,am,(id==34)?String("CLOSE"):(id==31)?String("SIZE"):(id==32)?String("TOP"):String("JUMP"),RIM_SZ,RIM_ADV,inkFor(bc),bc); }
+      gfx_flush();
+    }
+    else if(dirty||vel!=0){ dirty=false;
       gfx_fillScreen(COL_BG);
       gfx_setTextSize(sz);
       int first=(int)(scroll/lineH); if(first<0)first=0;
@@ -6684,8 +7057,11 @@ static void doManual(const String& path,const char* title=nullptr){   // lab15j:
       lastX=tx; lastY=ty;
     } else {
       if(pressed&&++rel>=3){ pressed=false;
-        if(!moved){ int by=VH-botH;
-          if(lastY>=by){ int idx=lastX/bw; if(idx>=nbtn)idx=nbtn-1;
+        if(!moved){ int by=VH-botH; bool onBtn=false; int idx=0;
+          if(rnd&&g_touch_round){ uint8_t id=rRimHitSet(g_rdrim,4,lastX,lastY);   // P4R-5: the round reader's rim buttons
+            if(id==31){onBtn=true;idx=0;} else if(id==32){onBtn=true;idx=1;} else if(id==33&&secName.size()){onBtn=true;idx=2;} else if(id==34){onBtn=true;idx=nbtn-1;} }
+          else if(lastY>=by){ onBtn=true; idx=lastX/bw; if(idx>=nbtn)idx=nbtn-1; }
+          if(onBtn){
             if(idx==0){ applyFont((g_font+1)%3); saveConfigKey("FONT",fontKey(g_font)); rewrap(); float ms=maxScroll(); if(scroll>ms)scroll=ms; dirty=true; }
             else if(idx==1){ scroll=0; vel=0; dirty=true; }                                            // TOP
             else if(secName.size()&&idx==2){ int pick=rtfmSectionMenu(secName);                        // SECTIONS jump
@@ -7465,11 +7841,14 @@ void setup(){
     { // lab14l: "it's alive" screen - up within a second of power-on and held while the library loads
       // (a big card takes ~20 s before the cracktro). Drawn here, after CONFIG.TXT, so it has the right
       // rotation. Anything that follows (scan screen, cover build, TOO BIG, cracktro) simply draws over it.
+      if(g_roundui) roundBegin();   // P4R-6g: the whole round glass (centred the same)
       gfx_fillScreen(TFT_BLACK);
       gfx_setTextSize(3); gfx_setTextColor(COL_ORANGE,TFT_BLACK);
       gfx_setCursor((gW-gfx_textWidth("OMEGAWARE"))/2, gH/2-58); gfx_print("OMEGAWARE");
       gfx_setTextSize(6); gfx_setTextColor(TFT_WHITE,TFT_BLACK);
       gfx_setCursor((gW-gfx_textWidth("GTi"))/2, gH/2-16); gfx_print("GTi");
+      gfx_setTextSize(2); gfx_setTextColor(0x7BEF,TFT_BLACK);   // P4R-6g (Mez): the firmware version, small, under GTi
+      gfx_setCursor((gW-gfx_textWidth(FW_VERSION))/2, gH/2+46); gfx_print(FW_VERSION);
       gfx_flush();
     }
     gLog("[panel] strips=%d (cap %d) flushdelay=%dus  [lab3: STRIPROWS= / FLUSHUS=]\n",g_strip_rows,g_strip_cap,g_flush_us);
@@ -7721,9 +8100,11 @@ static void doCategoryBrowse(){
 static void switchLib(int m){   // int, not DiskMode: Arduino auto-generates this prototype ABOVE the enum decl, so an enum param won't compile
   { // lab15g: say so AT ONCE - on a big card the load takes seconds and a silent screen reads as a missed tap
     const char* t=m==MODE_ADF?"Loading ADF library...":m==MODE_DSK?"Loading DSK library...":"Loading GEN library...";
+    if(g_roundui&&(g_info_showing||g_car_active||g_rl_active)){ g_rr_toast=t; g_rr_toast_col=COL_ACCENT; roundRedrawNow(); }   // P4R-4: say it on the round screen
+    else {
     gfx_setTextSize(2); int tw=gfx_textWidth(t), bw=tw+32, bh=40, bx=(gW-bw)/2, by=(gH-bh)/2;
     gfx_fillRoundRect(bx,by,bw,bh,10,COL_ACCENT); gfx_setTextColor(TFT_WHITE,COL_ACCENT);
-    gfx_setCursor(bx+16,by+12); gfx_print(t); gfx_flush(); }
+    gfx_setCursor(bx+16,by+12); gfx_print(t); gfx_flush(); } }
   g_mode=(DiskMode)m;g_libpath="";
   if(g_categories){reloadLevel();}
   else{g_files.release();gamesClear();   // lab14n: free the old library first (clear() kept the games + the vector's block)
@@ -7732,6 +8113,7 @@ static void switchLib(int m){   // int, not DiskMode: Arduino auto-generates thi
     else loadNfoCache();                                                                                  //   exactly as setup() does
     g_nfoharvest.clear();g_nfoharvest.shrink_to_fit();g_manualset.clear();g_manualset.shrink_to_fit();g_hdset.clear();g_hdset.shrink_to_fit();   // lab14n
     fwLocFree();heap_caps_malloc_extmem_enable(4096);bcSet(BC_READY,(uint32_t)g_games.size());buildActiveLetters();g_sel=g_scroll=0;g_scrollPx=0;g_az_page=0;if(!g_games.empty())setActiveLetter(bucketOf(g_games[0].name));}
+  g_rr_toast="";   // P4R-4: the round "Loading..." pill
   drawFullUI();gfx_flush();
 }
 static void drawInfoBottomBar(){
@@ -7767,6 +8149,7 @@ static void drawInfoBottomBar(){
   }
 }
 static void drawInfoFull(){
+  if(g_roundui&&roundBegin()){ drawRoundSettings(); gfx_flush(); return; }   // P4R-4: round Settings
   gfx_fillScreen(COL_BG);drawStatusBar();drawInfoPanel();drawInfoBottomBar();gfx_flush();
 }
 static void infoAction(uint8_t act){
@@ -7825,7 +8208,8 @@ static void infoAction(uint8_t act){
 static void handleTap(uint16_t px,uint16_t py){
   // ── v5.5.4: full-screen paginated INFO — swallow ALL taps while settings are open ──
   if(g_info_showing){
-    if(py>=(uint16_t)(VH-BOTTOM_H)){
+    if(g_touch_round){ if(roundSettingsNav(px,py)) return; }   // P4R-4: round Settings - CLOSE rim button, < > page buttons; rows below
+    else if(py>=(uint16_t)(VH-BOTTOM_H)){
       int bw=VW/5,bsel=px/bw; if(bsel>4)bsel=4;
       if(bsel==0){ if(g_info_page>0){g_info_page--;drawInfoFull();} }
       else if(bsel==1){ if(g_info_page<g_info_pages-1){g_info_page++;drawInfoFull();} }
@@ -7834,7 +8218,7 @@ static void handleTap(uint16_t px,uint16_t py){
     }
     for(int i=0;i<g_ir_n;i++){
       if(px>=(uint16_t)g_ir[i].x&&px<(uint16_t)(g_ir[i].x+g_ir[i].w)&&py>=(uint16_t)g_ir[i].y&&py<(uint16_t)(g_ir[i].y+g_ir[i].h)){
-        uint32_t t0=millis(); uint8_t a=g_ir[i].act; infoAction(a);   // lab15a2: slow Settings taps go in the log
+        uint32_t t0=millis(); uint8_t a=g_ir[i].act; g_info_last=(a==IA_TESTPAGE||a==IA_TESTBACK)?0:a; infoAction(a);   // lab15a2: slow Settings taps go in the log; P4R-5: remember it for the red outline
         uint32_t dt=millis()-t0; if(dt>300) gLog("[slow] settings action %u took %lums | int=%u psram=%u largest-int=%u\n",(unsigned)a,(unsigned long)dt,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram(),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         return; }
     }
@@ -7911,7 +8295,7 @@ static void handleTap(uint16_t px,uint16_t py){
     if(btn==0&&g_sel>0){g_sel--;g_disk_sel=0;g_disk_page=0;setActiveLetter(bucketOf(g_games[g_sel].name));if((float)(g_sel*LIST_ITEM_H)<g_scrollPx)g_scrollPx=g_sel*LIST_ITEM_H;drawListAndCover();gfx_flush();}
     else if(btn==1&&g_sel<(int)g_games.size()-1){g_sel++;g_disk_sel=0;g_disk_page=0;setActiveLetter(bucketOf(g_games[g_sel].name));if((float)((g_sel+1)*LIST_ITEM_H)>g_scrollPx+(LIST_BOTTOM-LIST_TOP))g_scrollPx=(g_sel+1)*LIST_ITEM_H-(LIST_BOTTOM-LIST_TOP);drawListAndCover();gfx_flush();}
     else if(btn==2){ g_info_showing=false; carEnter(); }   // REEL — enter the carousel
-    else if(btn==3){ g_info_showing=!g_info_showing; if(g_info_showing){g_info_page=0;g_info_test=false;drawInfoFull();} else {drawFullUI();gfx_flush();} }
+    else if(btn==3){ g_info_showing=!g_info_showing; if(g_info_showing){g_info_page=0;g_info_test=false;g_info_last=0;drawInfoFull();} else {drawFullUI();gfx_flush();} }
     return;
   }
 }
