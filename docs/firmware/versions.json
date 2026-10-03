@@ -19,12 +19,20 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "5.9.41-lab15q",
+        "ch": "beta",
+        "date": "2026-10-03",
+        "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15q-update.bin",
+        "note": "Latest (3 Oct). Same as lab15m, plus: two new screen languages, Polish (PL, checked by 8-Bitz) and Czech (CS) - Settings > LANG, or LANG=PL / LANG=CS in CONFIG.TXT; the web page's language list now has NL, PL and CS. In ESP-NOW mode the GTi's own Wi-Fi is now GTi_Omega-XXXX with password gotekXXXX (it used to be an open, unnamed ESP_xxxxxx network) and serves the GTi web page at 192.168.4.1; Settings shows the name and password. Your phone drops off it for a few seconds while a disk is sent to a dongle. Built with ESP32 core 3.3.12.",
+        "latest": true
+      },
+      {
         "v": "5.9.41-lab15m",
         "ch": "beta",
         "date": "2026-09-30",
         "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15m-update.bin",
         "note": "Latest (30 Sep). Same as lab15i, plus: the cover picture in the list fills its frame - the empty bands round a cover (letterbox and black PAL borders) are cut off and the frame hugs the picture; and tapping a game's text (title + description) in the list opens its whole .nfo full-screen in the manual reader (drag to scroll, tap to close). Built with ESP32 core 3.3.12.",
-        "latest": true
+        "latest": false
       },
       {
         "v": "5.9.41-lab15i",
@@ -217,9 +225,17 @@
     "chipFamily": "ESP32-S3",
     "builds": [
       {
-        "v": "Webby-1.6.9-supermini",
+        "v": "Webby-1.6.10-supermini",
         "ch": "beta",
         "latest": true,
+        "date": "2026-10-03",
+        "full": "firmware/supermini-beta/manifest-1.6.10-supermini.json",
+        "note": "Latest (3 Oct). For the Super Mini (two small LEDs, red + blue); for a Waveshare S3-Zero (one colour LED) use the S3-Zero entry. NEEDS GTi 5.9.41-lab14t or newer on the screen. Same as 1.6.9, plus: the dongle's page (192.168.4.1) in Polish (checked by 8-Bitz) and Czech - a phone or browser set to either gets it automatically, or tap PL / CS. Pair again after flashing (full wipe)."
+      },
+      {
+        "v": "Webby-1.6.9-supermini",
+        "ch": "beta",
+        "latest": false,
         "date": "2026-09-29",
         "full": "firmware/supermini-beta/manifest-1.6.9-supermini.json",
         "note": "Latest. For the Super Mini (two small LEDs, red + blue); for a Waveshare S3-Zero (one colour LED) use the S3-Zero entry. NEEDS GTi 5.9.41-lab14t or newer on the screen (older screens can pair but not send disks) - update the screen too. Same as 1.6.8 (unique Wi-Fi name GotekOMEGA-XXXX), plus a fixed page at 192.168.4.1: real version, any disk image (ADF DSK HFE ST IMG ...) up to 1.75 MB, fits a phone, all six languages, the real Wi-Fi name, links to the full interface / web flasher / help. Pair again after flashing (full wipe)."
@@ -286,9 +302,17 @@
     "chipFamily": "ESP32-S3",
     "builds": [
       {
-        "v": "Webby-1.6.9-zero",
+        "v": "Webby-1.6.10-zero",
         "ch": "beta",
         "latest": true,
+        "date": "2026-10-03",
+        "full": "firmware/zero-beta/manifest-1.6.10-zero.json",
+        "note": "Latest (3 Oct). For the Waveshare ESP32-S3-Zero (one colour status LED) - same firmware as Webby-1.6.10-supermini, only the status light differs; don't put it on a Super Mini. NEEDS GTi 5.9.41-lab14t or newer on the screen. Same as 1.6.9, plus the dongle's page in Polish and Czech. Pair after flashing (full wipe)."
+      },
+      {
+        "v": "Webby-1.6.9-zero",
+        "ch": "beta",
+        "latest": false,
         "date": "2026-09-29",
         "full": "firmware/zero-beta/manifest-1.6.9-zero.json",
         "note": "Latest. For the Waveshare ESP32-S3-Zero (one colour status LED) - same firmware as Webby-1.6.9-supermini, only the status light differs; don't put it on a Super Mini. NEEDS GTi 5.9.41-lab14t or newer on the screen - update the screen too. Fixed page at 192.168.4.1 (real version, any disk image up to 1.75 MB, fits a phone, all six languages, links). Pair after flashing (full wipe)."

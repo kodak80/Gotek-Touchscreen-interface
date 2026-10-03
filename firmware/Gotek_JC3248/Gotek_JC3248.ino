@@ -49,7 +49,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15m-JC3248"  // lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j: tap the game text in the list (title + description) = the whole .nfo full-screen in the manual reader (scroll, SIZE, TOP, CLOSE) | lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
+#define FW_VERSION "5.9.41-lab15q-JC3248"  // lab15q: Polish screen text corrected by 8-Bitz (ROLKA, TERAZ GRA, WSZYSTKIE, ULUBIONE...); the reel bar's ALL/FAV/MOST word shrinks when it is too long for its button | lab15p: ESP-NOW mode - the GTi's own Wi-Fi is now GTi_Omega-XXXX, password gotekXXXX (was an OPEN, unnamed ESP_xxxxxx), and serves the GTi web page at 192.168.4.1; Settings shows the name + password | lab15o: Polish (LANG=PL) and Czech (LANG=CS) on the screen + NL/PL/CS in the web page's language list; the STANDALONE banner centres on the translated word | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j: tap the game text in the list (title + description) = the whole .nfo full-screen in the manual reader (scroll, SIZE, TOP, CLOSE) | lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -2489,93 +2489,96 @@ static void ensureEspNow(){if(!g_espnow_started){espnowBegin();g_espnow_started=
 // accents anyway. Add a language = add a column. CJK (zh/ja) is a separate job
 // (needs a glyph font + multi-byte text), tracked in the roadmap.
 // >>> Translations are a DRAFT — Mez to verify IT, Jan to verify DE, review FR/ES. <<<
+// lab15o: PL (Polish) and CS (Czech) added, ASCII-folded like the rest (WLOZ = wloz, VLOZIT = vlozit).
+// lab15q: PL replaced by 8-Bitz's corrected text (#support, 2 Oct); CONFIG kept as KONFIG so the list bar stays at size 2.
+//   Drafts by Claude: 8-Bitz to check PL, a Czech speaker to check CS. LANG=CZ is accepted as CS.
 // ============================================================================
-enum { LANG_EN=0, LANG_FR, LANG_IT, LANG_ES, LANG_DE, LANG_NL, LANG_N };
+enum { LANG_EN=0, LANG_FR, LANG_IT, LANG_ES, LANG_DE, LANG_NL, LANG_PL, LANG_CS, LANG_N };   // lab15o: + Polish, Czech
 static int g_lang=0;
-static const char* const LANG_NAMES[LANG_N]={"EN","FR","IT","ES","DE","NL"};
+static const char* const LANG_NAMES[LANG_N]={"EN","FR","IT","ES","DE","NL","PL","CS"};
 enum { L_PREV, L_NEXT, L_THEME, L_REEL, L_INFO, L_LIST, L_ROLL, L_INSERT, L_EJECT, L_SEARCH, L_SETTINGS, L_NOW_PLAYING, L_NO_GAMES, L_NO_FAVS, L_ALL, L_FAV, L_MOST, L_BUILDING, L_ONEOFF, L_LOADING, L_LOADING_DIAG, L_RESCAN_SD, L_SD_ACCESS, L_FW_UPDATE, L_SOFT_RESET, L_RESETTING, L_STANDALONE, L_WIRELESS, L_USER_DISKS, L_RENAME, L_BACK, L_CANCEL, L_ACTIVE, L_MANUAL, L_PAIRED, L_NOT_PAIRED, L_NAME_DONGLE, L_DONGLE_LINKED, L_CREATE_DISK, L_NONE_YET, L_PREFMT, L_CHECK_DONGLE, L_NO_DONGLES, L_NO_WIRELESS_DEV, L_USE_CABLE, L_IN_RANGE, L_AVAIL_HD, L_HD_NO_WIRELESS, L_MAX_DD, L_TOO_BIG, L_SIZE_ERR, L_FAILED, L_SD_MOUNT_FAIL, L_LOAD_DIAG, L_EJECT_DIAG, L_GAMES_TAP, L_CFG_MODE, L_CFG_FONT, L_CFG_LANG, L_CFG_ROTATE, L_CFG_COMPACT, L_CFG_LIBRARY, L_CFG_CATEG, L_CFG_BUTTONS, L_CFG_SAVER, L_CFG_FAVSAVER, L_CFG_HIVEMIND, L_ON, L_OFF, L_PORTRAIT, L_LANDSCAPE, L_FONT_SMALL, L_FONT_NORMAL, L_FONT_LARGE, L_PILL, L_FLAT, L_SLIDES, L_BOUNCE, L_MATRIX, L_SWITCH_DONGLE, L_SCAN_DONGLES, L_STR_N };
 static const char* const LSTR[L_STR_N][LANG_N]={
-  /*L_PREV          */ {"PREV","PREC","PREC","ANT","VORH","VORIG"},
-  /*L_NEXT          */ {"NEXT","SUIV","SUCC","SIG","WEIT","VOLG"},
-  /*L_THEME         */ {"THEME","THEME","TEMA","TEMA","THEMA","THEMA"},
-  /*L_REEL          */ {"REEL","REEL","REEL","REEL","REEL","REEL"},
-  /*L_INFO          */ {"CONFIG","CONFIG","CONFIG","CONFIG","CONFIG","CONFIG"},
-  /*L_LIST          */ {"LIST","LISTE","LISTA","LISTA","LISTE","LIJST"},
-  /*L_ROLL          */ {"ROLL","DES","DADI","DADO","WUERF","DOBBEL"},
-  /*L_INSERT        */ {"INSERT","INSERER","INSERISCI","INSERTAR","EINLEGEN","LADEN"},
-  /*L_EJECT         */ {"EJECT","EJECTER","ESPELLI","EXPULSAR","AUSWERF","UITWERP"},
-  /*L_SEARCH        */ {"SEARCH","RECHERCHE","CERCA","BUSCAR","SUCHE","ZOEKEN"},
-  /*L_SETTINGS      */ {"SETTINGS","REGLAGES","IMPOSTAZIONI","AJUSTES","OPTIONEN","INSTELLINGEN"},
-  /*L_NOW_PLAYING   */ {"NOW PLAYING","EN LECTURE","IN USO","EN USO","LAEUFT","SPEELT NU"},
-  /*L_NO_GAMES      */ {"NO GAMES","AUCUN JEU","NESSUN GIOCO","SIN JUEGOS","KEINE SPIELE","GEEN SPELLEN"},
-  /*L_NO_FAVS       */ {"NO FAVOURITES YET","AUCUN FAVORI","NESSUN PREFERITO","SIN FAVORITOS","KEINE FAVORITEN","NOG GEEN FAVORIETEN"},
-  /*L_ALL           */ {"ALL","TOUT","TUTTI","TODO","ALLE","ALLES"},
-  /*L_FAV           */ {"FAV","FAV","PREF","FAV","FAV","FAV"},
-  /*L_MOST          */ {"MOST","TOP","TOP","TOP","TOP","TOP"},
-  /*L_BUILDING      */ {"BUILDING COVER CACHE","CREATION DU CACHE","CREAZIONE CACHE","CREANDO CACHE","CACHE ERSTELLEN","COVER-CACHE BOUWEN"},
-  /*L_ONEOFF        */ {"one-off: reel thumbnails (first launch / rescan)","unique: vignettes du reel (1er lancement)","una tantum: miniature reel (primo avvio)","una vez: miniaturas del reel (1er inicio)","einmalig: reel-vorschau (erststart)","eenmalig: reel-miniaturen (eerste start)"},
-  /*L_LOADING       */ {"Loading...","Chargement...","Caricamento...","Cargando...","Laedt...","Laden..."},
-  /*L_LOADING_DIAG  */ {"Loading diag...","Chargement diag...","Caricamento diag...","Cargando diag...","Diag laedt...","Diag laden..."},
-  /*L_RESCAN_SD     */ {"RESCAN SD","RELIRE SD","RILEGGI SD","RELEER SD","SD NEU","SD OPNIEUW"},
-  /*L_SD_ACCESS     */ {"SD ACCESS","ACCES SD","ACCESSO SD","ACCESO SD","SD ZUGRIFF","SD-TOEGANG"},
-  /*L_FW_UPDATE     */ {"FW UPDATE","MAJ FW","AGG. FW","ACT. FW","FW UPDATE","FW UPDATE"},
-  /*L_SOFT_RESET    */ {"SOFT RESET","REINIT","RIAVVIA","REINICIAR","NEUSTART","HERSTART"},
-  /*L_RESETTING     */ {"RESET...","REINIT...","RIAVVIO...","REINICIO...","NEUSTART...","HERSTART..."},
-  /*L_STANDALONE    */ {"STANDALONE","AUTONOME","AUTONOMO","AUTONOMO","STANDALONE","STANDALONE"},
-  /*L_WIRELESS      */ {"WIRELESS","SANS FIL","WIRELESS","INALAMB.","FUNK","DRAADLOOS"},
-  /*L_USER_DISKS    */ {"USER DISKS","DISQUES","DISCHI","DISCOS","DISKETTEN","EIGEN DISKS"},
-  /*L_RENAME        */ {"RENAME","RENOMMER","RINOMINA","RENOMBRAR","UMBENENN","HERNOEM"},
-  /*L_BACK          */ {"BACK","RETOUR","INDIETRO","ATRAS","ZURUECK","TERUG"},
-  /*L_CANCEL        */ {"CANCEL","ANNULER","ANNULLA","CANCELAR","ABBRECH","ANNULEER"},
-  /*L_ACTIVE        */ {"ACTIVE","ACTIF","ATTIVO","ACTIVO","AKTIV","ACTIEF"},
-  /*L_MANUAL        */ {"MANUAL","MANUEL","MANUALE","MANUAL","MANUELL","HANDMATIG"},
-  /*L_PAIRED        */ {"PAIRED","APPAIRE","ABBINATO","VINCULADO","GEKOPPELT","GEKOPPELD"},
-  /*L_NOT_PAIRED    */ {"Not paired","Non appaire","Non abbinato","No vinculado","Nicht gekoppelt","Niet gekoppeld"},
-  /*L_NAME_DONGLE   */ {"NAME DONGLE","NOMMER DONGLE","NOMINA DONGLE","NOMBRAR DONGLE","DONGLE NAME","DONGLE NAAM"},
-  /*L_DONGLE_LINKED */ {"** DONGLE LINKED **","** DONGLE CONNECTE **","** DONGLE COLLEGATO **","** DONGLE CONECTADO **","** DONGLE VERBUNDEN **","** DONGLE VERBONDEN **"},
-  /*L_CREATE_DISK   */ {"+  CREATE NEW DISK","+  NOUVEAU DISQUE","+  NUOVO DISCO","+  NUEVO DISCO","+  NEUE DISKETTE","+  NIEUWE DISK"},
-  /*L_NONE_YET      */ {"(none yet - tap CREATE NEW DISK)","(aucun - touchez NOUVEAU DISQUE)","(nessuno - tocca NUOVO DISCO)","(ninguno - toca NUEVO DISCO)","(keine - NEUE DISKETTE tippen)","(nog geen - tik NIEUWE DISK)"},
-  /*L_PREFMT        */ {"pre-formatted save disks - tap to insert","disques de sauvegarde pre-formates - toucher","dischi di salvataggio pre-formattati - tocca","discos de guardado pre-formateados - toca","vorformatierte speicherdisks - tippen","voorgeformatteerde save-disks - tik om te laden"},
-  /*L_CHECK_DONGLE  */ {"Check dongle is powered","Verifiez l'alim. du dongle","Verifica alim. dongle","Comprueba alim. del dongle","Dongle-Strom pruefen","Check voeding van de dongle"},
-  /*L_NO_DONGLES    */ {"No dongles found","Aucun dongle trouve","Nessun dongle trovato","No se hallaron dongles","Keine Dongles gefunden","Geen dongles gevonden"},
-  /*L_NO_WIRELESS_DEV*/ {"No wireless device","Aucun periph. sans fil","Nessun disp. wireless","Sin disp. inalambrico","Kein Funkgeraet","Geen draadloos apparaat"},
-  /*L_USE_CABLE     */ {"Use the cable / standalone.","Utilisez le cable / autonome.","Usa il cavo / autonomo.","Usa el cable / autonomo.","Kabel / Standalone nutzen.","Gebruik de kabel / standalone."},
-  /*L_IN_RANGE      */ {"and in WIRELESS range.","et a portee sans fil.","e nel raggio wireless.","y en rango inalambrico.","und in Funkreichweite.","en binnen draadloos bereik."},
-  /*L_AVAIL_HD      */ {"available for HD.","disponible pour HD.","disponibile per HD.","disponible para HD.","verfuegbar fuer HD.","beschikbaar voor HD."},
-  /*L_HD_NO_WIRELESS*/ {"HD - NO WIRELESS","HD - SANS FIL NON","HD - NO WIRELESS","HD - SIN INALAMB.","HD - KEIN FUNK","HD - NIET DRAADLOOS"},
-  /*L_MAX_DD        */ {"Max is DD floppy","Max = disquette DD","Max = floppy DD","Max = disquete DD","Max = DD-Diskette","Max = DD diskette"},
-  /*L_TOO_BIG       */ {"TOO BIG","TROP GROS","TROPPO GRANDE","MUY GRANDE","ZU GROSS","TE GROOT"},
-  /*L_SIZE_ERR      */ {"SIZE ERR","ERR TAILLE","ERR DIMENS.","ERR TAMANO","GROESSENFEHL","MAATFOUT"},
-  /*L_FAILED        */ {"FAILED","ECHEC","FALLITO","FALLIDO","FEHLER","MISLUKT"},
-  /*L_SD_MOUNT_FAIL */ {"SD MOUNT FAILED","ECHEC MONTAGE SD","MONTAGGIO SD FALLITO","FALLO MONTAJE SD","SD-MOUNT FEHLER","SD MOUNT MISLUKT"},
-  /*L_LOAD_DIAG     */ {"LOAD DIAG","CHARGER DIAG","CARICA DIAG","CARGAR DIAG","DIAG LADEN","DIAG LADEN"},
-  /*L_EJECT_DIAG    */ {"EJECT DIAG","EJECTER DIAG","ESPELLI DIAG","EXPULSAR DIAG","DIAG AUSWERF","DIAG UITWERP"},
-  /*L_GAMES_TAP     */ {" games - tap INSERT"," jeux - toucher INSERER"," giochi - tocca INSERISCI"," juegos - toca INSERTAR"," Spiele - INSERT tippen"," spellen - tik LADEN"},
-  /*L_CFG_MODE     */ {"MODE","MODE","MODE","MODO","MODUS","MODUS"},
-  /*L_CFG_FONT     */ {"FONT","POLICE","FONT","FUENTE","SCHRIFT","LETTER"},
-  /*L_CFG_LANG     */ {"LANG","LANGUE","LANG","IDIOMA","SPRACHE","TAAL"},
-  /*L_CFG_ROTATE   */ {"ROTATE","ROTATION","ROTATE","ROTAR","DREHEN","DRAAIEN"},
-  /*L_CFG_COMPACT  */ {"COMPACT","COMPACT","COMPACT","COMPACTO","KOMPAKT","COMPACT"},
-  /*L_CFG_LIBRARY  */ {"LIBRARY","BIBLIO.","LIBRARY","BIBLIOTECA","BIBLIOTHEK","BIBLIOTHEEK"},
-  /*L_CFG_CATEG    */ {"CATEGORIES","CATEGORIES","CATEGORIES","CATEGORIAS","KATEGORIEN","CATEGORIEEN"},
-  /*L_CFG_BUTTONS  */ {"BUTTONS","BOUTONS","BUTTONS","BOTONES","TASTEN","KNOPPEN"},
-  /*L_CFG_SAVER    */ {"SAVER","VEILLE","SAVER","SALVAPANT.","SCHONER","SAVER"},
-  /*L_CFG_FAVSAVER */ {"FAV SAVER","FAV VEILLE","FAV SAVER","FAV SALVAP.","FAV SCHONER","FAV SAVER"},
-  /*L_CFG_HIVEMIND */ {"HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND"},
-  /*L_ON           */ {"ON","ON","ON","ON","EIN","AAN"},
-  /*L_OFF          */ {"OFF","OFF","OFF","OFF","AUS","UIT"},
-  /*L_PORTRAIT     */ {"PORTRAIT","PORTRAIT","PORTRAIT","VERTICAL","HOCHFORMAT","STAAND"},
-  /*L_LANDSCAPE    */ {"LANDSCAPE","PAYSAGE","LANDSCAPE","HORIZONTAL","QUERFORMAT","LIGGEND"},
-  /*L_FONT_SMALL   */ {"SMALL","PETIT","SMALL","PEQUENO","KLEIN","KLEIN"},
-  /*L_FONT_NORMAL  */ {"NORMAL","NORMAL","NORMAL","NORMAL","NORMAL","NORMAAL"},
-  /*L_FONT_LARGE   */ {"LARGE","GRAND","LARGE","GRANDE","GROSS","GROOT"},
-  /*L_PILL         */ {"PILL","ARRONDI","PILL","REDOND.","RUND","ROND"},
-  /*L_FLAT         */ {"FLAT","PLAT","FLAT","PLANO","FLACH","VLAK"},
-  /*L_SLIDES       */ {"SLIDES","DIAPO.","SLIDES","DIAPOS.","DIASHOW","DIA'S"},
-  /*L_BOUNCE       */ {"BOUNCE","REBOND","BOUNCE","REBOTE","HUEPFEN","STUITER"},
-  /*L_MATRIX       */ {"MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX"},
-  /*L_SWITCH_DONGLE*/ {"SWITCH DONGLE","CHANGER DONGLE","SWITCH DONGLE","CAMBIAR DONGLE","DONGLE WECHSELN","WISSEL DONGLE"},
-  /*L_SCAN_DONGLES */ {"SCAN DONGLES","SCAN DONGLES","SCAN DONGLES","BUSCAR DONGLES","DONGLES SUCHEN","ZOEK DONGLES"},
+  /*L_PREV          */ {"PREV","PREC","PREC","ANT","VORH","VORIG","POPRZ","PRED"},
+  /*L_NEXT          */ {"NEXT","SUIV","SUCC","SIG","WEIT","VOLG","DALEJ","DALSI"},
+  /*L_THEME         */ {"THEME","THEME","TEMA","TEMA","THEMA","THEMA","MOTYW","MOTIV"},
+  /*L_REEL          */ {"REEL","REEL","REEL","REEL","REEL","REEL","ROLKA","REEL"},
+  /*L_INFO          */ {"CONFIG","CONFIG","CONFIG","CONFIG","CONFIG","CONFIG","KONFIG","CONFIG"},
+  /*L_LIST          */ {"LIST","LISTE","LISTA","LISTA","LISTE","LIJST","LISTA","SEZNAM"},
+  /*L_ROLL          */ {"ROLL","DES","DADI","DADO","WUERF","DOBBEL","LOSUJ","KOSTKA"},
+  /*L_INSERT        */ {"INSERT","INSERER","INSERISCI","INSERTAR","EINLEGEN","LADEN","WLOZ","VLOZIT"},
+  /*L_EJECT         */ {"EJECT","EJECTER","ESPELLI","EXPULSAR","AUSWERF","UITWERP","WYSUN","VYSUNOUT"},
+  /*L_SEARCH        */ {"SEARCH","RECHERCHE","CERCA","BUSCAR","SUCHE","ZOEKEN","SZUKAJ","HLEDAT"},
+  /*L_SETTINGS      */ {"SETTINGS","REGLAGES","IMPOSTAZIONI","AJUSTES","OPTIONEN","INSTELLINGEN","USTAWIENIA","NASTAVENI"},
+  /*L_NOW_PLAYING   */ {"NOW PLAYING","EN LECTURE","IN USO","EN USO","LAEUFT","SPEELT NU","TERAZ GRA","PRAVE HRAJE"},
+  /*L_NO_GAMES      */ {"NO GAMES","AUCUN JEU","NESSUN GIOCO","SIN JUEGOS","KEINE SPIELE","GEEN SPELLEN","BRAK GIER","ZADNE HRY"},
+  /*L_NO_FAVS       */ {"NO FAVOURITES YET","AUCUN FAVORI","NESSUN PREFERITO","SIN FAVORITOS","KEINE FAVORITEN","NOG GEEN FAVORIETEN","BRAK ULUBIONYCH","ZATIM ZADNE OBLIBENE"},
+  /*L_ALL           */ {"ALL","TOUT","TUTTI","TODO","ALLE","ALLES","WSZYSTKIE","VSE"},
+  /*L_FAV           */ {"FAV","FAV","PREF","FAV","FAV","FAV","ULUBIONE","OBLIB"},
+  /*L_MOST          */ {"MOST","TOP","TOP","TOP","TOP","TOP","TOP","TOP"},
+  /*L_BUILDING      */ {"BUILDING COVER CACHE","CREATION DU CACHE","CREAZIONE CACHE","CREANDO CACHE","CACHE ERSTELLEN","COVER-CACHE BOUWEN","GENEROWANIE OKLADEK","VYTVARIM CACHE OBALU"},
+  /*L_ONEOFF        */ {"one-off: reel thumbnails (first launch / rescan)","unique: vignettes du reel (1er lancement)","una tantum: miniature reel (primo avvio)","una vez: miniaturas del reel (1er inicio)","einmalig: reel-vorschau (erststart)","eenmalig: reel-miniaturen (eerste start)","jednorazowo: miniatury rolek (1. uruch.)","jednorazove: nahledy reel (1. spusteni)"},
+  /*L_LOADING       */ {"Loading...","Chargement...","Caricamento...","Cargando...","Laedt...","Laden...","Ladowanie...","Nacitani..."},
+  /*L_LOADING_DIAG  */ {"Loading diag...","Chargement diag...","Caricamento diag...","Cargando diag...","Diag laedt...","Diag laden...","Ladowanie diag...","Nacitani diag..."},
+  /*L_RESCAN_SD     */ {"RESCAN SD","RELIRE SD","RILEGGI SD","RELEER SD","SD NEU","SD OPNIEUW","SKANUJ SD","PROHLEDAT SD"},
+  /*L_SD_ACCESS     */ {"SD ACCESS","ACCES SD","ACCESSO SD","ACCESO SD","SD ZUGRIFF","SD-TOEGANG","DOSTEP SD","PRISTUP SD"},
+  /*L_FW_UPDATE     */ {"FW UPDATE","MAJ FW","AGG. FW","ACT. FW","FW UPDATE","FW UPDATE","AKTUAL. FW","AKTUAL. FW"},
+  /*L_SOFT_RESET    */ {"SOFT RESET","REINIT","RIAVVIA","REINICIAR","NEUSTART","HERSTART","RESTART","RESTART"},
+  /*L_RESETTING     */ {"RESET...","REINIT...","RIAVVIO...","REINICIO...","NEUSTART...","HERSTART...","RESET...","RESTART..."},
+  /*L_STANDALONE    */ {"STANDALONE","AUTONOME","AUTONOMO","AUTONOMO","STANDALONE","STANDALONE","SAMODZIELNY","SAMOSTATNE"},
+  /*L_WIRELESS      */ {"WIRELESS","SANS FIL","WIRELESS","INALAMB.","FUNK","DRAADLOOS","BEZPRZEW.","BEZDRATOVE"},
+  /*L_USER_DISKS    */ {"USER DISKS","DISQUES","DISCHI","DISCOS","DISKETTEN","EIGEN DISKS","MOJE DYSKI","MOJE DISKY"},
+  /*L_RENAME        */ {"RENAME","RENOMMER","RINOMINA","RENOMBRAR","UMBENENN","HERNOEM","ZMIEN NAZWE","PREJMENOVAT"},
+  /*L_BACK          */ {"BACK","RETOUR","INDIETRO","ATRAS","ZURUECK","TERUG","WSTECZ","ZPET"},
+  /*L_CANCEL        */ {"CANCEL","ANNULER","ANNULLA","CANCELAR","ABBRECH","ANNULEER","ANULUJ","ZRUSIT"},
+  /*L_ACTIVE        */ {"ACTIVE","ACTIF","ATTIVO","ACTIVO","AKTIV","ACTIEF","AKTYWNY","AKTIVNI"},
+  /*L_MANUAL        */ {"MANUAL","MANUEL","MANUALE","MANUAL","MANUELL","HANDMATIG","INSTRUKCJA","NAVOD"},
+  /*L_PAIRED        */ {"PAIRED","APPAIRE","ABBINATO","VINCULADO","GEKOPPELT","GEKOPPELD","SPAROWANY","SPAROVANO"},
+  /*L_NOT_PAIRED    */ {"Not paired","Non appaire","Non abbinato","No vinculado","Nicht gekoppelt","Niet gekoppeld","Niesparowany","Nesparovano"},
+  /*L_NAME_DONGLE   */ {"NAME DONGLE","NOMMER DONGLE","NOMINA DONGLE","NOMBRAR DONGLE","DONGLE NAME","DONGLE NAAM","NAZWIJ DONGLE","POJMENOVAT DONGLE"},
+  /*L_DONGLE_LINKED */ {"** DONGLE LINKED **","** DONGLE CONNECTE **","** DONGLE COLLEGATO **","** DONGLE CONECTADO **","** DONGLE VERBUNDEN **","** DONGLE VERBONDEN **","** DONGLE POLACZONY **","** DONGLE PRIPOJEN **"},
+  /*L_CREATE_DISK   */ {"+  CREATE NEW DISK","+  NOUVEAU DISQUE","+  NUOVO DISCO","+  NUEVO DISCO","+  NEUE DISKETTE","+  NIEUWE DISK","+  NOWY DYSK","+  NOVY DISK"},
+  /*L_NONE_YET      */ {"(none yet - tap CREATE NEW DISK)","(aucun - touchez NOUVEAU DISQUE)","(nessuno - tocca NUOVO DISCO)","(ninguno - toca NUEVO DISCO)","(keine - NEUE DISKETTE tippen)","(nog geen - tik NIEUWE DISK)","(brak - dotknij NOWY DYSK)","(zatim zadne - klepnete na NOVY DISK)"},
+  /*L_PREFMT        */ {"pre-formatted save disks - tap to insert","disques de sauvegarde pre-formates - toucher","dischi di salvataggio pre-formattati - tocca","discos de guardado pre-formateados - toca","vorformatierte speicherdisks - tippen","voorgeformatteerde save-disks - tik om te laden","sformatowane dyski zapisu - dotknij, by wlozyc","predformatovane disky pro ulozeni - klepnete"},
+  /*L_CHECK_DONGLE  */ {"Check dongle is powered","Verifiez l'alim. du dongle","Verifica alim. dongle","Comprueba alim. del dongle","Dongle-Strom pruefen","Check voeding van de dongle","Sprawdz zasilanie dongla","Zkontrolujte napajeni donglu"},
+  /*L_NO_DONGLES    */ {"No dongles found","Aucun dongle trouve","Nessun dongle trovato","No se hallaron dongles","Keine Dongles gefunden","Geen dongles gevonden","Nie znaleziono dongli","Nenalezeny zadne dongly"},
+  /*L_NO_WIRELESS_DEV*/ {"No wireless device","Aucun periph. sans fil","Nessun disp. wireless","Sin disp. inalambrico","Kein Funkgeraet","Geen draadloos apparaat","Brak urzadzen bezprzew.","Zadne bezdratove zarizeni"},
+  /*L_USE_CABLE     */ {"Use the cable / standalone.","Utilisez le cable / autonome.","Usa il cavo / autonomo.","Usa el cable / autonomo.","Kabel / Standalone nutzen.","Gebruik de kabel / standalone.","Uzyj kabla / tryb samodzielny.","Pouzijte kabel / samostatne."},
+  /*L_IN_RANGE      */ {"and in WIRELESS range.","et a portee sans fil.","e nel raggio wireless.","y en rango inalambrico.","und in Funkreichweite.","en binnen draadloos bereik.","i w zasiegu bezprzewodowym.","a v bezdratovem dosahu."},
+  /*L_AVAIL_HD      */ {"available for HD.","disponible pour HD.","disponibile per HD.","disponible para HD.","verfuegbar fuer HD.","beschikbaar voor HD.","dostepny dla HD.","dostupne pro HD."},
+  /*L_HD_NO_WIRELESS*/ {"HD - NO WIRELESS","HD - SANS FIL NON","HD - NO WIRELESS","HD - SIN INALAMB.","HD - KEIN FUNK","HD - NIET DRAADLOOS","HD - TYLKO KABEL","HD - JEN KABEL"},
+  /*L_MAX_DD        */ {"Max is DD floppy","Max = disquette DD","Max = floppy DD","Max = disquete DD","Max = DD-Diskette","Max = DD diskette","Max to dyskietka DD","Max je disketa DD"},
+  /*L_TOO_BIG       */ {"TOO BIG","TROP GROS","TROPPO GRANDE","MUY GRANDE","ZU GROSS","TE GROOT","ZA DUZY","PRILIS VELKY"},
+  /*L_SIZE_ERR      */ {"SIZE ERR","ERR TAILLE","ERR DIMENS.","ERR TAMANO","GROESSENFEHL","MAATFOUT","BLAD ROZM.","CHYBA VELIK."},
+  /*L_FAILED        */ {"FAILED","ECHEC","FALLITO","FALLIDO","FEHLER","MISLUKT","BLAD","CHYBA"},
+  /*L_SD_MOUNT_FAIL */ {"SD MOUNT FAILED","ECHEC MONTAGE SD","MONTAGGIO SD FALLITO","FALLO MONTAJE SD","SD-MOUNT FEHLER","SD MOUNT MISLUKT","BLAD MONTOWANIA SD","CHYBA PRIPOJENI SD"},
+  /*L_LOAD_DIAG     */ {"LOAD DIAG","CHARGER DIAG","CARICA DIAG","CARGAR DIAG","DIAG LADEN","DIAG LADEN","LADUJ DIAG","NACIST DIAG"},
+  /*L_EJECT_DIAG    */ {"EJECT DIAG","EJECTER DIAG","ESPELLI DIAG","EXPULSAR DIAG","DIAG AUSWERF","DIAG UITWERP","WYSUN DIAG","VYSUNOUT DIAG"},
+  /*L_GAMES_TAP     */ {" games - tap INSERT"," jeux - toucher INSERER"," giochi - tocca INSERISCI"," juegos - toca INSERTAR"," Spiele - INSERT tippen"," spellen - tik LADEN"," gier - dotknij WLOZ"," her - klepnete na VLOZIT"},
+  /*L_CFG_MODE     */ {"MODE","MODE","MODE","MODO","MODUS","MODUS","TRYB","REZIM"},
+  /*L_CFG_FONT     */ {"FONT","POLICE","FONT","FUENTE","SCHRIFT","LETTER","CZCIONKA","PISMO"},
+  /*L_CFG_LANG     */ {"LANG","LANGUE","LANG","IDIOMA","SPRACHE","TAAL","JEZYK","JAZYK"},
+  /*L_CFG_ROTATE   */ {"ROTATE","ROTATION","ROTATE","ROTAR","DREHEN","DRAAIEN","OBROT","OTOCIT"},
+  /*L_CFG_COMPACT  */ {"COMPACT","COMPACT","COMPACT","COMPACTO","KOMPAKT","COMPACT","KOMPAKT","KOMPAKT"},
+  /*L_CFG_LIBRARY  */ {"LIBRARY","BIBLIO.","LIBRARY","BIBLIOTECA","BIBLIOTHEK","BIBLIOTHEEK","BIBLIOTEKA","KNIHOVNA"},
+  /*L_CFG_CATEG    */ {"CATEGORIES","CATEGORIES","CATEGORIES","CATEGORIAS","KATEGORIEN","CATEGORIEEN","KATEGORIE","KATEGORIE"},
+  /*L_CFG_BUTTONS  */ {"BUTTONS","BOUTONS","BUTTONS","BOTONES","TASTEN","KNOPPEN","PRZYCISKI","TLACITKA"},
+  /*L_CFG_SAVER    */ {"SAVER","VEILLE","SAVER","SALVAPANT.","SCHONER","SAVER","WYGASZACZ","SPORIC"},
+  /*L_CFG_FAVSAVER */ {"FAV SAVER","FAV VEILLE","FAV SAVER","FAV SALVAP.","FAV SCHONER","FAV SAVER","WYGASZ. ULUB.","SPORIC OBLIB"},
+  /*L_CFG_HIVEMIND */ {"HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND"},
+  /*L_ON           */ {"ON","ON","ON","ON","EIN","AAN","WL","ZAP"},
+  /*L_OFF          */ {"OFF","OFF","OFF","OFF","AUS","UIT","WYL","VYP"},
+  /*L_PORTRAIT     */ {"PORTRAIT","PORTRAIT","PORTRAIT","VERTICAL","HOCHFORMAT","STAAND","PIONOWO","NA VYSKU"},
+  /*L_LANDSCAPE    */ {"LANDSCAPE","PAYSAGE","LANDSCAPE","HORIZONTAL","QUERFORMAT","LIGGEND","POZIOMO","NA SIRKU"},
+  /*L_FONT_SMALL   */ {"SMALL","PETIT","SMALL","PEQUENO","KLEIN","KLEIN","MALA","MALE"},
+  /*L_FONT_NORMAL  */ {"NORMAL","NORMAL","NORMAL","NORMAL","NORMAL","NORMAAL","NORMALNA","NORMALNI"},
+  /*L_FONT_LARGE   */ {"LARGE","GRAND","LARGE","GRANDE","GROSS","GROOT","DUZA","VELKE"},
+  /*L_PILL         */ {"PILL","ARRONDI","PILL","REDOND.","RUND","ROND","OKRAGLE","ZAOBLENE"},
+  /*L_FLAT         */ {"FLAT","PLAT","FLAT","PLANO","FLACH","VLAK","PLASKIE","PLOCHE"},
+  /*L_SLIDES       */ {"SLIDES","DIAPO.","SLIDES","DIAPOS.","DIASHOW","DIA'S","SLAJDY","SNIMKY"},
+  /*L_BOUNCE       */ {"BOUNCE","REBOND","BOUNCE","REBOTE","HUEPFEN","STUITER","ODBIJANIE","ODRAZ"},
+  /*L_MATRIX       */ {"MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX"},
+  /*L_SWITCH_DONGLE*/ {"SWITCH DONGLE","CHANGER DONGLE","SWITCH DONGLE","CAMBIAR DONGLE","DONGLE WECHSELN","WISSEL DONGLE","ZMIEN DONGLE","ZMENIT DONGLE"},
+  /*L_SCAN_DONGLES */ {"SCAN DONGLES","SCAN DONGLES","SCAN DONGLES","BUSCAR DONGLES","DONGLES SUCHEN","ZOEK DONGLES","SKANUJ DONGLI","HLEDAT DONGLY"},
 };
 static inline const char* T(int id){ return LSTR[id][g_lang]; }
 
@@ -2775,7 +2778,7 @@ DAV_PATH=/
 #  SYSTEM       language + diagnostics
 # ============================================================
 
-# Language: EN, FR, IT, ES, DE, NL  (pull the SD and edit this line if you get stuck)
+# Language: EN, FR, IT, ES, DE, NL, PL, CS  (pull the SD and edit this line if you get stuck)
 LANG=EN
 
 # LOG: the GTI/gti.log diagnostic log is ON by default.
@@ -2850,7 +2853,7 @@ static void selfHealConfig(){
     {"REELBORDER","\n# REELBORDER: frame drawn around each cover in the reel. ON=framed (default),\n#   OFF=clean/frameless look (the game you have loaded is still marked green).\nREELBORDER=ON\n"},
     {"LASTUSED", "\n# LASTUSED: ON = on power-up, jump the selection back to the game you last loaded.\n#   OFF (default) = always start at the top of the list.\nLASTUSED=OFF\n"},
     {"FONT",     "\n# Font size: SMALL, NORMAL, LARGE\nFONT=NORMAL\n"},
-    {"LANG",     "\n# Language: EN, FR, IT, ES, DE, NL  (pull the SD and edit this line if you get stuck)\nLANG=EN\n"},
+    {"LANG",     "\n# Language: EN, FR, IT, ES, DE, NL, PL, CS  (pull the SD and edit this line if you get stuck)\nLANG=EN\n"},
     {"ROTATE",   "\n# Screen rotation in degrees: 0 or 180 = landscape, 90 or 270 = portrait.\nROTATE=0\n"},
     {"COVERMIN", "\n# COVERMIN: hide covers whose short side is under N px (0 = show all) - keeps the reel + panel clean.\nCOVERMIN=140\n"},
     {"REELFILTER", "\n# REELFILTER: ON = the reel (cover carousel) shows only games whose cover passes COVERMIN;\n#             the A-Z list still shows every game. OFF = reel shows all games.\nREELFILTER=OFF\n"},
@@ -2973,7 +2976,7 @@ static void loadConfig(){
     if(k=="THEME"){int ti=-1;for(int i=0;i<NUM_THEMES;i++)if(v.equalsIgnoreCase(THEMES[i].name)){ti=i;break;}applyTheme(ti>=0?ti:((v.length()&&isDigit(v[0]))?v.toInt():0));}else if(k=="LOOP")g_loop_cracktro=(v=="1");else if(k=="MODE")g_wireless_mode=(v=="WIRELESS");else if(k=="CAROUSEL"){String cv=v;cv.toUpperCase();g_car_bootmode=(cv=="LAST")?2:((cv=="1"||cv=="ON"||cv=="TRUE")?1:0);}
     else if(k=="TAPLOAD")g_tapload=(v=="ON"||v=="1");else if(k=="HOTSWAP")g_hotswap=(v=="ON"||v=="1");else if(k=="FORCESWAP")g_forceswap=(v=="ON"||v=="1");
     else if(k=="FONT"){int f=1;if(v=="SMALL")f=0;else if(v=="LARGE")f=2;applyFont(f);}
-    else if(k=="LANG"){String lu=v;lu.toUpperCase();for(int i=0;i<LANG_N;i++)if(lu==LANG_NAMES[i]){g_lang=i;break;}}
+    else if(k=="LANG"){String lu=v;lu.toUpperCase();if(lu=="CZ")lu="CS";for(int i=0;i<LANG_N;i++)if(lu==LANG_NAMES[i]){g_lang=i;break;}}
     else if(k=="ROTATE"){g_rot=((v.toInt()/90)%4+4)%4;}
     else if(k=="COVERMIN"){g_covermin=v.toInt();if(g_covermin<0)g_covermin=0;}
     else if(k=="REELFILTER"){String ru=v;ru.trim();ru.toUpperCase();g_reelfilter=(ru=="ON"||ru=="1"||ru=="YES");}
@@ -3409,7 +3412,7 @@ static void drawStatusBar(){
   gfx_setTextColor(COL_ORANGE,COL_BAR);gfx_setCursor(6,6);gfx_print("OMEGAWARE");
   gfx_setTextColor(COL_MID,COL_BAR);gfx_print("  " FW_VERSION);
   if(g_wireless_mode){gfx_setTextColor(espnowIsPaired()?0x07E0:0xFD20,COL_BAR);gfx_setCursor(VW/2-40,6);gfx_print(espnowIsPaired()?"WIRELESS:PAIRED":"WIRELESS:PAIR");}
-  else{gfx_setTextColor(0x07FF,COL_BAR);int tw=gfx_textWidth("STANDALONE");gfx_setCursor((VW-tw)/2,6);gfx_print(T(L_STANDALONE));}
+  else{gfx_setTextColor(0x07FF,COL_BAR);int tw=gfx_textWidth(T(L_STANDALONE));gfx_setCursor((VW-tw)/2,6);gfx_print(T(L_STANDALONE));}
   // v5.7.x: load-status indicator (top-right). Standalone reads g_loaded; wireless reads
   // the dongle's heartbeat so it reflects reality. green=disk present, dim=empty,
   // amber=OFFLINE (no beacon ~8s) or DISK? (GTi thinks loaded but the dongle disagrees).
@@ -3627,6 +3630,9 @@ static void drawInfoPanel(){
    add(String("MODE: ")+mlbl, mcol, TFT_BLACK, IA_MODE);}
   if(g_wireless_mode && !g_link_home){   // ESP-NOW: blind Webby dongles (their own AP, no router)
     add(espnowIsPaired()?String(T(L_SWITCH_DONGLE)):String(T(L_SCAN_DONGLES)), espnowIsPaired()?COL_GREEN:COL_AMBER, TFT_BLACK, IA_DONGLE);
+    // lab15p: the GTi's own Wi-Fi - name / password and where the web page is (read-only rows)
+    add(String("WIFI ")+espnowApName()+" / "+espnowApPass(), COL_BAR, COL_LIT, IA_NONE);
+    add("WEB PAGE: 192.168.4.1", COL_BAR, COL_LIT, IA_NONE);
     uint8_t mm[64][6]; int mcN=enumMuCaDongles(mm,g_dongle_cap);
     if(mcN>0) add(String(T(L_CFG_HIVEMIND))+": "+(g_hivemind?T(L_ON):T(L_OFF)), g_hivemind?COL_ACCENT:COL_BAR, g_hivemind?TFT_WHITE:COL_LIT, IA_HIVEMIND);
   }
@@ -4574,8 +4580,9 @@ static void drawCarousel(){
       drawListIcon(sx+7,by+bh/2,ic); gfx_setTextColor(ic,bc);
       gfx_setCursor(sx+16,by+(bh-16)/2); gfx_print(T(L_LIST)); }
     { uint16_t bc=COL_AMBER, ic=inkFor(bc); int bx=1*bw+pad, w=bw-2*pad;
-      gfx_fillRoundRect(bx,by,w,bh,r,bc); String sl=carSrcName(); int tw=gfx_textWidth(sl);
-      gfx_setTextColor(ic,bc); gfx_setCursor(bx+(w-tw)/2,by+(bh-16)/2); gfx_print(sl); }
+      gfx_fillRoundRect(bx,by,w,bh,r,bc); String sl=carSrcName(); int ts=2; if(gfx_textWidth(sl)>w-bh){ts=1;gfx_setTextSize(1);}   // lab15q: long words fit the pill
+      int tw=gfx_textWidth(sl);
+      gfx_setTextColor(ic,bc); gfx_setCursor(bx+(w-tw)/2,by+(bh-8*ts)/2); gfx_print(sl); gfx_setTextSize(2); }
     { uint16_t bc=COL_GREEN, ic=inkFor(bc); int bx=2*bw+pad, w=bw-2*pad;
       gfx_fillRoundRect(bx,by,w,bh,r,bc);
       int tw=gfx_textWidth(T(L_ROLL)),ds=16,total=ds+4+tw,sx=bx+(w-total)/2;
@@ -4598,8 +4605,9 @@ static void drawCarousel(){
     drawListIcon(sx+7,y+BOTTOM_H/2,ink);
     gfx_setCursor(sx+16,y+(BOTTOM_H-16)/2);gfx_print(T(L_LIST)); }
   // SOURCE — cycles ALL/FAV/MOST (word is the current source)
-  { int bx=1*bw;String sl=carSrcName();int tw=gfx_textWidth(sl);
-    gfx_setCursor(bx+(bw-tw)/2,y+(BOTTOM_H-16)/2);gfx_print(sl); }
+  { int bx=1*bw;String sl=carSrcName();int ts=2;if(gfx_textWidth(sl)>bw-12){ts=1;gfx_setTextSize(1);}   // lab15q: long words fit the slot
+    int tw=gfx_textWidth(sl);
+    gfx_setCursor(bx+(bw-tw)/2,y+(BOTTOM_H-8*ts)/2);gfx_print(sl);gfx_setTextSize(2); }
   // ROLL — die glyph + word
   { int bx=2*bw,tw=gfx_textWidth(T(L_ROLL)),ds=16,total=ds+4+tw,sx=bx+(bw-total)/2;
     int dx=sx+ds/2,dy2=y+BOTTOM_H/2;
@@ -5937,7 +5945,7 @@ static void applyRadioMode(){
   WiFi.disconnect(true,true); delay(60);
   if(!g_wireless_mode){ WiFi.mode(WIFI_OFF); }                     // STANDALONE
   else if(g_link_home){ webPanelBegin(); }                        // WiFi (non-blocking; server comes up in webPanelService)
-  else { ensureEspNow(); }                                        // ESP-NOW
+  else { ensureEspNow(); webPanelBeginAP(); }                     // ESP-NOW (lab15p: + the web page on the GTi's own Wi-Fi)
 }
 
 static void doWebUiSetup(){
@@ -6959,7 +6967,7 @@ void setup(){
        (unsigned long)TOTAL_SECTORS*512UL,(unsigned)ESP.getFreePsram());
   build_volume(getOutputFilename(),g_mode==MODE_ADF?ADF_DEFAULT_SIZE:64);
   espnowSetClaimAsk(claimAskUI);   // lab14s: take-over question for a shared dongle
-  if(g_wireless_mode && !g_link_home && !sdAccessReq){espnowBegin();g_espnow_started=true;}   // v5.1: don't arm the radio when booting into SD access — no stray FATFS writes while the PC holds the card
+  if(g_wireless_mode && !g_link_home && !sdAccessReq){espnowBegin();g_espnow_started=true;webPanelBeginAP();}   // lab15p: + web page on GTi_Omega-XXXX   // v5.1: don't arm the radio when booting into SD access — no stray FATFS writes while the PC holds the card
   if(g_cracktro>=0)drawCracktro(g_cracktro);   // CRACKTRO=OFF/NONE (-1) skips the boot demo entirely
   USB.onEvent(usbEventCB);
   if(sdAccessReq){runSDAccessBoot(sdok);}   // v5.1: SD-access boot mode — never returns (reboots to normal)
