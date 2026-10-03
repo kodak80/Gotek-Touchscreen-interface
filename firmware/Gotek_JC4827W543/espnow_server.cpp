@@ -24,6 +24,26 @@ volatile bool     g_dongle_loaded            = false;   // v5.7.x: load-state he
 volatile uint32_t g_dongle_load_id           = 0;
 volatile uint32_t g_dongle_img_size          = 0;
 
+// lab15p: the GTi's own Wi-Fi (see espnow_server.h). softAP() is called right after every
+// WiFi.mode(WIFI_AP_STA), so the access point comes back with its name and password each time the
+// radio returns from joining a dongle (send / save fetch). Channel = the ESP-NOW channel, so the
+// dongles are not disturbed. The MAC is read with esp_read_mac(), which needs no radio (1.6.8 lesson).
+static char _gtiApName[24] = {0};
+static char _gtiApPass[16] = {0};
+static void gtiApNames() {
+  if (_gtiApName[0]) return;
+  uint8_t m[6] = {0}; esp_read_mac(m, ESP_MAC_WIFI_SOFTAP);
+  snprintf(_gtiApName, sizeof(_gtiApName), GTI_AP_PREFIX "%02X%02X", m[4], m[5]);
+  snprintf(_gtiApPass, sizeof(_gtiApPass), GTI_AP_PASS_PRE "%02X%02X", m[4], m[5]);
+}
+const char* espnowApName() { gtiApNames(); return _gtiApName; }
+const char* espnowApPass() { gtiApNames(); return _gtiApPass; }
+static void gtiApUp() {
+  gtiApNames();
+  if (!WiFi.softAP(_gtiApName, _gtiApPass, ESPNOW_CHANNEL, 0, 4))
+    Serial.println("[AP] softAP failed - the GTi's own Wi-Fi is not up");
+}
+
 bool espnowXiaoOnline() {
   if (!g_espnow_paired) return false;
   if (g_espnow_xiao_last_seen == 0) return false;
@@ -206,8 +226,9 @@ void espnowBegin() {
   if(_bcastPeer){ delete _bcastPeer; _bcastPeer=nullptr; }   // 5.9.17: idempotent so a live re-init is safe
   if(_xiaoPeer){ delete _xiaoPeer; _xiaoPeer=nullptr; }
   ESP_NOW.end();
-  // Use WIFI_AP_STA — AP mode needed for Waveshare to connect to XIAO's AP later
-  WiFi.mode(WIFI_AP_STA);
+  // WIFI_AP_STA: the station side carries ESP-NOW and joins the dongles; the AP side is the GTi's own
+  // Wi-Fi (lab15p, gtiApUp). Before lab15p the AP was unnamed and open (ESP_xxxxxx).
+  WiFi.mode(WIFI_AP_STA); gtiApUp();
   WiFi.setChannel(ESPNOW_CHANNEL);
   while (!WiFi.STA.started()) delay(100);
 
@@ -503,7 +524,7 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
     Serial.println("[TCP] WiFi connect failed — restarting ESP-NOW");
     WiFi.disconnect();
     delay(200);
-    WiFi.mode(WIFI_AP_STA);
+    WiFi.mode(WIFI_AP_STA); gtiApUp();
     WiFi.setChannel(ESPNOW_CHANNEL);
     while (!WiFi.STA.started()) delay(100);
     ESP_NOW.begin();
@@ -536,7 +557,7 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
     Serial.println("[TCP] TCP connect failed");
     WiFi.disconnect();
     delay(100);
-    WiFi.mode(WIFI_AP_STA);
+    WiFi.mode(WIFI_AP_STA); gtiApUp();
     WiFi.setChannel(ESPNOW_CHANNEL);
     return false;
   }
@@ -592,7 +613,7 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
   // Restore ESP-NOW
   WiFi.disconnect();
   delay(200);
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_AP_STA); gtiApUp();
   WiFi.setChannel(ESPNOW_CHANNEL);
   while (!WiFi.STA.started()) delay(100);
   ESP_NOW.begin();
@@ -664,7 +685,7 @@ bool espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, ui
 
   // Restore ESP-NOW / AP_STA (same teardown as sendDiskCore)
   WiFi.disconnect(); delay(200);
-  WiFi.mode(WIFI_AP_STA); WiFi.setChannel(ESPNOW_CHANNEL);
+  WiFi.mode(WIFI_AP_STA); gtiApUp(); WiFi.setChannel(ESPNOW_CHANNEL);
   while (!WiFi.STA.started()) delay(100);
   ESP_NOW.begin(); ESP_NOW.onNewPeer(onNewPeer, nullptr);
   if (_bcastPeer) { delete _bcastPeer; _bcastPeer = nullptr; }
@@ -714,7 +735,7 @@ static bool readFull(WiFiClient& c, uint8_t* buf, uint32_t len, uint32_t timeout
 static void restoreEspNow() {
   WiFi.disconnect();
   delay(200);
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_AP_STA); gtiApUp();
   WiFi.setChannel(ESPNOW_CHANNEL);
   while (!WiFi.STA.started()) delay(100);
   ESP_NOW.begin();

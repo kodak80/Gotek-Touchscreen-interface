@@ -29,6 +29,16 @@ extern uint8_t* g_disk;
 #define DONGLE_AP_IP     "192.168.4.1"
 #define DONGLE_TCP_PORT  3333
 
+// lab15p: the GTi's OWN Wi-Fi in ESP-NOW mode. The radio has always run as access point + station there
+// (WIFI_AP_STA), but nobody named the access point, so the ESP32 put up its default: an OPEN network
+// called ESP_xxxxxx. Now it is GTi_Omega-XXXX with password gotekXXXX (XXXX = last 2 bytes of the
+// GTi's softAP MAC, in hex - the same 4 characters in both), and the GTi's web page is served on it
+// at 192.168.4.1. STANDALONE (radio off) and WiFi mode (joins the home router) never start it.
+#define GTI_AP_PREFIX    "GTi_Omega-"
+#define GTI_AP_PASS_PRE  "gotek"
+const char* espnowApName();   // "GTi_Omega-XXXX"
+const char* espnowApPass();   // "gotekXXXX"
+
 // State flags
 extern volatile bool g_espnow_paired;
 extern volatile bool g_espnow_xiao_ready;

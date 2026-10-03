@@ -51,7 +51,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.41-lab15n-P4"   // lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
+#define FW_VERSION "5.9.42-lab1-P4"   // 5.9.42-lab1-P4 (4 Oct 2026) = 5.9.41-lab16f-P4, renamed only (no code change): the NEO look, first P4 lab release on the web flasher | lab16f-P4: PORTRAIT REEL RUNS UP AND DOWN - covers stacked vertically (next one below), swipe up/down, coast + snap as before; round up/down arrows on the right; tap above/below the centre cover steps one; title / DISK pills / dots in a fixed strip above the bottom buttons. Landscape unchanged | lab16e-P4: portrait reel centred - cover + title + disks + dots sit in the middle of the screen (was at the top with empty space under it); landscape unchanged | lab16d-P4: game panel cover is BIG (full panel width, picture centred), favourite = star badge in the cover's top-right corner (tap it), the .rtfm book button is back in its usual place on the cover's left edge (16b had moved it to a MANUAL pill), HD chip bottom-right; title + "n disks - ADF" under the cover, then the description and the DISK pills | lab16c-P4 (Mez's photos of 16b): NEO text at size 2+ is drawn bold (one pixel wider strokes) so dark text on the gold / cyan / green pills reads like the mock-up; reel covers drop the grey letterbox baked into the tile (picture cut out, frame hugs it, same cut on the micro-thumbs while it slides); long names wrap to two lines under the reel cover instead of being cut; in the game panel a long name moves under the cover, full width | lab16b-P4: NEO is the only look for now (THEME, BUTTONS and COMPACT are off the Settings list; CONFIG THEME= is ignored) and the screens follow the mock-ups: list on the LEFT in a rounded panel, A-Z strip, game panel on the RIGHT (cover, title, disks/format, FAV and MANUAL pills, description, DISK pills), bottom bar PREV / NEXT / INSERT / REEL / CONFIG; top bar 40 px with the firmware version under GOTEK GTi, tap the library name to switch library (or open categories); reel arrows; Settings = two columns of capsules + a row of action pills + BACK / PAGE / TEST TOOLS / NEXT; USER DISKS moved into Settings | lab16a-P4: NEW LOOK "NEO" (Settings > THEME > NEO, or THEME=NEO): navy-to-purple background with faint circuit lines; top bar GOTEK GTi + firmware version, library + game count, a CABLE/DONGLE state chip and a gear that opens Settings; reel: gold-framed glowing centre cover, title under it, DISK pills, page dots, bottom bar INSERT / < ALL > / LIST / ROLL; list: gold-framed selection, IN DRIVE tag, cyan INSERT; Settings: capsule rows with the value in a coloured chip, last tap outlined in gold. Other themes look and work as before | lab15q-P4 (from the 3.5" 15o + 15q): Polish (8-Bitz's text) and Czech on the screen (LANG=PL / CS, CZ accepted); the reel bar's ALL/FAV/MOST word shrinks when too long; STANDALONE banner centred on the translated word. (3.5" 15p, the GTi_Omega Wi-Fi, does not apply: the P4's C6 radio never runs an access point) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -225,6 +225,11 @@ static inline void fb_setPixel(int vx,int vy,uint16_t color){
 
 // ── GFX wrappers ──
 static uint16_t text_fg=TFT_WHITE,text_bg=TFT_BLACK;
+// lab16a-P4 NEO look: while a NEO screen draws (g_neo_depth>0), text whose background is the theme
+// background (g_txt_key) is drawn WITHOUT its box, so it sits on the background picture.
+static bool     g_neo=false;          // THEME=NEO
+static int      g_neo_depth=0;        // >0 while a NEO screen is drawing (NeoScope)
+static uint16_t g_txt_key=0;          // = COL_BG, set by applyTheme
 static int text_size=1,text_x=0,text_y=0;
 static int g_clip_y0=0,g_clip_y1=gH,g_clip_x0=0,g_clip_x1=gW;   // clip window (vertical=scroll, horizontal=marquee)
 
@@ -268,10 +273,19 @@ static void gfx_setCursor(int x,int y){text_x=x;text_y=y;}
 static int gfx_textWidth(const String&s){return s.length()*6*text_size;}
 
 static void gfx_print(const String&text){
+  const bool tr=(g_neo_depth>0&&text_bg==g_txt_key);   // lab16a-P4: NEO - no box behind text on the background picture
+  if(g_neo_depth>0&&text_size>=2){   // lab16c-P4: bold - background first, then every lit pixel one pixel wider
+    for(unsigned i=0;i<text.length();i++){char c=text[i];if(c<32||c>126)continue;
+      const uint8_t*data=font6x8[c-32];
+      if(!tr)gfx_fillRect(text_x,text_y,6*text_size,8*text_size,text_bg);
+      for(int col=0;col<6;col++){uint8_t bits=pgm_read_byte(&data[col]);
+        for(int row=0;row<8;row++)if(bits&(1<<row))gfx_fillRect(text_x+col*text_size,text_y+row*text_size,text_size+1,text_size,text_fg);}
+      text_x+=6*text_size;}
+    return; }
   for(unsigned i=0;i<text.length();i++){char c=text[i];if(c<32||c>126)continue;
     const uint8_t*data=font6x8[c-32];
     for(int col=0;col<6;col++){uint8_t bits=pgm_read_byte(&data[col]);
-      for(int row=0;row<8;row++){uint16_t color=(bits&(1<<row))?text_fg:text_bg;
+      for(int row=0;row<8;row++){bool on=(bits&(1<<row))!=0; if(tr&&!on)continue; uint16_t color=on?text_fg:text_bg;
         for(int dy=0;dy<text_size;dy++)for(int dx=0;dx<text_size;dx++)
           gfx_drawPixel(text_x+col*text_size+dx,text_y+row*text_size+dy,color);}}
     text_x+=6*text_size;}
@@ -2093,6 +2107,8 @@ static bool manualFor(const String&p,String&out){
 // STATE
 // ════════════════════════════════════════════════════════════════════════════
 static bool g_wireless_mode=false,g_loop_cracktro=false,g_info_showing=false;
+static bool g_info_test=false;   // lab14k: true = Settings is showing its TEST TOOLS sub-page (lab16b-P4: moved up)
+static bool g_car_active=false;  // lab16b-P4: moved up from the reel section (the NEO top bar reads it)
 // ── Screensaver (undocumented, folder-gated /screensaver/*.jpg) ──
 static std::vector<String> g_ss_paths;
 static bool g_ss_have=false, g_ss_enabled=true;
@@ -2405,16 +2421,109 @@ static const Theme THEMES[]={
   {"SYNTH", 0x1001,0x2003,0x3005,0x5008,0x2003,0x600C,0x900F,0xC09F,0x4BE0,0xFC1F,0xE81F,0xA01F,0x2003,0x8010,0x5008,0xE81F},
   {"GOLD",  0x1000,0x1800,0x2000,0x4200,0x1800,0x5240,0x7440,0xC5A0,0x0560,0xFCA0,0xFCC0,0xFCA0,0x1800,0x3200,0x3200,0xFCC0},
   {"OMEGA", 0x18C5,0x18E6,0x10A5,0x3A2E,0x2968,0x52CE,0x94B4,0xC63A,0x3ED0,0xFC67,0xFE2B,0x46FC,0x1126,0x4557,0x2148,TFT_WHITE},
+  // lab16a-P4 NEO: navy bg, dark-navy panels, gold (amber) = selected / call to action, cyan (blue) = INSERT, slate (accent) = buttons
+  {"NEO",   0x0884,0x10C6,0x0863,0x3962,0x42D1,0x9517,0x7C14,0xEF9F,0x568F,0xF466,0xF586,0x7E9E,0x1225,0x3A4C,0x298A,TFT_WHITE},
 };
-static const int NUM_THEMES=7;static int g_theme_idx=0;   // +OMEGA (Dimmy); default stays 0=NAVY
+static const int NUM_THEMES=8;static int g_theme_idx=0;   // +OMEGA (Dimmy); default stays 0=NAVY
 static uint16_t COL_BG,COL_PANEL,COL_BAR,COL_SEL,COL_SEP,COL_DIM,COL_MID,COL_LIT;
 static uint16_t COL_GREEN,COL_ORANGE,COL_AMBER,COL_BLUE,COL_NOW,COL_ACCENT,COL_CIRC,COL_CIRC_TEXT;
 
+#define GTI_NEO_ONLY 1   // lab16b-P4: Mez - "just NEO for now". The other themes stay in the table, unused.
 static void applyTheme(int idx){
+  if(GTI_NEO_ONLY)idx=NUM_THEMES-1;
   g_theme_idx=idx%NUM_THEMES;const Theme&t=THEMES[g_theme_idx];
   COL_BG=t.bg;COL_PANEL=t.panel;COL_BAR=t.bar;COL_SEL=t.sel;COL_SEP=t.sep;
   COL_DIM=t.dim;COL_MID=t.mid;COL_LIT=t.lit;COL_GREEN=t.green;COL_ORANGE=t.orange;
   COL_AMBER=t.amber;COL_BLUE=t.blue;COL_NOW=t.now;COL_ACCENT=t.accent;COL_CIRC=t.circ;COL_CIRC_TEXT=t.circ_text;
+  g_neo=(strcmp(t.name,"NEO")==0); g_txt_key=COL_BG;   // lab16a-P4
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// lab16a-P4: NEO LOOK — background picture, glow, gold frames (THEME=NEO only)
+// ════════════════════════════════════════════════════════════════════════════
+// The background is drawn once per rotation into the framebuffer and kept in PSRAM (480x800x2 = 750 KB).
+// Screens then copy the part they need back (fillBack) instead of filling with COL_BG. The copy is a
+// row memcpy in the panel's own layout, so it costs about what a fill does.
+static uint16_t* g_neo_bg=NULL; static int g_neo_bg_rot=-1;
+struct NeoScope{ bool on; NeoScope():on(g_neo){ if(on)g_neo_depth++; } ~NeoScope(){ if(on)g_neo_depth--; } };
+static inline uint16_t mix565(uint16_t a,uint16_t b,int wa){   // wa 0..256 = weight of a
+  int wb=256-wa;
+  int r=(((a>>11)&31)*wa+((b>>11)&31)*wb)>>8, g=(((a>>5)&63)*wa+((b>>5)&63)*wb)>>8, bl=((a&31)*wa+(b&31)*wb)>>8;
+  return (uint16_t)((r<<11)|(g<<5)|bl);
+}
+static inline uint16_t neoGrad(int x,int y){   // navy (10,16,38) -> purple (36,22,64) across + down
+  int t=(x*154)/(gW>1?gW:1)+(y*102)/(gH>1?gH:1); if(t>256)t=256;
+  int r=10+(26*t>>8), g=16+(6*t>>8), b=38+(26*t>>8);
+  return (uint16_t)(((r>>3)<<11)|((g>>2)<<5)|(b>>3));
+}
+static void neoBuildBg(){
+  if(!framebuffer||!g_neo_bg)return;
+  int cx0=g_clip_x0,cy0=g_clip_y0,cx1=g_clip_x1,cy1=g_clip_y1; g_clip_x0=0;g_clip_y0=0;g_clip_x1=gW;g_clip_y1=gH;
+  for(int y=0;y<gH;y++)for(int x=0;x<gW;x+=8){ uint16_t c=neoGrad(x+4,y); gfx_fillRect(x,y,8,1,c); }
+  uint32_t r=0x6E0;                                     // fixed seed: the same picture every boot
+  auto rnd=[&](int n){ r=r*1103515245u+12345u; return (int)((r>>16)%(uint32_t)n); };
+  const uint16_t tr=((90>>3)<<11)|((120>>2)<<5)|(200>>3);
+  for(int k=0;k<40;k++){
+    int x=rnd(gW), y=rnd(gH), segs=2+rnd(3);
+    for(int sgi=0;sgi<segs;sgi++){
+      if(rnd(2)){ int L=(rnd(2)?1:-1)*(20+rnd(110)); int xa=min(x,x+L),xb=max(x,x+L);
+        for(int xx=xa;xx<=xb;xx++) gfx_drawPixel(xx,y,mix565(tr,neoGrad(xx,y),40)); x+=L; }
+      else { int L=(rnd(2)?1:-1)*(15+rnd(70)); int ya=min(y,y+L),yb=max(y,y+L);
+        for(int yy=ya;yy<=yb;yy++) gfx_drawPixel(x,yy,mix565(tr,neoGrad(x,yy),40)); y+=L; }
+    }
+    gfx_drawCircle(x,y,3,mix565(tr,neoGrad(x,y),64));
+  }
+  memcpy(g_neo_bg,framebuffer,(size_t)LCD_WIDTH*LCD_HEIGHT*2);
+  g_neo_bg_rot=g_rot;
+  g_clip_x0=cx0;g_clip_y0=cy0;g_clip_x1=cx1;g_clip_y1=cy1;
+}
+static void neoBgEnsure(){                              // called at the start of every NEO full-screen draw
+  if(!g_neo)return;
+  if(!g_neo_bg){ g_neo_bg=(uint16_t*)ps_malloc((size_t)LCD_WIDTH*LCD_HEIGHT*2); g_neo_bg_rot=-1;
+    if(!g_neo_bg){ gLog("[neo] no PSRAM for the background - NEO falls back to a flat colour\n"); return; } }
+  if(g_neo_bg_rot!=g_rot) neoBuildBg();
+}
+static void gfx_fillBg(int x,int y,int w,int h){        // like gfx_fillRect, but copies the background picture
+  int vx0=max(g_clip_x0,x),vy0=max(g_clip_y0,y),vx1=min(g_clip_x1,x+w),vy1=min(g_clip_y1,y+h);
+  if(vx0>=vx1||vy0>=vy1)return;
+  int px0,px1,py0,py1;
+  switch(g_rot){
+    case 1: px0=vx0;py0=vy0;px1=vx1;py1=vy1;break;
+    case 2: px0=LCD_WIDTH-vy1;py0=vx0;px1=LCD_WIDTH-vy0;py1=vx1;break;
+    case 3: px0=LCD_WIDTH-vx1;py0=LCD_HEIGHT-vy1;px1=LCD_WIDTH-vx0;py1=LCD_HEIGHT-vy0;break;
+    default: px0=vy0;py0=LCD_HEIGHT-vx1;px1=vy1;py1=LCD_HEIGHT-vx0;break;
+  }
+  for(int py=py0;py<py1;py++) memcpy(&framebuffer[(size_t)py*LCD_WIDTH+px0],&g_neo_bg[(size_t)py*LCD_WIDTH+px0],(size_t)(px1-px0)*2);
+}
+static inline bool neoBgOk(){ return g_neo&&g_neo_bg&&g_neo_bg_rot==g_rot; }
+static void fillBack(int x,int y,int w,int h){ if(neoBgOk())gfx_fillBg(x,y,w,h); else gfx_fillRect(x,y,w,h,COL_BG); }
+static void clearBack(){ neoBgEnsure(); if(neoBgOk())memcpy(framebuffer,g_neo_bg,(size_t)LCD_WIDTH*LCD_HEIGHT*2); else gfx_fillScreen(COL_BG); }
+// Rounded outline WITH corners (gfx_drawRoundRect only draws the straight edges).
+static void gfx_strokeRoundRect(int x,int y,int w,int h,int r,uint16_t c){
+  if(w<=0||h<=0)return; if(r*2>w)r=w/2; if(r*2>h)r=h/2; if(r<0)r=0;
+  gfx_hline(x+r,y,w-2*r,c);gfx_hline(x+r,y+h-1,w-2*r,c);gfx_vline(x,y+r,h-2*r,c);gfx_vline(x+w-1,y+r,h-2*r,c);
+  if(r==0)return;
+  int cxa=x+r,cya=y+r,cxb=x+w-1-r,cyb=y+h-1-r,px=0,py=r,d=3-2*r;
+  while(px<=py){
+    gfx_drawPixel(cxb+px,cya-py,c);gfx_drawPixel(cxb+py,cya-px,c);gfx_drawPixel(cxa-px,cya-py,c);gfx_drawPixel(cxa-py,cya-px,c);
+    gfx_drawPixel(cxb+px,cyb+py,c);gfx_drawPixel(cxb+py,cyb+px,c);gfx_drawPixel(cxa-px,cyb+py,c);gfx_drawPixel(cxa-py,cyb+px,c);
+    if(d<0)d+=4*px+6; else{d+=4*(px-py)+10;py--;} px++;
+  }
+}
+static void neoFrame(int x,int y,int w,int h,int r,uint16_t c,int thick){ for(int t=0;t<thick;t++)gfx_strokeRoundRect(x-t,y-t,w+2*t,h+2*t,r+t,c); }
+static void neoGlow(int x,int y,int w,int h,int r,uint16_t c,int rings){   // soft halo: fading rings outside the box
+  for(int k=rings;k>=1;k--){ int f=rings+1-k; int a=(150*f*f)/((rings+1)*(rings+1));
+    gfx_strokeRoundRect(x-k,y-k,w+2*k,h+2*k,r+k,mix565(c,COL_BG,a)); }
+}
+static void neoGear(int cx,int cy,uint16_t c,uint16_t hole){
+  for(int k=0;k<8;k++){ float a=k*0.785398f; int tx=cx+(int)lroundf(cosf(a)*9.0f), ty=cy+(int)lroundf(sinf(a)*9.0f); gfx_fillRect(tx-2,ty-2,5,5,c); }
+  gfx_fillCircle(cx,cy,7,c); gfx_fillCircle(cx,cy,3,hole);
+}
+// One pill button: rounded capsule, text centred (size 2, or 1 if it does not fit)
+static void neoPill(int x,int y,int w,int h,uint16_t bc,const String&lbl,bool outline){
+  gfx_fillRoundRect(x,y,w,h,h/2,bc); if(outline)gfx_strokeRoundRect(x,y,w,h,h/2,COL_AMBER);
+  uint16_t ic=inkFor(bc); int sz=2; gfx_setTextSize(sz); int tw=gfx_textWidth(lbl); if(tw>w-h/2-4){sz=1;gfx_setTextSize(1);tw=gfx_textWidth(lbl);}
+  gfx_setTextColor(ic,bc); gfx_setCursor(x+(w-tw)/2,y+(h-8*sz)/2); gfx_print(lbl);
 }
 
 static void saveConfigKey(const String&key,const String&val){
@@ -2484,92 +2593,92 @@ static void ensureEspNow(){if(!g_espnow_started){espnowBegin();g_espnow_started=
 // (needs a glyph font + multi-byte text), tracked in the roadmap.
 // >>> Translations are a DRAFT — Mez to verify IT, Jan to verify DE, review FR/ES. <<<
 // ============================================================================
-enum { LANG_EN=0, LANG_FR, LANG_IT, LANG_ES, LANG_DE, LANG_NL, LANG_N };
+enum { LANG_EN=0, LANG_FR, LANG_IT, LANG_ES, LANG_DE, LANG_NL, LANG_PL, LANG_CS, LANG_N };   // lab15q-P4 (from the 3.5" 15o/15q): + Polish, Czech
 static int g_lang=0;
-static const char* const LANG_NAMES[LANG_N]={"EN","FR","IT","ES","DE","NL"};
+static const char* const LANG_NAMES[LANG_N]={"EN","FR","IT","ES","DE","NL","PL","CS"};
 enum { L_PREV, L_NEXT, L_THEME, L_REEL, L_INFO, L_LIST, L_ROLL, L_INSERT, L_EJECT, L_SEARCH, L_SETTINGS, L_NOW_PLAYING, L_NO_GAMES, L_NO_FAVS, L_ALL, L_FAV, L_MOST, L_BUILDING, L_ONEOFF, L_LOADING, L_LOADING_DIAG, L_RESCAN_SD, L_SD_ACCESS, L_FW_UPDATE, L_SOFT_RESET, L_RESETTING, L_STANDALONE, L_WIRELESS, L_USER_DISKS, L_RENAME, L_BACK, L_CANCEL, L_ACTIVE, L_MANUAL, L_PAIRED, L_NOT_PAIRED, L_NAME_DONGLE, L_DONGLE_LINKED, L_CREATE_DISK, L_NONE_YET, L_PREFMT, L_CHECK_DONGLE, L_NO_DONGLES, L_NO_WIRELESS_DEV, L_USE_CABLE, L_IN_RANGE, L_AVAIL_HD, L_HD_NO_WIRELESS, L_MAX_DD, L_TOO_BIG, L_SIZE_ERR, L_FAILED, L_SD_MOUNT_FAIL, L_LOAD_DIAG, L_EJECT_DIAG, L_GAMES_TAP, L_CFG_MODE, L_CFG_FONT, L_CFG_LANG, L_CFG_ROTATE, L_CFG_COMPACT, L_CFG_LIBRARY, L_CFG_CATEG, L_CFG_BUTTONS, L_CFG_SAVER, L_CFG_FAVSAVER, L_CFG_HIVEMIND, L_ON, L_OFF, L_PORTRAIT, L_LANDSCAPE, L_FONT_SMALL, L_FONT_NORMAL, L_FONT_LARGE, L_PILL, L_FLAT, L_SLIDES, L_BOUNCE, L_MATRIX, L_SWITCH_DONGLE, L_SCAN_DONGLES, L_STR_N };
 static const char* const LSTR[L_STR_N][LANG_N]={
-  /*L_PREV          */ {"PREV","PREC","PREC","ANT","VORH","VORIG"},
-  /*L_NEXT          */ {"NEXT","SUIV","SUCC","SIG","WEIT","VOLG"},
-  /*L_THEME         */ {"THEME","THEME","TEMA","TEMA","THEMA","THEMA"},
-  /*L_REEL          */ {"REEL","REEL","REEL","REEL","REEL","REEL"},
-  /*L_INFO          */ {"CONFIG","CONFIG","CONFIG","CONFIG","CONFIG","CONFIG"},
-  /*L_LIST          */ {"LIST","LISTE","LISTA","LISTA","LISTE","LIJST"},
-  /*L_ROLL          */ {"ROLL","DES","DADI","DADO","WUERF","DOBBEL"},
-  /*L_INSERT        */ {"INSERT","INSERER","INSERISCI","INSERTAR","EINLEGEN","LADEN"},
-  /*L_EJECT         */ {"EJECT","EJECTER","ESPELLI","EXPULSAR","AUSWERF","UITWERP"},
-  /*L_SEARCH        */ {"SEARCH","RECHERCHE","CERCA","BUSCAR","SUCHE","ZOEKEN"},
-  /*L_SETTINGS      */ {"SETTINGS","REGLAGES","IMPOSTAZIONI","AJUSTES","OPTIONEN","INSTELLINGEN"},
-  /*L_NOW_PLAYING   */ {"NOW PLAYING","EN LECTURE","IN USO","EN USO","LAEUFT","SPEELT NU"},
-  /*L_NO_GAMES      */ {"NO GAMES","AUCUN JEU","NESSUN GIOCO","SIN JUEGOS","KEINE SPIELE","GEEN SPELLEN"},
-  /*L_NO_FAVS       */ {"NO FAVOURITES YET","AUCUN FAVORI","NESSUN PREFERITO","SIN FAVORITOS","KEINE FAVORITEN","NOG GEEN FAVORIETEN"},
-  /*L_ALL           */ {"ALL","TOUT","TUTTI","TODO","ALLE","ALLES"},
-  /*L_FAV           */ {"FAV","FAV","PREF","FAV","FAV","FAV"},
-  /*L_MOST          */ {"MOST","TOP","TOP","TOP","TOP","TOP"},
-  /*L_BUILDING      */ {"BUILDING COVER CACHE","CREATION DU CACHE","CREAZIONE CACHE","CREANDO CACHE","CACHE ERSTELLEN","COVER-CACHE BOUWEN"},
-  /*L_ONEOFF        */ {"one-off: reel thumbnails (first launch / rescan)","unique: vignettes du reel (1er lancement)","una tantum: miniature reel (primo avvio)","una vez: miniaturas del reel (1er inicio)","einmalig: reel-vorschau (erststart)","eenmalig: reel-miniaturen (eerste start)"},
-  /*L_LOADING       */ {"Loading...","Chargement...","Caricamento...","Cargando...","Laedt...","Laden..."},
-  /*L_LOADING_DIAG  */ {"Loading diag...","Chargement diag...","Caricamento diag...","Cargando diag...","Diag laedt...","Diag laden..."},
-  /*L_RESCAN_SD     */ {"RESCAN SD","RELIRE SD","RILEGGI SD","RELEER SD","SD NEU","SD OPNIEUW"},
-  /*L_SD_ACCESS     */ {"SD ACCESS","ACCES SD","ACCESSO SD","ACCESO SD","SD ZUGRIFF","SD-TOEGANG"},
-  /*L_FW_UPDATE     */ {"FW UPDATE","MAJ FW","AGG. FW","ACT. FW","FW UPDATE","FW UPDATE"},
-  /*L_SOFT_RESET    */ {"SOFT RESET","REINIT","RIAVVIA","REINICIAR","NEUSTART","HERSTART"},
-  /*L_RESETTING     */ {"RESET...","REINIT...","RIAVVIO...","REINICIO...","NEUSTART...","HERSTART..."},
-  /*L_STANDALONE    */ {"STANDALONE","AUTONOME","AUTONOMO","AUTONOMO","STANDALONE","STANDALONE"},
-  /*L_WIRELESS      */ {"WIRELESS","SANS FIL","WIRELESS","INALAMB.","FUNK","DRAADLOOS"},
-  /*L_USER_DISKS    */ {"USER DISKS","DISQUES","DISCHI","DISCOS","DISKETTEN","EIGEN DISKS"},
-  /*L_RENAME        */ {"RENAME","RENOMMER","RINOMINA","RENOMBRAR","UMBENENN","HERNOEM"},
-  /*L_BACK          */ {"BACK","RETOUR","INDIETRO","ATRAS","ZURUECK","TERUG"},
-  /*L_CANCEL        */ {"CANCEL","ANNULER","ANNULLA","CANCELAR","ABBRECH","ANNULEER"},
-  /*L_ACTIVE        */ {"ACTIVE","ACTIF","ATTIVO","ACTIVO","AKTIV","ACTIEF"},
-  /*L_MANUAL        */ {"MANUAL","MANUEL","MANUALE","MANUAL","MANUELL","HANDMATIG"},
-  /*L_PAIRED        */ {"PAIRED","APPAIRE","ABBINATO","VINCULADO","GEKOPPELT","GEKOPPELD"},
-  /*L_NOT_PAIRED    */ {"Not paired","Non appaire","Non abbinato","No vinculado","Nicht gekoppelt","Niet gekoppeld"},
-  /*L_NAME_DONGLE   */ {"NAME DONGLE","NOMMER DONGLE","NOMINA DONGLE","NOMBRAR DONGLE","DONGLE NAME","DONGLE NAAM"},
-  /*L_DONGLE_LINKED */ {"** DONGLE LINKED **","** DONGLE CONNECTE **","** DONGLE COLLEGATO **","** DONGLE CONECTADO **","** DONGLE VERBUNDEN **","** DONGLE VERBONDEN **"},
-  /*L_CREATE_DISK   */ {"+  CREATE NEW DISK","+  NOUVEAU DISQUE","+  NUOVO DISCO","+  NUEVO DISCO","+  NEUE DISKETTE","+  NIEUWE DISK"},
-  /*L_NONE_YET      */ {"(none yet - tap CREATE NEW DISK)","(aucun - touchez NOUVEAU DISQUE)","(nessuno - tocca NUOVO DISCO)","(ninguno - toca NUEVO DISCO)","(keine - NEUE DISKETTE tippen)","(nog geen - tik NIEUWE DISK)"},
-  /*L_PREFMT        */ {"pre-formatted save disks - tap to insert","disques de sauvegarde pre-formates - toucher","dischi di salvataggio pre-formattati - tocca","discos de guardado pre-formateados - toca","vorformatierte speicherdisks - tippen","voorgeformatteerde save-disks - tik om te laden"},
-  /*L_CHECK_DONGLE  */ {"Check dongle is powered","Verifiez l'alim. du dongle","Verifica alim. dongle","Comprueba alim. del dongle","Dongle-Strom pruefen","Check voeding van de dongle"},
-  /*L_NO_DONGLES    */ {"No dongles found","Aucun dongle trouve","Nessun dongle trovato","No se hallaron dongles","Keine Dongles gefunden","Geen dongles gevonden"},
-  /*L_NO_WIRELESS_DEV*/ {"No wireless device","Aucun periph. sans fil","Nessun disp. wireless","Sin disp. inalambrico","Kein Funkgeraet","Geen draadloos apparaat"},
-  /*L_USE_CABLE     */ {"Use the cable / standalone.","Utilisez le cable / autonome.","Usa il cavo / autonomo.","Usa el cable / autonomo.","Kabel / Standalone nutzen.","Gebruik de kabel / standalone."},
-  /*L_IN_RANGE      */ {"and in WIRELESS range.","et a portee sans fil.","e nel raggio wireless.","y en rango inalambrico.","und in Funkreichweite.","en binnen draadloos bereik."},
-  /*L_AVAIL_HD      */ {"available for HD.","disponible pour HD.","disponibile per HD.","disponible para HD.","verfuegbar fuer HD.","beschikbaar voor HD."},
-  /*L_HD_NO_WIRELESS*/ {"HD - NO WIRELESS","HD - SANS FIL NON","HD - NO WIRELESS","HD - SIN INALAMB.","HD - KEIN FUNK","HD - NIET DRAADLOOS"},
-  /*L_MAX_DD        */ {"Max is DD floppy","Max = disquette DD","Max = floppy DD","Max = disquete DD","Max = DD-Diskette","Max = DD diskette"},
-  /*L_TOO_BIG       */ {"TOO BIG","TROP GROS","TROPPO GRANDE","MUY GRANDE","ZU GROSS","TE GROOT"},
-  /*L_SIZE_ERR      */ {"SIZE ERR","ERR TAILLE","ERR DIMENS.","ERR TAMANO","GROESSENFEHL","MAATFOUT"},
-  /*L_FAILED        */ {"FAILED","ECHEC","FALLITO","FALLIDO","FEHLER","MISLUKT"},
-  /*L_SD_MOUNT_FAIL */ {"SD MOUNT FAILED","ECHEC MONTAGE SD","MONTAGGIO SD FALLITO","FALLO MONTAJE SD","SD-MOUNT FEHLER","SD MOUNT MISLUKT"},
-  /*L_LOAD_DIAG     */ {"LOAD DIAG","CHARGER DIAG","CARICA DIAG","CARGAR DIAG","DIAG LADEN","DIAG LADEN"},
-  /*L_EJECT_DIAG    */ {"EJECT DIAG","EJECTER DIAG","ESPELLI DIAG","EXPULSAR DIAG","DIAG AUSWERF","DIAG UITWERP"},
-  /*L_GAMES_TAP     */ {" games - tap INSERT"," jeux - toucher INSERER"," giochi - tocca INSERISCI"," juegos - toca INSERTAR"," Spiele - INSERT tippen"," spellen - tik LADEN"},
-  /*L_CFG_MODE     */ {"MODE","MODE","MODE","MODO","MODUS","MODUS"},
-  /*L_CFG_FONT     */ {"FONT","POLICE","FONT","FUENTE","SCHRIFT","LETTER"},
-  /*L_CFG_LANG     */ {"LANG","LANGUE","LANG","IDIOMA","SPRACHE","TAAL"},
-  /*L_CFG_ROTATE   */ {"ROTATE","ROTATION","ROTATE","ROTAR","DREHEN","DRAAIEN"},
-  /*L_CFG_COMPACT  */ {"COMPACT","COMPACT","COMPACT","COMPACTO","KOMPAKT","COMPACT"},
-  /*L_CFG_LIBRARY  */ {"LIBRARY","BIBLIO.","LIBRARY","BIBLIOTECA","BIBLIOTHEK","BIBLIOTHEEK"},
-  /*L_CFG_CATEG    */ {"CATEGORIES","CATEGORIES","CATEGORIES","CATEGORIAS","KATEGORIEN","CATEGORIEEN"},
-  /*L_CFG_BUTTONS  */ {"BUTTONS","BOUTONS","BUTTONS","BOTONES","TASTEN","KNOPPEN"},
-  /*L_CFG_SAVER    */ {"SAVER","VEILLE","SAVER","SALVAPANT.","SCHONER","SAVER"},
-  /*L_CFG_FAVSAVER */ {"FAV SAVER","FAV VEILLE","FAV SAVER","FAV SALVAP.","FAV SCHONER","FAV SAVER"},
-  /*L_CFG_HIVEMIND */ {"HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND"},
-  /*L_ON           */ {"ON","ON","ON","ON","EIN","AAN"},
-  /*L_OFF          */ {"OFF","OFF","OFF","OFF","AUS","UIT"},
-  /*L_PORTRAIT     */ {"PORTRAIT","PORTRAIT","PORTRAIT","VERTICAL","HOCHFORMAT","STAAND"},
-  /*L_LANDSCAPE    */ {"LANDSCAPE","PAYSAGE","LANDSCAPE","HORIZONTAL","QUERFORMAT","LIGGEND"},
-  /*L_FONT_SMALL   */ {"SMALL","PETIT","SMALL","PEQUENO","KLEIN","KLEIN"},
-  /*L_FONT_NORMAL  */ {"NORMAL","NORMAL","NORMAL","NORMAL","NORMAL","NORMAAL"},
-  /*L_FONT_LARGE   */ {"LARGE","GRAND","LARGE","GRANDE","GROSS","GROOT"},
-  /*L_PILL         */ {"PILL","ARRONDI","PILL","REDOND.","RUND","ROND"},
-  /*L_FLAT         */ {"FLAT","PLAT","FLAT","PLANO","FLACH","VLAK"},
-  /*L_SLIDES       */ {"SLIDES","DIAPO.","SLIDES","DIAPOS.","DIASHOW","DIA'S"},
-  /*L_BOUNCE       */ {"BOUNCE","REBOND","BOUNCE","REBOTE","HUEPFEN","STUITER"},
-  /*L_MATRIX       */ {"MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX"},
-  /*L_SWITCH_DONGLE*/ {"SWITCH DONGLE","CHANGER DONGLE","SWITCH DONGLE","CAMBIAR DONGLE","DONGLE WECHSELN","WISSEL DONGLE"},
-  /*L_SCAN_DONGLES */ {"SCAN DONGLES","SCAN DONGLES","SCAN DONGLES","BUSCAR DONGLES","DONGLES SUCHEN","ZOEK DONGLES"},
+  /*L_PREV          */ {"PREV","PREC","PREC","ANT","VORH","VORIG","POPRZ","PRED"},
+  /*L_NEXT          */ {"NEXT","SUIV","SUCC","SIG","WEIT","VOLG","DALEJ","DALSI"},
+  /*L_THEME         */ {"THEME","THEME","TEMA","TEMA","THEMA","THEMA","MOTYW","MOTIV"},
+  /*L_REEL          */ {"REEL","REEL","REEL","REEL","REEL","REEL","ROLKA","REEL"},
+  /*L_INFO          */ {"CONFIG","CONFIG","CONFIG","CONFIG","CONFIG","CONFIG","KONFIG","CONFIG"},
+  /*L_LIST          */ {"LIST","LISTE","LISTA","LISTA","LISTE","LIJST","LISTA","SEZNAM"},
+  /*L_ROLL          */ {"ROLL","DES","DADI","DADO","WUERF","DOBBEL","LOSUJ","KOSTKA"},
+  /*L_INSERT        */ {"INSERT","INSERER","INSERISCI","INSERTAR","EINLEGEN","LADEN","WLOZ","VLOZIT"},
+  /*L_EJECT         */ {"EJECT","EJECTER","ESPELLI","EXPULSAR","AUSWERF","UITWERP","WYSUN","VYSUNOUT"},
+  /*L_SEARCH        */ {"SEARCH","RECHERCHE","CERCA","BUSCAR","SUCHE","ZOEKEN","SZUKAJ","HLEDAT"},
+  /*L_SETTINGS      */ {"SETTINGS","REGLAGES","IMPOSTAZIONI","AJUSTES","OPTIONEN","INSTELLINGEN","USTAWIENIA","NASTAVENI"},
+  /*L_NOW_PLAYING   */ {"NOW PLAYING","EN LECTURE","IN USO","EN USO","LAEUFT","SPEELT NU","TERAZ GRA","PRAVE HRAJE"},
+  /*L_NO_GAMES      */ {"NO GAMES","AUCUN JEU","NESSUN GIOCO","SIN JUEGOS","KEINE SPIELE","GEEN SPELLEN","BRAK GIER","ZADNE HRY"},
+  /*L_NO_FAVS       */ {"NO FAVOURITES YET","AUCUN FAVORI","NESSUN PREFERITO","SIN FAVORITOS","KEINE FAVORITEN","NOG GEEN FAVORIETEN","BRAK ULUBIONYCH","ZATIM ZADNE OBLIBENE"},
+  /*L_ALL           */ {"ALL","TOUT","TUTTI","TODO","ALLE","ALLES","WSZYSTKIE","VSE"},
+  /*L_FAV           */ {"FAV","FAV","PREF","FAV","FAV","FAV","ULUBIONE","OBLIB"},
+  /*L_MOST          */ {"MOST","TOP","TOP","TOP","TOP","TOP","TOP","TOP"},
+  /*L_BUILDING      */ {"BUILDING COVER CACHE","CREATION DU CACHE","CREAZIONE CACHE","CREANDO CACHE","CACHE ERSTELLEN","COVER-CACHE BOUWEN","GENEROWANIE OKLADEK","VYTVARIM CACHE OBALU"},
+  /*L_ONEOFF        */ {"one-off: reel thumbnails (first launch / rescan)","unique: vignettes du reel (1er lancement)","una tantum: miniature reel (primo avvio)","una vez: miniaturas del reel (1er inicio)","einmalig: reel-vorschau (erststart)","eenmalig: reel-miniaturen (eerste start)","jednorazowo: miniatury rolek (1. uruch.)","jednorazove: nahledy reel (1. spusteni)"},
+  /*L_LOADING       */ {"Loading...","Chargement...","Caricamento...","Cargando...","Laedt...","Laden...","Ladowanie...","Nacitani..."},
+  /*L_LOADING_DIAG  */ {"Loading diag...","Chargement diag...","Caricamento diag...","Cargando diag...","Diag laedt...","Diag laden...","Ladowanie diag...","Nacitani diag..."},
+  /*L_RESCAN_SD     */ {"RESCAN SD","RELIRE SD","RILEGGI SD","RELEER SD","SD NEU","SD OPNIEUW","SKANUJ SD","PROHLEDAT SD"},
+  /*L_SD_ACCESS     */ {"SD ACCESS","ACCES SD","ACCESSO SD","ACCESO SD","SD ZUGRIFF","SD-TOEGANG","DOSTEP SD","PRISTUP SD"},
+  /*L_FW_UPDATE     */ {"FW UPDATE","MAJ FW","AGG. FW","ACT. FW","FW UPDATE","FW UPDATE","AKTUAL. FW","AKTUAL. FW"},
+  /*L_SOFT_RESET    */ {"SOFT RESET","REINIT","RIAVVIA","REINICIAR","NEUSTART","HERSTART","RESTART","RESTART"},
+  /*L_RESETTING     */ {"RESET...","REINIT...","RIAVVIO...","REINICIO...","NEUSTART...","HERSTART...","RESET...","RESTART..."},
+  /*L_STANDALONE    */ {"STANDALONE","AUTONOME","AUTONOMO","AUTONOMO","STANDALONE","STANDALONE","SAMODZIELNY","SAMOSTATNE"},
+  /*L_WIRELESS      */ {"WIRELESS","SANS FIL","WIRELESS","INALAMB.","FUNK","DRAADLOOS","BEZPRZEW.","BEZDRATOVE"},
+  /*L_USER_DISKS    */ {"USER DISKS","DISQUES","DISCHI","DISCOS","DISKETTEN","EIGEN DISKS","MOJE DYSKI","MOJE DISKY"},
+  /*L_RENAME        */ {"RENAME","RENOMMER","RINOMINA","RENOMBRAR","UMBENENN","HERNOEM","ZMIEN NAZWE","PREJMENOVAT"},
+  /*L_BACK          */ {"BACK","RETOUR","INDIETRO","ATRAS","ZURUECK","TERUG","WSTECZ","ZPET"},
+  /*L_CANCEL        */ {"CANCEL","ANNULER","ANNULLA","CANCELAR","ABBRECH","ANNULEER","ANULUJ","ZRUSIT"},
+  /*L_ACTIVE        */ {"ACTIVE","ACTIF","ATTIVO","ACTIVO","AKTIV","ACTIEF","AKTYWNY","AKTIVNI"},
+  /*L_MANUAL        */ {"MANUAL","MANUEL","MANUALE","MANUAL","MANUELL","HANDMATIG","INSTRUKCJA","NAVOD"},
+  /*L_PAIRED        */ {"PAIRED","APPAIRE","ABBINATO","VINCULADO","GEKOPPELT","GEKOPPELD","SPAROWANY","SPAROVANO"},
+  /*L_NOT_PAIRED    */ {"Not paired","Non appaire","Non abbinato","No vinculado","Nicht gekoppelt","Niet gekoppeld","Niesparowany","Nesparovano"},
+  /*L_NAME_DONGLE   */ {"NAME DONGLE","NOMMER DONGLE","NOMINA DONGLE","NOMBRAR DONGLE","DONGLE NAME","DONGLE NAAM","NAZWIJ DONGLE","POJMENOVAT DONGLE"},
+  /*L_DONGLE_LINKED */ {"** DONGLE LINKED **","** DONGLE CONNECTE **","** DONGLE COLLEGATO **","** DONGLE CONECTADO **","** DONGLE VERBUNDEN **","** DONGLE VERBONDEN **","** DONGLE POLACZONY **","** DONGLE PRIPOJEN **"},
+  /*L_CREATE_DISK   */ {"+  CREATE NEW DISK","+  NOUVEAU DISQUE","+  NUOVO DISCO","+  NUEVO DISCO","+  NEUE DISKETTE","+  NIEUWE DISK","+  NOWY DYSK","+  NOVY DISK"},
+  /*L_NONE_YET      */ {"(none yet - tap CREATE NEW DISK)","(aucun - touchez NOUVEAU DISQUE)","(nessuno - tocca NUOVO DISCO)","(ninguno - toca NUEVO DISCO)","(keine - NEUE DISKETTE tippen)","(nog geen - tik NIEUWE DISK)","(brak - dotknij NOWY DYSK)","(zatim zadne - klepnete na NOVY DISK)"},
+  /*L_PREFMT        */ {"pre-formatted save disks - tap to insert","disques de sauvegarde pre-formates - toucher","dischi di salvataggio pre-formattati - tocca","discos de guardado pre-formateados - toca","vorformatierte speicherdisks - tippen","voorgeformatteerde save-disks - tik om te laden","sformatowane dyski zapisu - dotknij, by wlozyc","predformatovane disky pro ulozeni - klepnete"},
+  /*L_CHECK_DONGLE  */ {"Check dongle is powered","Verifiez l'alim. du dongle","Verifica alim. dongle","Comprueba alim. del dongle","Dongle-Strom pruefen","Check voeding van de dongle","Sprawdz zasilanie dongla","Zkontrolujte napajeni donglu"},
+  /*L_NO_DONGLES    */ {"No dongles found","Aucun dongle trouve","Nessun dongle trovato","No se hallaron dongles","Keine Dongles gefunden","Geen dongles gevonden","Nie znaleziono dongli","Nenalezeny zadne dongly"},
+  /*L_NO_WIRELESS_DEV*/ {"No wireless device","Aucun periph. sans fil","Nessun disp. wireless","Sin disp. inalambrico","Kein Funkgeraet","Geen draadloos apparaat","Brak urzadzen bezprzew.","Zadne bezdratove zarizeni"},
+  /*L_USE_CABLE     */ {"Use the cable / standalone.","Utilisez le cable / autonome.","Usa il cavo / autonomo.","Usa el cable / autonomo.","Kabel / Standalone nutzen.","Gebruik de kabel / standalone.","Uzyj kabla / tryb samodzielny.","Pouzijte kabel / samostatne."},
+  /*L_IN_RANGE      */ {"and in WIRELESS range.","et a portee sans fil.","e nel raggio wireless.","y en rango inalambrico.","und in Funkreichweite.","en binnen draadloos bereik.","i w zasiegu bezprzewodowym.","a v bezdratovem dosahu."},
+  /*L_AVAIL_HD      */ {"available for HD.","disponible pour HD.","disponibile per HD.","disponible para HD.","verfuegbar fuer HD.","beschikbaar voor HD.","dostepny dla HD.","dostupne pro HD."},
+  /*L_HD_NO_WIRELESS*/ {"HD - NO WIRELESS","HD - SANS FIL NON","HD - NO WIRELESS","HD - SIN INALAMB.","HD - KEIN FUNK","HD - NIET DRAADLOOS","HD - TYLKO KABEL","HD - JEN KABEL"},
+  /*L_MAX_DD        */ {"Max is DD floppy","Max = disquette DD","Max = floppy DD","Max = disquete DD","Max = DD-Diskette","Max = DD diskette","Max to dyskietka DD","Max je disketa DD"},
+  /*L_TOO_BIG       */ {"TOO BIG","TROP GROS","TROPPO GRANDE","MUY GRANDE","ZU GROSS","TE GROOT","ZA DUZY","PRILIS VELKY"},
+  /*L_SIZE_ERR      */ {"SIZE ERR","ERR TAILLE","ERR DIMENS.","ERR TAMANO","GROESSENFEHL","MAATFOUT","BLAD ROZM.","CHYBA VELIK."},
+  /*L_FAILED        */ {"FAILED","ECHEC","FALLITO","FALLIDO","FEHLER","MISLUKT","BLAD","CHYBA"},
+  /*L_SD_MOUNT_FAIL */ {"SD MOUNT FAILED","ECHEC MONTAGE SD","MONTAGGIO SD FALLITO","FALLO MONTAJE SD","SD-MOUNT FEHLER","SD MOUNT MISLUKT","BLAD MONTOWANIA SD","CHYBA PRIPOJENI SD"},
+  /*L_LOAD_DIAG     */ {"LOAD DIAG","CHARGER DIAG","CARICA DIAG","CARGAR DIAG","DIAG LADEN","DIAG LADEN","LADUJ DIAG","NACIST DIAG"},
+  /*L_EJECT_DIAG    */ {"EJECT DIAG","EJECTER DIAG","ESPELLI DIAG","EXPULSAR DIAG","DIAG AUSWERF","DIAG UITWERP","WYSUN DIAG","VYSUNOUT DIAG"},
+  /*L_GAMES_TAP     */ {" games - tap INSERT"," jeux - toucher INSERER"," giochi - tocca INSERISCI"," juegos - toca INSERTAR"," Spiele - INSERT tippen"," spellen - tik LADEN"," gier - dotknij WLOZ"," her - klepnete na VLOZIT"},
+  /*L_CFG_MODE     */ {"MODE","MODE","MODE","MODO","MODUS","MODUS","TRYB","REZIM"},
+  /*L_CFG_FONT     */ {"FONT","POLICE","FONT","FUENTE","SCHRIFT","LETTER","CZCIONKA","PISMO"},
+  /*L_CFG_LANG     */ {"LANG","LANGUE","LANG","IDIOMA","SPRACHE","TAAL","JEZYK","JAZYK"},
+  /*L_CFG_ROTATE   */ {"ROTATE","ROTATION","ROTATE","ROTAR","DREHEN","DRAAIEN","OBROT","OTOCIT"},
+  /*L_CFG_COMPACT  */ {"COMPACT","COMPACT","COMPACT","COMPACTO","KOMPAKT","COMPACT","KOMPAKT","KOMPAKT"},
+  /*L_CFG_LIBRARY  */ {"LIBRARY","BIBLIO.","LIBRARY","BIBLIOTECA","BIBLIOTHEK","BIBLIOTHEEK","BIBLIOTEKA","KNIHOVNA"},
+  /*L_CFG_CATEG    */ {"CATEGORIES","CATEGORIES","CATEGORIES","CATEGORIAS","KATEGORIEN","CATEGORIEEN","KATEGORIE","KATEGORIE"},
+  /*L_CFG_BUTTONS  */ {"BUTTONS","BOUTONS","BUTTONS","BOTONES","TASTEN","KNOPPEN","PRZYCISKI","TLACITKA"},
+  /*L_CFG_SAVER    */ {"SAVER","VEILLE","SAVER","SALVAPANT.","SCHONER","SAVER","WYGASZACZ","SPORIC"},
+  /*L_CFG_FAVSAVER */ {"FAV SAVER","FAV VEILLE","FAV SAVER","FAV SALVAP.","FAV SCHONER","FAV SAVER","WYGASZ. ULUB.","SPORIC OBLIB"},
+  /*L_CFG_HIVEMIND */ {"HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND","HIVEMIND"},
+  /*L_ON           */ {"ON","ON","ON","ON","EIN","AAN","WL","ZAP"},
+  /*L_OFF          */ {"OFF","OFF","OFF","OFF","AUS","UIT","WYL","VYP"},
+  /*L_PORTRAIT     */ {"PORTRAIT","PORTRAIT","PORTRAIT","VERTICAL","HOCHFORMAT","STAAND","PIONOWO","NA VYSKU"},
+  /*L_LANDSCAPE    */ {"LANDSCAPE","PAYSAGE","LANDSCAPE","HORIZONTAL","QUERFORMAT","LIGGEND","POZIOMO","NA SIRKU"},
+  /*L_FONT_SMALL   */ {"SMALL","PETIT","SMALL","PEQUENO","KLEIN","KLEIN","MALA","MALE"},
+  /*L_FONT_NORMAL  */ {"NORMAL","NORMAL","NORMAL","NORMAL","NORMAL","NORMAAL","NORMALNA","NORMALNI"},
+  /*L_FONT_LARGE   */ {"LARGE","GRAND","LARGE","GRANDE","GROSS","GROOT","DUZA","VELKE"},
+  /*L_PILL         */ {"PILL","ARRONDI","PILL","REDOND.","RUND","ROND","OKRAGLE","ZAOBLENE"},
+  /*L_FLAT         */ {"FLAT","PLAT","FLAT","PLANO","FLACH","VLAK","PLASKIE","PLOCHE"},
+  /*L_SLIDES       */ {"SLIDES","DIAPO.","SLIDES","DIAPOS.","DIASHOW","DIA'S","SLAJDY","SNIMKY"},
+  /*L_BOUNCE       */ {"BOUNCE","REBOND","BOUNCE","REBOTE","HUEPFEN","STUITER","ODBIJANIE","ODRAZ"},
+  /*L_MATRIX       */ {"MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX","MATRIX"},
+  /*L_SWITCH_DONGLE*/ {"SWITCH DONGLE","CHANGER DONGLE","SWITCH DONGLE","CAMBIAR DONGLE","DONGLE WECHSELN","WISSEL DONGLE","ZMIEN DONGLE","ZMENIT DONGLE"},
+  /*L_SCAN_DONGLES */ {"SCAN DONGLES","SCAN DONGLES","SCAN DONGLES","BUSCAR DONGLES","DONGLES SUCHEN","ZOEK DONGLES","SKANUJ DONGLI","HLEDAT DONGLY"},
 };
 static inline const char* T(int id){ return LSTR[id][g_lang]; }
 
@@ -2769,7 +2878,7 @@ DAV_PATH=/
 #  SYSTEM       language + diagnostics
 # ============================================================
 
-# Language: EN, FR, IT, ES, DE, NL  (pull the SD and edit this line if you get stuck)
+# Language: EN, FR, IT, ES, DE, NL, PL, CS  (pull the SD and edit this line if you get stuck)
 LANG=EN
 
 # LOG: the GTI/gti.log diagnostic log is ON by default.
@@ -2825,7 +2934,7 @@ static void selfHealConfig(){
   if(!SD_MMC.exists("/CONFIG.TXT"))return;   // fresh cards already get the full template
   struct CfgKey{const char*key;const char*block;};
   static const CfgKey KEYS[]={
-    {"THEME",    "\n# Theme: 0=NAVY 1=EMBER 2=MATRIX 3=PAPER 4=SYNTH 5=GOLD 6=OMEGA\nTHEME=0\n"},
+    {"THEME",    "\n# Theme: lab16b-P4 uses NEO only (this line is ignored for now)\nTHEME=0\n"},
     {"MODE",     "\n# Transfer mode: STANDALONE (USB to Gotek) or WIRELESS (ESP-NOW to dongle)\nMODE=STANDALONE\n"},
     {"CAROUSEL", "\n# CAROUSEL: default boot view. OFF=game list, ON=cover reel, LAST=restore last view.\nCAROUSEL=OFF\n"},
     {"LOOP",     "\n# Loop cracktro splash: 1=loop until tapped, 0=auto-dismiss after 6s\nLOOP=0\n"},
@@ -2844,7 +2953,7 @@ static void selfHealConfig(){
     {"REELBORDER","\n# REELBORDER: frame drawn around each cover in the reel. ON=framed (default),\n#   OFF=clean/frameless look (the game you have loaded is still marked green).\nREELBORDER=ON\n"},
     {"LASTUSED", "\n# LASTUSED: ON = on power-up, jump the selection back to the game you last loaded.\n#   OFF (default) = always start at the top of the list.\nLASTUSED=OFF\n"},
     {"FONT",     "\n# Font size: SMALL, NORMAL, LARGE\nFONT=NORMAL\n"},
-    {"LANG",     "\n# Language: EN, FR, IT, ES, DE, NL  (pull the SD and edit this line if you get stuck)\nLANG=EN\n"},
+    {"LANG",     "\n# Language: EN, FR, IT, ES, DE, NL, PL, CS  (pull the SD and edit this line if you get stuck)\nLANG=EN\n"},
     {"ROTATE",   "\n# Screen rotation in degrees: 0 or 180 = landscape, 90 or 270 = portrait.\nROTATE=0\n"},
     {"COVERMIN", "\n# COVERMIN: hide covers whose short side is under N px (0 = show all) - keeps the reel + panel clean.\nCOVERMIN=140\n"},
     {"REELFILTER", "\n# REELFILTER: ON = the reel (cover carousel) shows only games whose cover passes COVERMIN;\n#             the A-Z list still shows every game. OFF = reel shows all games.\nREELFILTER=OFF\n"},
@@ -2967,7 +3076,7 @@ static void loadConfig(){
     if(k=="THEME"){int ti=-1;for(int i=0;i<NUM_THEMES;i++)if(v.equalsIgnoreCase(THEMES[i].name)){ti=i;break;}applyTheme(ti>=0?ti:((v.length()&&isDigit(v[0]))?v.toInt():0));}else if(k=="LOOP")g_loop_cracktro=(v=="1");else if(k=="MODE")g_wireless_mode=(v=="WIRELESS");else if(k=="CAROUSEL"){String cv=v;cv.toUpperCase();g_car_bootmode=(cv=="LAST")?2:((cv=="1"||cv=="ON"||cv=="TRUE")?1:0);}
     else if(k=="TAPLOAD")g_tapload=(v=="ON"||v=="1");else if(k=="HOTSWAP")g_hotswap=(v=="ON"||v=="1");else if(k=="FORCESWAP")g_forceswap=(v=="ON"||v=="1");
     else if(k=="FONT"){int f=1;if(v=="SMALL")f=0;else if(v=="LARGE")f=2;applyFont(f);}
-    else if(k=="LANG"){String lu=v;lu.toUpperCase();for(int i=0;i<LANG_N;i++)if(lu==LANG_NAMES[i]){g_lang=i;break;}}
+    else if(k=="LANG"){String lu=v;lu.toUpperCase();if(lu=="CZ")lu="CS";for(int i=0;i<LANG_N;i++)if(lu==LANG_NAMES[i]){g_lang=i;break;}}
     else if(k=="ROTATE"){g_rot=((v.toInt()/90)%4+4)%4;}
     else if(k=="COVERMIN"){g_covermin=v.toInt();if(g_covermin<0)g_covermin=0;}
     else if(k=="REELFILTER"){String ru=v;ru.trim();ru.toUpperCase();g_reelfilter=(ru=="ON"||ru=="1"||ru=="YES");}
@@ -3029,11 +3138,12 @@ static void loadConfig(){
 // ════════════════════════════════════════════════════════════════════════════
 #define VW gW
 #define VH gH
-#define STATUS_H   28   // P4: 800x480 canvas - bars, rows and touch targets scaled up
+#define STATUS_H   40   // lab16b-P4: NEO top bar (was 28)
 #define MODE_BAR_H 24
 #define NOW_PLAY_H 30
-#define BOTTOM_H   54
-#define AZ_W       42
+#define BOTTOM_H   58   // lab16b-P4: room for 44 px pills (was 54)
+static int g_az_w=42;
+#define AZ_W       g_az_w   // lab16b-P4: NEO uses a slim 26 px strip
 // Layout is computed by relayout() for the current rotation + compact mode.
 static int AZ_X=450, COVER_W=150, COVER_X=0, COVER_Y=20, COVER_H=260;
 static int COVER_ART_X=4, COVER_ART_Y=24, COVER_ART_W=142, COVER_ART_H=116;
@@ -3047,10 +3157,34 @@ static int g_font=1, g_item_h=55, g_items_vis=4, g_name_sz=2;
 #define ITEMS_VIS   g_items_vis
 static void applyFont(int f){if(f<0||f>2)f=1;g_font=f;g_name_sz=(f==0?2:f==2?4:3);   // P4: one text size up
   int target=(f==0?50:f==2?100:74),listH=LIST_BOTTOM-LIST_TOP,rows=listH/target;
+  if(g_neo){ g_name_sz=(f==2?3:2); target=(f==0?44:f==2?66:52); rows=listH/target; }   // lab16b-P4: name + "n disks" line
   if(listH%target>=target/2)rows++; if(rows<1)rows=1;
   g_item_h=listH/rows; g_items_vis=rows;}
 static const char* fontName(int f){return f==0?T(L_FONT_SMALL):f==2?T(L_FONT_LARGE):T(L_FONT_NORMAL);}
 static const char* fontKey(int f){return f==0?"SMALL":f==2?"LARGE":"NORMAL";}   // canonical CONFIG.TXT token — NEVER localized (load parser matches these)
+// lab16b-P4: NEO geometry (the mock-ups). Landscape: list panel left, A-Z strip, game panel right.
+// Portrait: game panel on top, list panel + A-Z under it. INSERT lives in the bottom bar.
+static int NEO_LP_X=8,NEO_LP_Y=48,NEO_LP_W=420,NEO_LP_H=360;   // the list's rounded panel
+static void neoLayout(){
+  COVER_ON=true; STRIP_ON=false; NOW_ON=false; g_az_w=26;
+  int top=STATUS_H+8, bot=VH-BOTTOM_H-6;
+  if(!g_portrait){
+    COVER_W=330; COVER_X=VW-8-COVER_W; COVER_Y=top; COVER_H=bot-top;
+    AZ_X=COVER_X-4-AZ_W; AZ_TOP=top; AZ_H=bot-top;
+    NEO_LP_X=8; NEO_LP_Y=top; NEO_LP_W=AZ_X-4-NEO_LP_X; NEO_LP_H=bot-top;
+    COVER_ART_W=COVER_W-24; COVER_ART_H=190;   // lab16d-P4: big cover
+  }else{
+    COVER_X=8; COVER_W=VW-16; COVER_Y=top; COVER_H=360;   // lab16d-P4: was 300
+    int lt=COVER_Y+COVER_H+8;
+    AZ_X=VW-8-AZ_W; AZ_TOP=lt; AZ_H=bot-lt;
+    NEO_LP_X=8; NEO_LP_Y=lt; NEO_LP_W=AZ_X-4-NEO_LP_X; NEO_LP_H=bot-lt;
+    COVER_ART_W=COVER_W-24; COVER_ART_H=190;
+  }
+  COVER_ART_X=COVER_X+12; COVER_ART_Y=COVER_Y+12;
+  LIST_X=NEO_LP_X+6; LIST_W=NEO_LP_W-12; LIST_TOP=NEO_LP_Y+6; LIST_BOTTOM=NEO_LP_Y+NEO_LP_H-6;
+  INS_X=INS_Y=INS_W=INS_H=0;   // no INSERT box on the panel: it is the middle pill of the bottom bar
+  STRIP_Y=STRIP_H=0; NOW_Y=LIST_BOTTOM;
+}
 static void relayout(){
   if(g_portrait){gW=480;gH=800;}else{gW=800;gH=480;}   // P4: rotation-aware canvas (panel is 480x800 physical)
   // Reset the clip window to the new canvas. The clip statics init to the
@@ -3059,6 +3193,8 @@ static void relayout(){
   // including the whole bottom bar — was silently clipped (buttons invisible
   // but still tappable). Rotation must always re-sync the clip.
   g_clip_x0=0;g_clip_x1=gW;g_clip_y0=0;g_clip_y1=gH;
+  if(g_neo){ neoLayout(); applyFont(g_font); return; }   // lab16b-P4
+  g_az_w=42;
   AZ_X=VW-AZ_W; int mb=STATUS_H+MODE_BAR_H;
   if(!g_compact){
     if(!g_portrait){
@@ -3398,12 +3534,67 @@ static int drawWrapped(int x,int y,const String&s,int maxW,int lineH,int maxLine
   if(line.length()&&n<maxLines&&y+gh<=bottomY){gfx_setCursor(x,y);gfx_print(line);y+=lineH;}
   return y;
 }
+// lab16b-P4 NEO top bar (40 px): GOTEK GTi with the firmware version under it | library + games (tap = switch
+// library, or open the categories) | CABLE/DONGLE state chip | gear (opens / closes Settings)
+#define NEO_GEAR_W 44   // tap width of the gear, top-right
+static int g_neo_ctr_x0=0,g_neo_ctr_x1=0;   // the tappable library text (list view only; 0/0 = none)
+static String neoThousands(uint32_t v){ String s=String(v); for(int i=(int)s.length()-3;i>0;i-=3)s=s.substring(0,i)+","+s.substring(i); return s; }
+// Print a string where every '|' becomes a drawn middle dot (the 6x8 font has none). Width: '|' counts as 3 characters.
+static int neoDotWidth(const String&s){ int n=0; for(unsigned i=0;i<s.length();i++)n+=(s[i]=='|')?3:1; return n*6*text_size; }
+static void neoDotPrint(const String&s,uint16_t col){
+  int seg0=0;
+  for(int i=0;i<=(int)s.length();i++){
+    if(i==(int)s.length()||s[i]=='|'){
+      if(i>seg0)gfx_print(s.substring(seg0,i));
+      if(i<(int)s.length()){ int dx=text_x+9*text_size, dy=text_y+4*text_size-1; gfx_fillCircle(dx,dy,text_size>1?2:1,col); text_x+=18*text_size; }
+      seg0=i+1; } }
+}
+static void neoStatusBar(){
+  gfx_fillRect(0,0,VW,STATUS_H,COL_BAR); gfx_hline(0,STATUS_H-1,VW,COL_SEP);
+  gfx_setTextSize(2); gfx_setTextColor(COL_AMBER,COL_BAR); gfx_setCursor(12,5); gfx_print("GOTEK");
+  gfx_setTextColor(TFT_WHITE,COL_BAR); gfx_print(" GTi");
+  int leftEnd=text_x;
+  gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_BAR); gfx_setCursor(12,STATUS_H-13); gfx_print(FW_VERSION);
+  if(text_x>leftEnd)leftEnd=text_x;
+  leftEnd+=12;
+  neoGear(VW-22,STATUS_H/2,TFT_WHITE,COL_BAR);
+  // state chip: same logic as the classic bar (cable: g_loaded; wireless: the dongle's heartbeat)
+  String lw; uint16_t lc; bool fill;
+  { bool wl=(g_wireless_mode&&g_espnow_started);
+    bool alive = wl ? (millis()-g_espnow_xiao_last_seen < 8000UL) : true;
+    bool ld, desync=false;
+    if(wl){ ld=alive&&g_dongle_loaded; desync=g_loaded&&(!alive||!g_dongle_loaded); }
+    else  { ld=g_loaded; }
+    if(wl&&!alive){ lw="OFFLINE"; lc=0xFD20; fill=false; }
+    else if(desync){ lw="DISK?"; lc=0xFD20; fill=false; }
+    else if(ld){ bool multi=(g_loaded&&g_loaded_game_idx>=0&&g_loaded_game_idx<(int)g_games.size()&&g_games[g_loaded_game_idx].disk_count>1);
+                 lw=multi?("DISK "+String(g_loaded_disk_idx+1)):String("DISK"); lc=COL_GREEN; fill=true; }
+    else { lw="EMPTY"; lc=COL_DIM; fill=false; } }
+  String chip=String(g_wireless_mode?"DONGLE ":"CABLE ")+lw;
+  gfx_setTextSize(1); int ch=26, cw=gfx_textWidth(chip)+34, cx=VW-NEO_GEAR_W-6-cw, cy=(STATUS_H-ch)/2;
+  gfx_fillRoundRect(cx,cy,cw,ch,ch/2,COL_PANEL); gfx_strokeRoundRect(cx,cy,cw,ch,ch/2,COL_SEP);
+  if(fill) gfx_fillCircle(cx+13,STATUS_H/2,4,lc); else gfx_drawCircle(cx+13,STATUS_H/2,4,lc);
+  gfx_setTextColor(lc==COL_DIM?COL_LIT:lc,COL_PANEL); gfx_setCursor(cx+23,(STATUS_H-8)/2); gfx_print(chip);
+  // centre: Settings title, or library + game count
+  g_neo_ctr_x0=g_neo_ctr_x1=0;
+  String ct; bool tappable=false;
+  if(g_info_showing) ct=g_info_test?String(T(L_SETTINGS))+" > TEST TOOLS":String(T(L_SETTINGS));
+  else {
+    String lib=g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN";
+    if(g_categories){ if(g_libpath.length()){ String c=g_libpath; while(c.endsWith("/"))c.remove(c.length()-1); int s=c.lastIndexOf('/'); if(s>=0)c=c.substring(s+1); lib="< "+c; } else lib="CATEGORIES"; }
+    ct=lib+"|"+neoThousands((uint32_t)g_games.size())+" games"; tappable=!g_car_active; }
+  for(int sz=2;sz>=1;sz--){ gfx_setTextSize(sz); int tw=neoDotWidth(ct), tx=(VW-tw)/2;
+    if(tx<leftEnd)tx=leftEnd+((cx-10-leftEnd)-tw)/2;
+    if(tx>=leftEnd&&tx+tw<cx-10){ gfx_setTextColor(TFT_WHITE,COL_BAR); gfx_setCursor(tx,(STATUS_H-8*sz)/2); neoDotPrint(ct,TFT_WHITE);
+      if(tappable){ g_neo_ctr_x0=tx; g_neo_ctr_x1=tx+tw; } break; } }
+}
 static void drawStatusBar(){
+  NeoScope _ns; if(g_neo){ neoStatusBar(); return; }   // lab16a-P4
   gfx_fillRect(0,0,VW,STATUS_H,COL_BAR);gfx_setTextSize(1);
   gfx_setTextColor(COL_ORANGE,COL_BAR);gfx_setCursor(6,6);gfx_print("OMEGAWARE");
   gfx_setTextColor(COL_MID,COL_BAR);gfx_print("  " FW_VERSION);
   if(g_wireless_mode){gfx_setTextColor(espnowIsPaired()?0x07E0:0xFD20,COL_BAR);gfx_setCursor(VW/2-40,6);gfx_print(espnowIsPaired()?"WIRELESS:PAIRED":"WIRELESS:PAIR");}
-  else{gfx_setTextColor(0x07FF,COL_BAR);int tw=gfx_textWidth("STANDALONE");gfx_setCursor((VW-tw)/2,6);gfx_print(T(L_STANDALONE));}
+  else{gfx_setTextColor(0x07FF,COL_BAR);int tw=gfx_textWidth(T(L_STANDALONE));gfx_setCursor((VW-tw)/2,6);gfx_print(T(L_STANDALONE));}
   // v5.7.x: load-status indicator (top-right). Standalone reads g_loaded; wireless reads
   // the dongle's heartbeat so it reflects reality. green=disk present, dim=empty,
   // amber=OFFLINE (no beacon ~8s) or DISK? (GTi thinks loaded but the dongle disagrees).
@@ -3433,7 +3624,7 @@ static void drawDiskGrid(int nd){DiskGrid L=diskGrid(nd);
   gfx_setTextSize(1);gfx_setTextColor(COL_DIM,COL_PANEL);gfx_setCursor(4,L.labelY);
   gfx_print(L.multiPage?("DISK ("+String(g_disk_page+1)+"/"+String(L.pages)+"):"):"DISK:");
   for(int d=L.pageStart;d<L.pageEnd;d++){int slot=d-L.pageStart,col=slot%L.COLS,row=slot/L.COLS;int bx=L.gx+col*(L.dbw+L.dgap),by=L.gridY+row*(L.dbh+L.dgap);
-    bool isSel=d==g_disk_sel,isLd=(g_loaded_game_idx==g_sel&&g_loaded_disk_idx==d);uint16_t bc=isLd?COL_GREEN:(isSel?COL_AMBER:COL_BAR);
+    bool isSel=d==g_disk_sel,isLd=(g_loaded_game_idx==g_sel&&g_loaded_disk_idx==d);uint16_t bc=isLd?COL_GREEN:(isSel?COL_AMBER:(g_neo?COL_CIRC:COL_BAR));
     gfx_fillRoundRect(bx,by,L.dbw,L.dbh,4,bc);gfx_drawRoundRect(bx,by,L.dbw,L.dbh,4,isSel?COL_AMBER:COL_DIM);
     gfx_setTextSize(2);gfx_setTextColor(isLd||isSel?TFT_BLACK:COL_LIT,bc);String dl="D"+String(d+1);gfx_setCursor(bx+(L.dbw-gfx_textWidth(dl))/2,by+(L.dbh-16)/2);gfx_print(dl);gfx_setTextSize(1);}   // lab15n P4: size 2
   if(L.multiPage){int pby=L.gridY+L.gridH+L.pageGap;gfx_fillRoundRect(L.gx,pby,L.gridW,L.pageBtnH,6,COL_ACCENT);gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
@@ -3489,10 +3680,94 @@ static void drawMagnifier(int cx,int cy,uint16_t col){
   gfx_fillRect(cx+4,cy+4,2,2,col);
 }
 
+// lab16b-P4: NEO game panel - cover top-left (gold frame + glow, green when in the drive), title / disks /
+// format / FAV / MANUAL to its right, the description under it (tap = the whole .nfo), DISK pills at the bottom.
+static int g_neo_fav_bx=0,g_neo_fav_by=0,g_neo_fav_bw=0,g_neo_fav_bh=0;   // FAV pill (tap = favourite on/off)
+static int g_nd_n=0,g_nd_x=0,g_nd_y=0,g_nd_pb=0,g_nd_h=0,g_nd_first=0,g_nd_more_x=-1;   // DISK pills: shown count, first pill x, pitch, first disk, ">" pill x
+static int neoWrapLines(const String&s,int maxW){   // lines drawWrapped() would need at the current text size
+  String line="",word=""; int n=0;
+  for(int i=0;i<=(int)s.length();i++){ char c=i<(int)s.length()?s[i]:' ';
+    if(c==' '||c=='\n'||i==(int)s.length()){ String cand=line.length()?line+" "+word:word;
+      if(gfx_textWidth(cand)>maxW&&line.length()){ n++; line=word; } else line=cand; word=""; }
+    else { word+=c; if(gfx_textWidth(word)>maxW)return 99; } }   // a word wider than the lane: caller drops a size
+  if(line.length())n++; return n;
+}
+static void neoInfoPanel(int gi,const String&blurb,bool hasSav,bool hd,const String&manual){
+  auto&game=g_games[gi];
+  const int X=COVER_X,Y=COVER_Y,W=COVER_W,H=COVER_H;
+  bool isL=g_loaded&&g_loaded_game_idx==gi;
+  fillBack(X,Y,W,H); gfx_fillRoundRect(X,Y,W,H,12,COL_PANEL); gfx_strokeRoundRect(X,Y,W,H,12,COL_SEP);
+  g_manual_bw=0; g_nfo_bw=0; g_neo_fav_bw=0; g_nd_n=0; g_nd_more_x=-1;
+  // lab16d-P4: BIG cover - the tile's picture (letterbox cut off) as big as the box allows, centred; else the JPEG; else the initial
+  int AX=COVER_ART_X,AY=COVER_ART_Y,AW=COVER_ART_W,AH=COVER_ART_H, ax=AX,ay=AY,aw=AW,ah=AH;
+  uint16_t*t=NULL; int px=0,py=0,pw=0,ph=0;
+  bool art=game.jpg_path.length()>0&&game.jpg_path!="?";
+  if(art&&g_listtile){ bool ok=false; t=carTileEx(gi,true,&ok); if(!(t&&ok))t=NULL;
+    if(t){ tilePicRect(t,CAR_TILE,px,py,pw,ph); int dw=AW,dh=(ph*AW)/pw; if(dh>AH){dh=AH;dw=(pw*AH)/ph;} if(dw<1)dw=1; if(dh<1)dh=1; aw=dw; ah=dh; ax=AX+(AW-aw)/2; } }
+  if(!t&&!art){ aw=min(AW,AH*4/3); ax=AX+(AW-aw)/2; }   // no picture: a 4:3 slate box with the initial
+  uint16_t fc=isL?COL_GREEN:COL_AMBER;
+  neoGlow(ax-4,ay-4,aw+8,ah+8,8,fc,6);
+  gfx_fillRect(ax,ay,aw,ah,COL_BAR);
+  bool drew=false;
+  if(t){ g_cb_sx0=px;g_cb_sy0=py;g_cb_sw=pw;g_cb_sh=ph; carBlit(t,CAR_TILE,ax+aw/2,ay+ah/2,aw,ah,0); g_cb_sw=0;g_cb_sh=0; drew=true; }
+  else if(art) drew=gfx_drawJpgFile(game.jpg_path,ax,ay,aw,ah);
+  if(!drew){ char ib[2]={(char)toupper(game.name.charAt(0)),0}; gfx_setTextSize(8); gfx_setTextColor(COL_LIT,COL_BAR); gfx_setCursor(ax+(aw-48)/2,ay+(ah-64)/2); gfx_print(ib); }
+  neoFrame(ax-1,ay-1,aw+2,ah+2,3,fc,3);
+  // corners: save (top-left), FAV star (top-right, tap), A500-can't (bottom-left), HD (bottom-right); book = left edge, middle (as before)
+  if(hasSav)drawSaveFloppy(ax+5,ay+5);
+  { int cx=ax+aw-20, cy=ay+20; gfx_fillCircle(cx,cy,15,COL_PANEL); gfx_drawCircle(cx,cy,15,game.fav?COL_AMBER:COL_SEP); gfx_drawCircle(cx,cy,14,game.fav?COL_AMBER:COL_SEP);
+    gfx_fillStar(cx,cy,9.0f,game.fav?COL_STAR:COL_CIRC);
+    g_neo_fav_bx=ax+aw-44; g_neo_fav_by=ay; g_neo_fav_bw=44; g_neo_fav_bh=44; }
+  if(hd){drawHDChip(ax+aw-26,ay+ah-18);drawNoA500(ax+18,ay+ah-18,13,TFT_RED);}
+  if(manual.length()){ g_manual_bw=30;g_manual_bh=26;g_manual_bx=ax+4;g_manual_by=ay+(ah-g_manual_bh)/2;g_manual_path=manual;
+    gfx_fillRoundRect(g_manual_bx,g_manual_by,g_manual_bw,g_manual_bh,4,COL_ACCENT);gfx_drawRoundRect(g_manual_bx,g_manual_by,g_manual_bw,g_manual_bh,4,COL_AMBER);
+    drawBookIcon(g_manual_bx+g_manual_bw/2,g_manual_by+g_manual_bh/2,COL_LIT); }
+  // title under the cover: one line of size 3, else up to two lines of size 2; then "n disks - ADF"
+  int ry=ay+ah+12;
+  { const int tw=W-24; String nm=game.name; gfx_setTextSize(3);
+    g_clip_x1=X+W-6;
+    if(gfx_textWidth(nm)<=tw){ gfx_setTextColor(TFT_WHITE,COL_PANEL); gfx_setCursor(X+12,ry); gfx_print(nm); ry+=28; }
+    else { gfx_setTextSize(2); ry=drawWrapped(X+12,ry,nm,tw,22,2,Y+H-20,TFT_WHITE,COL_PANEL); }
+    g_clip_x1=gW; }
+  { gfx_setTextSize(1); gfx_setCursor(X+12,ry); gfx_setTextColor(COL_DIM,COL_PANEL);
+    String meta=(game.disk_count>1?String(game.disk_count)+" disks":String("1 disk"))+"|"+(g_mode==MODE_ADF?(hd?"ADF HD":"ADF"):g_mode==MODE_DSK?"DSK":"GEN");
+    if(hasSav)meta+="|save";
+    neoDotPrint(meta,COL_DIM); ry+=14; }
+  // DISK pills (bottom-right): pages of (fit-1) + a ">" pill when they do not all fit
+  int nd=game.disk_count, rowY=Y+H-12-30, descBottom=Y+H-12;
+  if(nd>1){
+    const int ph2=30, pb=42, lblW=40, cntW=40; int fit=(W-24-lblW-cntW)/pb; if(fit<2)fit=2;
+    int per=(nd<=fit)?nd:fit-1, pages=(nd+per-1)/per; if(g_disk_page>=pages)g_disk_page=0;
+    int first=(nd<=fit)?0:g_disk_page*per, shown=min(per,nd-first), slots=shown+((nd>fit)?1:0);
+    int total=lblW+slots*pb+cntW, x0=X+W-12-total;
+    gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_PANEL); gfx_setCursor(x0,rowY+(ph2-8)/2); gfx_print("DISK");
+    int dx0=x0+lblW;
+    g_nd_n=shown; g_nd_x=dx0; g_nd_y=rowY; g_nd_pb=pb; g_nd_h=ph2; g_nd_first=first;
+    for(int k=0;k<shown;k++){ int d=first+k, bx=dx0+k*pb;
+      bool dLd=(isL&&g_loaded_disk_idx==d), dSel=(d==g_disk_sel);
+      uint16_t bc=dLd?COL_NOW:(dSel?COL_AMBER:COL_CIRC), oc=dLd?COL_GREEN:(dSel?(uint16_t)0xFEB0:COL_SEP), tc=dLd?COL_GREEN:(dSel?TFT_BLACK:TFT_WHITE);
+      gfx_fillRoundRect(bx,rowY,pb-8,ph2,9,bc); neoFrame(bx,rowY,pb-8,ph2,9,oc,2);
+      String dl=String(d+1); gfx_setTextSize(dl.length()>2?1:2); gfx_setTextColor(tc,bc); gfx_setCursor(bx+(pb-8-gfx_textWidth(dl))/2,rowY+(ph2-8*text_size)/2); gfx_print(dl); }
+    if(nd>fit){ int bx=dx0+shown*pb; g_nd_more_x=bx; gfx_fillRoundRect(bx,rowY,pb-8,ph2,9,COL_ACCENT); gfx_setTextSize(2); gfx_setTextColor(TFT_WHITE,COL_ACCENT); gfx_setCursor(bx+(pb-8-12)/2,rowY+7); gfx_print(">"); }
+    gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_PANEL); gfx_setCursor(dx0+slots*pb+4,rowY+(ph2-8)/2); gfx_print(String(g_disk_sel+1)+"/"+String(nd));
+    descBottom=rowY-8;
+  }
+  // description under the title (tap = the whole .nfo)
+  int dy=ry+6;
+  if(blurb.length()>0&&dy+12<=descBottom){
+    gfx_setTextSize(1); int lh=13, maxL=(descBottom-dy-lh)/lh; if(maxL<1)maxL=1;
+    int te=drawWrapped(X+12,dy,blurb,W-24,lh,maxL,descBottom-lh,COL_LIT,COL_PANEL);
+    if(te+8<=descBottom){ gfx_setTextColor(COL_BLUE,COL_PANEL); gfx_setCursor(X+12,te+2); gfx_print("Tap here to read the whole .nfo"); te+=lh; }
+    g_nfo_bx=X; g_nfo_by=dy-4; g_nfo_bw=W; g_nfo_bh=te-dy+6; }
+  drawBottomBar();   // the INSERT pill names the chosen disk
+}
 static void drawCoverPanel(){
+  NeoScope _ns;
   g_manual_bw=0;   // v4.9.2: cleared each draw; set below only if this game has a .rtfm
   g_nfo_bw=0;      // lab15j: same for the .nfo text tap area (set only when a description is drawn)
   if(!COVER_ON)return;
+  if(g_neo){ g_neo_fav_bw=0; g_nd_n=0; if(g_games.empty()){ fillBack(COVER_X,COVER_Y,COVER_W,COVER_H); gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL); gfx_strokeRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_SEP); drawBottomBar(); return; } }
+  else
   gfx_fillRect(COVER_X,COVER_Y,COVER_W,COVER_H,COL_PANEL);if(g_games.empty())return;
   auto&game=g_games[g_sel];
   if(!game.jpg_path.length()){String jpg;if(findJPGFor(g_files[game.first_file_idx],jpg))game.jpg_path=jpg;else game.jpg_path="?";}
@@ -3513,9 +3788,11 @@ static void drawCoverPanel(){
       game.blurb=cachedNfoBlurb;game.has_manual=cachedManual.length()>0;game.is_hd=cachedHD;game.nfo_done=true;   // remember for the session even without a cache file
     }
     cachedHasSav=savBadgeFor(_fp);}   // lab14i: from the save list (kept current when the GTi writes a save) - no card lookup
+  if(g_neo){ neoInfoPanel(g_sel,cachedNfoBlurb,cachedHasSav,cachedHD,cachedManual); return; }   // lab16b-P4
   // Cover art
   int ax=COVER_ART_X,ay=COVER_ART_Y,aw=COVER_ART_W,ah=COVER_ART_H;   // lab15l: the frame; shrinks to hug a tile picture
   gfx_fillRoundRect(COVER_ART_X,COVER_ART_Y,COVER_ART_W,COVER_ART_H,5,COL_BAR);
+  if(g_neo)neoFrame(COVER_ART_X-1,COVER_ART_Y-1,COVER_ART_W+2,COVER_ART_H+2,3,COL_AMBER,3); else   // lab16a-P4: gold frame
   gfx_drawRoundRect(COVER_ART_X-1,COVER_ART_Y-1,COVER_ART_W+2,COVER_ART_H+2,6,COL_ACCENT);
   {bool _drew=false; uint32_t _cv0=micros();
    if(game.jpg_path.length()>0&&game.jpg_path!="?"){
@@ -3527,8 +3804,8 @@ static void drawCoverPanel(){
          int px,py,pw,ph; tilePicRect(_t,CAR_TILE,px,py,pw,ph);
          int bw=COVER_ART_W-4,bh=COVER_ART_H-4,dw=bw,dh=(ph*bw)/pw; if(dh>bh){dh=bh;dw=(pw*bh)/ph;} if(dw<1)dw=1; if(dh<1)dh=1;
          aw=dw+4;ah=dh+4;ax=COVER_ART_X+(COVER_ART_W-aw)/2;ay=COVER_ART_Y+(COVER_ART_H-ah)/2;
-         gfx_fillRect(COVER_ART_X-1,COVER_ART_Y-1,COVER_ART_W+2,COVER_ART_H+2,COL_PANEL);
-         gfx_fillRoundRect(ax,ay,aw,ah,5,COL_BAR); gfx_drawRoundRect(ax-1,ay-1,aw+2,ah+2,6,COL_ACCENT);
+         gfx_fillRect(COVER_ART_X-4,COVER_ART_Y-4,COVER_ART_W+8,COVER_ART_H+8,COL_PANEL);
+         gfx_fillRoundRect(ax,ay,aw,ah,5,COL_BAR); if(g_neo)neoFrame(ax-1,ay-1,aw+2,ah+2,3,COL_AMBER,3); else gfx_drawRoundRect(ax-1,ay-1,aw+2,ah+2,6,COL_ACCENT);
          g_cb_sx0=px;g_cb_sy0=py;g_cb_sw=pw;g_cb_sh=ph;
          carBlit(_t,CAR_TILE,ax+aw/2,ay+ah/2,dw,dh,0);
          g_cb_sw=0;g_cb_sh=0;_drew=true;}
@@ -3565,6 +3842,9 @@ static void drawCoverPanel(){
     else{gfx_setTextSize(1);gfx_setTextColor(cachedHD?COL_ORANGE:COL_DIM,COL_PANEL);gfx_setCursor(12,COVER_Y+COVER_H-58);gfx_print(cachedHD?"HD 1.76MB - needs A3000/A4000":g_mode==MODE_ADF?"Single disk  -  ADF 880KB":g_mode==MODE_DSK?"Single disk  -  DSK":"Single disk");}
   }
   // INSERT/EJECT
+  if(g_neo){   // lab16a-P4: cyan INSERT pill (names the disk when it is not disk 1), red EJECT
+    String il=isL?String(T(L_EJECT)):(game.disk_count>1&&g_disk_sel>0?String(T(L_INSERT))+" "+String(g_disk_sel+1):String(T(L_INSERT)));
+    neoPill(INS_X,INS_Y,INS_W,INS_H,isL?(uint16_t)0xC1A6:COL_BLUE,il,false); return; }
   gfx_fillRoundRect(INS_X,INS_Y,INS_W,INS_H,8,isL?(uint16_t)0x4000:(uint16_t)0x0340);
   gfx_drawRoundRect(INS_X,INS_Y,INS_W,INS_H,8,isL?(uint16_t)0xE8C4:COL_GREEN);
   gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,isL?(uint16_t)0x4000:(uint16_t)0x0340);
@@ -3585,13 +3865,12 @@ static void drawActionStrip(){
 
 // INFO / SETTINGS panel — left column (landscape) or full width (portrait). Stores button Ys for touch.
 // ── v5.5.4: full-screen paginated INFO/settings model ──
-enum { IA_NONE=0, IA_MODE, IA_FONT, IA_THEME, IA_LANG, IA_ROTATE, IA_COMPACT, IA_DONGLE, IA_HIVEMIND, IA_RESCAN, IA_RESET, IA_DIAG, IA_SDACCESS, IA_FWUPDATE, IA_LIBMODE, IA_CATEG, IA_BTNSTYLE, IA_SSMODE, IA_SSFAV, IA_LINK, IA_HOMEWIFI, IA_WEBUI, IA_WIFICHECK, IA_SAVER, IA_CRACKTRO, IA_DIAGDISP, IA_REELBORDER, IA_LASTUSED, IA_NOCACHE, IA_COVERS, IA_REELPROF, IA_LISTTILE, IA_SDSOAK, IA_TESTPAGE, IA_TESTBACK };
+enum { IA_USRDSK=40, IA_NONE=0, IA_MODE, IA_FONT, IA_THEME, IA_LANG, IA_ROTATE, IA_COMPACT, IA_DONGLE, IA_HIVEMIND, IA_RESCAN, IA_RESET, IA_DIAG, IA_SDACCESS, IA_FWUPDATE, IA_LIBMODE, IA_CATEG, IA_BTNSTYLE, IA_SSMODE, IA_SSFAV, IA_LINK, IA_HOMEWIFI, IA_WEBUI, IA_WIFICHECK, IA_SAVER, IA_CRACKTRO, IA_DIAGDISP, IA_REELBORDER, IA_LASTUSED, IA_NOCACHE, IA_COVERS, IA_REELPROF, IA_LISTTILE, IA_SDSOAK, IA_TESTPAGE, IA_TESTBACK };
 struct InfoItem { char lbl[32]; uint16_t bg,fg; uint8_t act; };
 static InfoItem g_ii[32]; static int g_ii_n=0;
 struct InfoRect { int x,y,w,h; uint8_t act; };
 static InfoRect g_ir[20]; static int g_ir_n=0;
 static int g_info_page=0, g_info_pages=1;
-static bool g_info_test=false;   // lab14k: true = Settings is showing its TEST TOOLS sub-page
 static void drawInfoFull();   // paginated settings + INFO bottom bar + flush
 // v5.6.7: readable ink for a key's colour on the dim fill — dark key colours
 // (COL_BAR OFF-states, the dark-red RESET) get promoted to light grey so they
@@ -3600,7 +3879,9 @@ static inline uint16_t keyInk(uint16_t c){
   int r=(c>>11)&31, g=(c>>5)&63, b=c&31;
   return ((r*2+g*3+b) < 60) ? COL_LIT : c;
 }
+static uint8_t g_info_last=0;   // lab16a-P4: the last Settings option tapped (NEO outlines it in gold)
 static void drawInfoPanel(){
+  NeoScope _ns;
   // v5.5.4: full-screen, single-column, paginated. Build the item list (dynamic
   // labels + conditional rows), then draw only the current page's buttons and
   // record their rects in g_ir[] so the tap handler hits exactly what's drawn.
@@ -3610,7 +3891,7 @@ static void drawInfoPanel(){
     g_ii[g_ii_n].bg=bg; g_ii[g_ii_n].fg=fg; g_ii[g_ii_n].act=act; g_ii_n++; };
   // lab14k: TEST TOOLS sub-page - the tools for testing the GTi itself, kept off the main Settings list.
   if(g_info_test){
-    add("< BACK TO SETTINGS", COL_ACCENT, TFT_WHITE, IA_TESTBACK);
+    if(!g_neo)add("< BACK TO SETTINGS", COL_ACCENT, TFT_WHITE, IA_TESTBACK);   // lab16b-P4: NEO has BACK in the bottom bar
     add("SD SOAK TEST", COL_BLUE, TFT_WHITE, IA_SDSOAK);   // lab14g: read-only SD reliability test -> GTI/gti.log
     add(String("REEL PROF")+": "+(g_reelprof?T(L_ON):T(L_OFF)), g_reelprof?(uint16_t)0x8000:COL_BAR, g_reelprof?TFT_WHITE:COL_LIT, IA_REELPROF);   // 5.9.33-lab3 frame profiler -> gti.log
     add(String("NO-CACHE")+": "+(g_nocache?T(L_ON):T(L_OFF)), g_nocache?(uint16_t)0x8000:COL_BAR, g_nocache?TFT_WHITE:COL_LIT, IA_NOCACHE);   // 5.9.32-lab2 benchmark control -> CONFIG.TXT NOCACHE=
@@ -3631,13 +3912,13 @@ static void drawInfoPanel(){
     if(g_home_ssid.length()) add(String("WIFI CHECK"), COL_BLUE, TFT_WHITE, IA_WIFICHECK);
   }
   add(String(T(L_CFG_FONT))+": "+fontName(g_font), COL_AMBER, TFT_BLACK, IA_FONT);
-  add(String(T(L_THEME))+": "+THEMES[g_theme_idx].name, COL_ACCENT, TFT_WHITE, IA_THEME);   // Vince test: moved off the bottom bar
+  if(!g_neo)add(String(T(L_THEME))+": "+THEMES[g_theme_idx].name, COL_ACCENT, TFT_WHITE, IA_THEME);   // lab16b-P4: NEO only   // Vince test: moved off the bottom bar
   add(String(T(L_CFG_LANG))+": "+LANG_NAMES[g_lang], (uint16_t)0x79D6, TFT_WHITE, IA_LANG);
   add(String(T(L_CFG_ROTATE))+": "+(g_portrait?T(L_PORTRAIT):T(L_LANDSCAPE)), COL_BLUE, TFT_WHITE, IA_ROTATE);
-  add(String(T(L_CFG_COMPACT))+": "+(g_compact?T(L_ON):T(L_OFF)), g_compact?COL_GREEN:COL_BAR, g_compact?TFT_BLACK:COL_LIT, IA_COMPACT);
+  if(!g_neo)add(String(T(L_CFG_COMPACT))+": "+(g_compact?T(L_ON):T(L_OFF)), g_compact?COL_GREEN:COL_BAR, g_compact?TFT_BLACK:COL_LIT, IA_COMPACT);
   add(String(T(L_CFG_LIBRARY))+": "+(g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN"), COL_ACCENT, TFT_BLACK, IA_LIBMODE);   // v5.6.0: disk-format mode moved here from the mode bar
   add(String(T(L_CFG_CATEG))+": "+(g_categories?T(L_ON):T(L_OFF)), g_categories?COL_GREEN:COL_BAR, g_categories?TFT_BLACK:COL_LIT, IA_CATEG);   // library/category browse toggle (mirrors CONFIG.TXT CATEGORIES=)
-  add(String(T(L_CFG_BUTTONS))+": "+(g_btn_pill?T(L_PILL):T(L_FLAT)), g_btn_pill?COL_ACCENT:COL_BAR, g_btn_pill?TFT_WHITE:COL_LIT, IA_BTNSTYLE);   // 5.8.3 reel button style
+  if(!g_neo)add(String(T(L_CFG_BUTTONS))+": "+(g_btn_pill?T(L_PILL):T(L_FLAT)), g_btn_pill?COL_ACCENT:COL_BAR, g_btn_pill?TFT_WHITE:COL_LIT, IA_BTNSTYLE);   // 5.8.3 reel button style
   add(String(T(L_CFG_SAVER))+": "+(g_ss_enabled?T(L_ON):T(L_OFF)), g_ss_enabled?COL_GREEN:COL_BAR, g_ss_enabled?TFT_BLACK:COL_LIT, IA_SAVER);   // screensaver on/off -> CONFIG.TXT SCREENSAVER=
   if(g_ss_enabled) add(String(T(L_CFG_SAVER))+" FX: "+(g_ss_matrix?T(L_MATRIX):(g_ss_slides?T(L_SLIDES):T(L_BOUNCE))), COL_BLUE, TFT_WHITE, IA_SSMODE);   // 5.8.3 screensaver mode (only shown when ON)
   add(String(T(L_CFG_FAVSAVER))+": "+(g_ss_fav?T(L_ON):T(L_OFF)), g_ss_fav?COL_GREEN:COL_BAR, g_ss_fav?TFT_BLACK:COL_LIT, IA_SSFAV);   // 5.8.3 favourites into slideshow
@@ -3646,18 +3927,20 @@ static void drawInfoPanel(){
   add(String("COVER ART")+": "+(g_covers_on?T(L_ON):T(L_OFF)), g_covers_on?COL_GREEN:COL_BAR, g_covers_on?TFT_BLACK:COL_LIT, IA_COVERS);   // 5.9.32-lab2 -> CONFIG.TXT COVERS=
   add(String("LIST TILE")+": "+(g_listtile?T(L_ON):T(L_OFF)), g_listtile?COL_GREEN:COL_BAR, g_listtile?TFT_BLACK:COL_LIT, IA_LISTTILE);   // 5.9.34-lab4 -> CONFIG.TXT LISTTILE=
   add(String("LAST USED")+": "+(g_lastused?T(L_ON):T(L_OFF)), g_lastused?COL_GREEN:COL_BAR, g_lastused?TFT_BLACK:COL_LIT, IA_LASTUSED);   // restore last-loaded game on boot -> CONFIG.TXT LASTUSED=
-  if(g_devmode) add("TEST TOOLS >", (uint16_t)0x4208, TFT_WHITE, IA_TESTPAGE);   // lab14p: DEVMODE=OFF hides it   // lab14k: SD SOAK TEST, REEL PROF, NO-CACHE, DIAG-DISP live here now
+  if(g_devmode&&!g_neo) add("TEST TOOLS >", (uint16_t)0x4208, TFT_WHITE, IA_TESTPAGE);   // lab14p: DEVMODE=OFF hides it   // lab14k: SD SOAK TEST, REEL PROF, NO-CACHE, DIAG-DISP live here now
   add(T(L_RESCAN_SD), COL_BLUE, TFT_WHITE, IA_RESCAN);
+  if(g_neo) add(T(L_USER_DISKS), COL_BLUE, TFT_WHITE, IA_USRDSK);   // lab16b-P4: was the USR-DSK button on the mode bar
   add(T(L_SOFT_RESET), (uint16_t)0x8000, TFT_WHITE, IA_RESET);
   {bool diagOn=(g_loaded&&g_loaded_name=="AMIGA TEST KIT");   // v5.6.1: ATK is Amiga-only — hide LOAD DIAG in DSK/GEN (keep EJECT DIAG if somehow still loaded)
    if(g_mode==MODE_ADF||diagOn) add(diagOn?T(L_EJECT_DIAG):T(L_LOAD_DIAG), diagOn?(uint16_t)0xE8C4:COL_ACCENT, diagOn?TFT_BLACK:TFT_WHITE, IA_DIAG);}
   add(T(L_SD_ACCESS), (uint16_t)0x05FF, TFT_BLACK, IA_SDACCESS);
   add(T(L_FW_UPDATE), COL_AMBER, TFT_BLACK, IA_FWUPDATE);
   }   // lab14k: end of the main Settings list
+  if(g_neo){ neoInfoGrid(); return; }   // lab16b-P4
   int ix=0,iy=STATUS_H,iw=VW,ih=VH-STATUS_H-BOTTOM_H;
-  gfx_fillRect(ix,iy,iw,ih,COL_BG);
+  fillBack(ix,iy,iw,ih);   // lab16a-P4: NEO background (flat COL_BG otherwise)
   gfx_setTextSize(1);gfx_setTextColor(COL_DIM,COL_BG);gfx_setCursor(8,iy+5);gfx_print(g_info_test?"SETTINGS > TEST TOOLS":T(L_SETTINGS));   // lab14k
-  int headerH=18, footerH=14, pad=8, gap=6, colGap=8, bh=34, cols=(g_portrait?1:2);   // v5.5.5: 2 cols landscape (half-width), 1 col portrait (full-width, paginates)
+  int headerH=18, footerH=14, pad=8, gap=6, colGap=8, bh=g_neo?40:34, cols=(g_portrait?1:2);   // lab16a-P4: NEO capsules 40 px   // v5.5.5: 2 cols landscape (half-width), 1 col portrait (full-width, paginates)
   int areaTop=iy+headerH, areaH=ih-headerH-footerH;
   int colW=(iw-pad*2-colGap*(cols-1))/cols;
   int rowsPP=(areaH+gap)/(bh+gap); if(rowsPP<1)rowsPP=1;
@@ -3674,6 +3957,24 @@ static void drawInfoPanel(){
     // dim-fill+border look, so PILL only ever restyled the two bottom bars and this tab
     // stayed flat. PILL = solid coloured capsule + auto-contrast ink (same language as the
     // nav/reel bars); FLAT = the original v5.6.7 dim-fill + bright double border.
+    if(g_neo){   // lab16a-P4: capsule row - label on the left, value in a coloured chip; actions are full pills
+      uint16_t kc=g_ii[i2].bg; if(kc==COL_BAR)kc=COL_CIRC;
+      bool hot=(g_info_last!=IA_NONE&&g_ii[i2].act==g_info_last);
+      String L=g_ii[i2].lbl; int sp=L.indexOf(": ");
+      if(sp>0){
+        String lab=L.substring(0,sp), val=L.substring(sp+2);
+        gfx_fillRoundRect(bx,by,colW,bh,bh/2,COL_PANEL);
+        if(hot)neoFrame(bx,by,colW,bh,bh/2,COL_AMBER,2); else gfx_strokeRoundRect(bx,by,colW,bh,bh/2,COL_SEP);
+        int sz=2; gfx_setTextSize(2); int lw2=gfx_textWidth(lab), vw2=gfx_textWidth(val);
+        if(lw2+vw2+bh+40>colW){ sz=1; gfx_setTextSize(1); lw2=gfx_textWidth(lab); vw2=gfx_textWidth(val); }
+        gfx_setTextColor(COL_LIT,COL_PANEL); gfx_setCursor(bx+bh/2,by+(bh-8*sz)/2); gfx_print(lab);
+        int chH=bh-12, chW=vw2+2*(chH/2)+4, chX=bx+colW-8-chW, chY=by+6;
+        gfx_fillRoundRect(chX,chY,chW,chH,chH/2,kc); gfx_setTextColor(inkFor(kc),kc);
+        gfx_setTextSize(sz); gfx_setCursor(chX+(chW-vw2)/2,chY+(chH-8*sz)/2); gfx_print(val);
+      } else neoPill(bx,by,colW,bh,kc,L,hot);
+      if(g_ir_n<20){g_ir[g_ir_n].x=bx;g_ir[g_ir_n].y=by;g_ir[g_ir_n].w=colW;g_ir[g_ir_n].h=bh;g_ir[g_ir_n].act=g_ii[i2].act;g_ir_n++;}
+      continue;
+    }
     uint16_t kc=g_ii[i2].bg, kfill, kink;
     if(g_btn_pill){
       kfill=kc; kink=inkFor(kc);                 // inkFor (not the row's fg) so every theme stays readable
@@ -3695,7 +3996,53 @@ static void drawInfoPanel(){
   gfx_setCursor(8,iy+ih-11);gfx_print("Heap:"+String(ESP.getFreeHeap()/1024)+"K PSRAM:"+String(ESP.getFreePsram()/1024)+"K  Games:"+String(g_games.size()));
 }
 
+// lab16b-P4: NEO Settings - toggles as capsules (two columns landscape, one portrait; 10 a page), the
+// actions as a row of pills under them (4 a page). The value sits in a coloured chip: ON green, OFF slate,
+// MODE gold, LANG / LIBRARY cyan. The last option tapped is outlined in gold.
+static void neoInfoGrid(){
+  int top=STATUS_H+10, barTop=VH-BOTTOM_H;
+  fillBack(0,STATUS_H,VW,barTop-STATUS_H);
+  int tl[32],al[32],nt=0,na=0;
+  for(int i=0;i<g_ii_n;i++){ if(strstr(g_ii[i].lbl,": "))tl[nt++]=i; else al[na++]=i; }
+  const int TPP=10, APP=4;
+  int cols=g_portrait?1:2, rows=TPP/cols, pad=16, colGap=16, gap=g_portrait?8:10;
+  int ah=40, acols=g_portrait?2:4, arows=APP/acols, agap=10;
+  int aTop=barTop-8-arows*ah-(arows-1)*agap;
+  int bh=((aTop-12-top)-(rows-1)*gap)/rows; if(bh>52)bh=52; if(bh<28)bh=28;
+  g_info_pages=max(1,max((nt+TPP-1)/TPP,(na+APP-1)/APP));
+  if(g_info_page>=g_info_pages)g_info_page=g_info_pages-1; if(g_info_page<0)g_info_page=0;
+  int colW=(VW-2*pad-(cols-1)*colGap)/cols;
+  g_ir_n=0;
+  for(int k=0;k<TPP;k++){ int idx=g_info_page*TPP+k; if(idx>=nt)break; int i2=tl[idx];
+    int col=k/rows, row=k%rows, bx=pad+col*(colW+colGap), by=top+row*(bh+gap);
+    bool hot=(g_info_last!=IA_NONE&&g_ii[i2].act==g_info_last);
+    String L=g_ii[i2].lbl; int sp=L.indexOf(": "); String lab=L.substring(0,sp), val=L.substring(sp+2);
+    uint16_t kc=COL_CIRC; uint8_t a=g_ii[i2].act;
+    if(val==T(L_ON))kc=COL_GREEN; else if(val==T(L_OFF))kc=COL_CIRC; else if(a==IA_MODE)kc=COL_AMBER; else if(a==IA_LANG||a==IA_LIBMODE)kc=COL_BLUE;
+    gfx_fillRoundRect(bx,by,colW,bh,bh/2,COL_PANEL);
+    if(hot)neoFrame(bx,by,colW,bh,bh/2,COL_AMBER,2); else gfx_strokeRoundRect(bx,by,colW,bh,bh/2,COL_SEP);
+    int sz=2; gfx_setTextSize(2); int lw2=gfx_textWidth(lab), vw2=gfx_textWidth(val);
+    if(lw2+vw2+bh+48>colW){ sz=1; gfx_setTextSize(1); lw2=gfx_textWidth(lab); vw2=gfx_textWidth(val); }
+    gfx_setTextColor(COL_LIT,COL_PANEL); gfx_setCursor(bx+bh/2,by+(bh-8*sz)/2); gfx_print(lab);
+    int chH=bh-14, chW=vw2+chH+8, chX=bx+colW-8-chW, chY=by+7;
+    gfx_fillRoundRect(chX,chY,chW,chH,chH/2,kc); gfx_setTextColor(inkFor(kc),kc);
+    gfx_setTextSize(sz); gfx_setCursor(chX+(chW-vw2)/2,chY+(chH-8*sz)/2); gfx_print(val);
+    if(g_ir_n<20){g_ir[g_ir_n].x=bx;g_ir[g_ir_n].y=by;g_ir[g_ir_n].w=colW;g_ir[g_ir_n].h=bh;g_ir[g_ir_n].act=a;g_ir_n++;}
+  }
+  int aw=(VW-2*pad-(acols-1)*agap)/acols;
+  for(int k=0;k<APP;k++){ int idx=g_info_page*APP+k; if(idx>=na)break; int i2=al[idx];
+    int col=k%acols, row=k/acols, bx=pad+col*(aw+agap), by=aTop+row*(ah+agap);
+    uint8_t a=g_ii[i2].act; bool hot=(g_info_last!=IA_NONE&&a==g_info_last);
+    uint16_t kc=(a==IA_RESET)?(uint16_t)0x9124:(a==IA_DIAG&&g_ii[i2].bg==(uint16_t)0xE8C4)?(uint16_t)0x9124:COL_ACCENT;
+    neoPill(bx,by,aw,ah,kc,g_ii[i2].lbl,hot);
+    if(g_ir_n<20){g_ir[g_ir_n].x=bx;g_ir[g_ir_n].y=by;g_ir[g_ir_n].w=aw;g_ir[g_ir_n].h=ah;g_ir[g_ir_n].act=a;g_ir_n++;}
+  }
+  if(g_info_test){ gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_BG);
+    String hs="Heap:"+String(ESP.getFreeHeap()/1024)+"K  PSRAM:"+String(ESP.getFreePsram()/1024)+"K  Games:"+String(g_games.size());
+    gfx_setCursor((VW-gfx_textWidth(hs))/2,aTop-14); gfx_print(hs); }
+}
 static void drawModeBar(){
+  if(g_neo)return;   // lab16b-P4: library = tap the top bar; USER DISKS = Settings
   int mbR=LIST_X+LIST_W+AZ_W;
   gfx_fillRect(LIST_X,STATUS_H,LIST_W+AZ_W,MODE_BAR_H,COL_BAR);gfx_setTextSize(1);
   if(g_categories){   // v5.6.0: mode moved to INFO; this slot becomes the Categories button
@@ -3712,7 +4059,53 @@ static void drawModeBar(){
   gfx_setTextColor(COL_MID,COL_BAR);String gt=String(g_games.size())+" games";gfx_setCursor(mbR-gfx_textWidth(gt)-6,STATUS_H+6);gfx_print(gt);
 }
 
+// lab16a/b-P4: width kept free at the right of a list row (the "nDSK" chip; NEO: IN DRIVE tag + favourite star)
+static int neoThumbS(){ int s=LIST_ITEM_H-12; if(s>44)s=44; if(s<20)s=20; return s; }
+static int rowChipW(int gi){ if(g_neo){ int w=0; if(g_loaded&&g_loaded_game_idx==gi)w+=80; if(g_games[gi].fav)w+=28; return w; } return g_games[gi].disk_count>1?36:0; }
+static int rowNameX(){ return g_neo?(LIST_X+10+neoThumbS()+12):(LIST_X+6+2*(8+g_name_sz*3)+6); }
+static int rowNameMaxW(int gi){ return LIST_W-(rowNameX()-LIST_X)-8-rowChipW(gi); }
+static void neoFileList(){   // lab16b-P4: rounded panel; rows = cover thumbnail, name, "n disks"; gold selection
+  neoMicroWarm();
+  fillBack(NEO_LP_X,NEO_LP_Y,NEO_LP_W,NEO_LP_H);
+  gfx_fillRoundRect(NEO_LP_X,NEO_LP_Y,NEO_LP_W,NEO_LP_H,12,COL_PANEL); gfx_strokeRoundRect(NEO_LP_X,NEO_LP_Y,NEO_LP_W,NEO_LP_H,12,COL_SEP);
+  if(g_games.empty()){gfx_setTextSize(2);gfx_setTextColor(0xE8C4,COL_PANEL);gfx_setCursor(LIST_X+12,LIST_TOP+16);gfx_print(g_mode==MODE_ADF?"No .ADF files":g_mode==MODE_DSK?"No .DSK files":"No /GENERIC files");return;}
+  if(g_scrollPx<0)g_scrollPx=0;int mp=maxScrollPx();if(g_scrollPx>mp)g_scrollPx=mp;
+  int first=(int)(g_scrollPx/LIST_ITEM_H),off=(int)(g_scrollPx-(float)first*LIST_ITEM_H);
+  g_scroll=first;
+  g_clip_y0=LIST_TOP;g_clip_y1=LIST_BOTTOM;
+  int ts=neoThumbS(), nx=rowNameX();
+  for(int vi=0;vi<=ITEMS_VIS+1;vi++){int gi=first+vi;if(gi>=(int)g_games.size())break;
+    auto&game=g_games[gi];bool sel=gi==g_sel,ld=g_loaded&&g_loaded_game_idx==gi;
+    int y=LIST_TOP-off+vi*LIST_ITEM_H;if(y>=LIST_BOTTOM)break;
+    int cy=y+LIST_ITEM_H/2; uint16_t rb=sel?COL_SEL:COL_PANEL;
+    if(sel){ gfx_fillRoundRect(LIST_X,y+2,LIST_W,LIST_ITEM_H-4,10,COL_SEL); neoFrame(LIST_X,y+2,LIST_W,LIST_ITEM_H-4,10,COL_AMBER,2); }
+    // thumbnail: the reel's micro-thumb when there is one, else the initial on a slate square
+    int tx=LIST_X+10, ty=cy-ts/2, md=0; uint16_t*m=(game.jpg_path!="?")?neoMicroTile(gi,&md):NULL;
+    if(m&&md>0){ carBlit(m,md,tx+ts/2,cy,ts,ts,0); gfx_strokeRoundRect(tx-1,ty-1,ts+2,ts+2,3,sel?COL_AMBER:COL_SEP); }
+    else { uint16_t tc=ld?COL_GREEN:(sel?COL_AMBER:COL_CIRC); gfx_fillRoundRect(tx,ty,ts,ts,6,tc);
+      char ib[2]={(char)toupper(game.name.charAt(0)),0}; int ls=ts>=36?3:2; gfx_setTextSize(ls); gfx_setTextColor(inkFor(tc),tc);
+      gfx_setCursor(tx+(ts-6*ls)/2+1,ty+(ts-8*ls)/2); gfx_print(ib); }
+    // name (+ "n disks" when the row is tall enough); the selected name scrolls when too long
+    int nsz=g_name_sz; bool two=(LIST_ITEM_H>=8*nsz+22);
+    int ny=two?cy-(8*nsz+5+8)/2:cy-4*nsz;
+    gfx_setTextSize(nsz); gfx_setTextColor(sel?COL_AMBER:TFT_WHITE,rb);
+    int maxNW=rowNameMaxW(gi);
+    if(sel&&gfx_textWidth(game.name)>maxNW){ g_clip_x0=nx;g_clip_x1=nx+maxNW; gfx_setCursor(nx-g_marquee_off,ny);gfx_print(game.name); g_clip_x0=0;g_clip_x1=gW; }
+    else { String nm=game.name;while(gfx_textWidth(nm)>maxNW&&nm.length()>3)nm=nm.substring(0,nm.length()-1); gfx_setCursor(nx,ny);gfx_print(nm); }
+    if(two){ gfx_setTextSize(1); gfx_setTextColor(sel?(uint16_t)0xD5AE:COL_DIM,rb); gfx_setCursor(nx,ny+8*nsz+5);
+      gfx_print(game.disk_count>1?String(game.disk_count)+" disks":String("1 disk")); }
+    // right: favourite star, IN DRIVE tag
+    int rx=LIST_X+LIST_W-10;
+    if(game.fav){ gfx_fillStar(rx-9,cy,9.0f,COL_STAR); rx-=28; }
+    if(ld){ int tw2=74; gfx_fillRoundRect(rx-tw2,cy-11,tw2,22,11,COL_NOW); gfx_strokeRoundRect(rx-tw2,cy-11,tw2,22,11,COL_GREEN);
+      gfx_setTextSize(1); gfx_setTextColor(COL_GREEN,COL_NOW); gfx_setCursor(rx-tw2+(tw2-48)/2,cy-4); gfx_print("IN DRIVE"); }
+  }
+  g_clip_y0=0;g_clip_y1=gH;
+}
 static void drawFileList(){
+  NeoScope _ns;
+  if(g_neo){ neoFileList(); return; }   // lab16b-P4
+  if(g_neo)fillBack(LIST_X,LIST_TOP,LIST_W,LIST_BOTTOM-LIST_TOP); else
   gfx_fillRect(LIST_X,LIST_TOP,LIST_W,LIST_BOTTOM-LIST_TOP,COL_BG);
   if(g_games.empty()){gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_BG);gfx_setCursor(LIST_X+8,LIST_TOP+16);gfx_print(g_mode==MODE_ADF?"No .ADF files":g_mode==MODE_DSK?"No .DSK files":"No /GENERIC files");return;}
   if(g_scrollPx<0)g_scrollPx=0;int mp=maxScrollPx();if(g_scrollPx>mp)g_scrollPx=mp;
@@ -3722,8 +4115,13 @@ static void drawFileList(){
   for(int vi=0;vi<=ITEMS_VIS+1;vi++){int gi=first+vi;if(gi>=(int)g_games.size())break;
     auto&game=g_games[gi];bool sel=gi==g_sel,ld=g_loaded&&g_loaded_game_idx==gi;
     int y=LIST_TOP-off+vi*LIST_ITEM_H;if(y>=LIST_BOTTOM)break;
+    if(g_neo){   // lab16a-P4: rounded rows on the background; the selected row gets a 2 px gold frame
+      if(sel){gfx_fillRoundRect(LIST_X+4,y+2,LIST_W-8,LIST_ITEM_H-4,8,COL_SEL);neoFrame(LIST_X+4,y+2,LIST_W-8,LIST_ITEM_H-4,8,COL_AMBER,2);}
+      else gfx_fillRoundRect(LIST_X+4,y+2,LIST_W-8,LIST_ITEM_H-4,8,COL_PANEL);
+    } else {
     if(sel){gfx_fillRoundRect(LIST_X+2,y+1,LIST_W-4,LIST_ITEM_H-2,4,COL_SEL);gfx_drawRoundRect(LIST_X+2,y+1,LIST_W-4,LIST_ITEM_H-2,4,COL_AMBER);}
     else gfx_fillRoundRect(LIST_X+2,y+1,LIST_W-4,LIST_ITEM_H-2,3,COL_PANEL);
+    }
     uint16_t acCol=ld?COL_GREEN:(sel?COL_AMBER:COL_ACCENT);gfx_fillRect(LIST_X+3,y+3,3,LIST_ITEM_H-4,acCol);
     int r=8+g_name_sz*3,cx=LIST_X+6+r,cy=y+LIST_ITEM_H/2;
     if(game.fav){gfx_fillStar(cx,cy,(float)r,COL_STAR);}
@@ -3733,7 +4131,7 @@ static void drawFileList(){
     char ib[2]={(char)toupper(game.name.charAt(0)),0};gfx_setCursor(cx-gfx_textWidth(ib)/2,cy-4*g_name_sz);gfx_print(ib);
     }
     int nx=cx+r+6;gfx_setTextSize(g_name_sz);gfx_setTextColor(sel?TFT_WHITE:COL_LIT,sel?COL_SEL:COL_PANEL);
-    int maxNW=LIST_W-(nx-LIST_X)-8-(game.disk_count>1?36:0);
+    int maxNW=LIST_W-(nx-LIST_X)-8-rowChipW(gi);
     if(sel&&gfx_textWidth(game.name)>maxNW){
       // marquee: bounce the full selected name within its lane (offset 0..max), clipped horizontally
       g_clip_x0=nx;g_clip_x1=nx+maxNW;
@@ -3743,24 +4141,41 @@ static void drawFileList(){
       String nm=game.name;while(gfx_textWidth(nm)>maxNW&&nm.length()>3)nm=nm.substring(0,nm.length()-1);
       gfx_setCursor(nx,cy-4*g_name_sz);gfx_print(nm);
     }
-    if(game.disk_count>1){gfx_setTextSize(1);gfx_fillRoundRect(LIST_X+LIST_W-38,cy-6,34,12,4,COL_ACCENT);gfx_setTextColor(TFT_WHITE,COL_ACCENT);gfx_setCursor(LIST_X+LIST_W-34,cy-4);gfx_print(String(game.disk_count)+"DSK");}
+    if(g_neo&&ld){gfx_setTextSize(1);int tx=LIST_X+LIST_W-64;gfx_fillRoundRect(tx,cy-8,58,16,8,COL_NOW);gfx_strokeRoundRect(tx,cy-8,58,16,8,COL_GREEN);
+      gfx_setTextColor(COL_GREEN,COL_NOW);gfx_setCursor(tx+5,cy-4);gfx_print("IN DRIVE");}   // lab16a-P4
+    else if(game.disk_count>1){gfx_setTextSize(1);gfx_fillRoundRect(LIST_X+LIST_W-38,cy-6,34,12,4,COL_ACCENT);gfx_setTextColor(TFT_WHITE,COL_ACCENT);gfx_setCursor(LIST_X+LIST_W-34,cy-4);gfx_print(String(game.disk_count)+"DSK");}
   }
   g_clip_y0=0;g_clip_y1=gH;
 }
 
 static void drawNowPlayingBar(){
+  NeoScope _ns;
   if(!NOW_ON)return;
   int y=NOW_Y;
   if(g_loaded&&g_loaded_name.length()){gfx_fillRect(LIST_X,y,LIST_W,NOW_PLAY_H,COL_NOW);gfx_drawRect(LIST_X,y,LIST_W,NOW_PLAY_H,COL_GREEN);
     gfx_fillCircle(LIST_X+8,y+NOW_PLAY_H/2,3,COL_GREEN);gfx_setTextSize(1);gfx_setTextColor(COL_GREEN,COL_NOW);gfx_setCursor(LIST_X+16,y+3);gfx_print(T(L_NOW_PLAYING));
     gfx_setTextColor(TFT_WHITE,COL_NOW);gfx_setCursor(LIST_X+16,y+12);String n=g_loaded_name;while(gfx_textWidth(n)>LIST_W-24&&n.length()>3)n=n.substring(0,n.length()-1);gfx_print(n);}
-  else{gfx_fillRect(LIST_X,y,LIST_W,NOW_PLAY_H,COL_BG);gfx_setTextSize(1);gfx_setTextColor(COL_MID,COL_BG);gfx_setCursor(LIST_X+8,y+NOW_PLAY_H/2-4);gfx_print(String(g_games.size())+T(L_GAMES_TAP));}
+  else{fillBack(LIST_X,y,LIST_W,NOW_PLAY_H);gfx_setTextSize(1);gfx_setTextColor(COL_MID,COL_BG);gfx_setCursor(LIST_X+8,y+NOW_PLAY_H/2-4);gfx_print(String(g_games.size())+T(L_GAMES_TAP));}
 }
 
 // Split active letters into the two halves: page 0 = #/A-M, page 1 = N-Z
 static int azHalf(int page,char*out){int n=0;for(int i=0;i<active_letter_count;i++){bool lo=active_letters[i]<='M';if((page==0&&lo)||(page==1&&!lo))out[n++]=active_letters[i];}return n;}
 #define AZ_TOG_H 32   // A-M/N-Z toggle button height (taller = easier to hit, away from the INFO button)
+static int neoAZLetterH(){ int letTop=AZ_TOP+AZ_SRCH_H+4, barH=AZ_TOP+AZ_H-letTop, n=active_letter_count<1?1:active_letter_count; int h=barH/n; if(h>26)h=26; if(h<8)h=8; return h; }
+static void neoAZBar(){   // lab16b-P4
+  fillBack(AZ_X,AZ_TOP,AZ_W,AZ_H);
+  if(!active_letter_count)return;
+  drawMagnifier(AZ_X+AZ_W/2,AZ_TOP+AZ_SRCH_H/2+2,COL_AMBER);
+  int letTop=AZ_TOP+AZ_SRCH_H+4, lh=neoAZLetterH(), lsz=(lh>=22)?2:1;
+  gfx_setTextSize(lsz);
+  for(int i=0;i<active_letter_count;i++){ int ly=letTop+i*lh; if(ly+lh>AZ_TOP+AZ_H)break; char L=active_letters[i];
+    if(L==g_active_letter){ gfx_fillRoundRect(AZ_X+3,ly,AZ_W-6,lh,4,COL_AMBER); gfx_setTextColor(TFT_BLACK,COL_AMBER); }
+    else gfx_setTextColor(COL_DIM,COL_BG);
+    char lb[2]={L,0}; gfx_setCursor(AZ_X+(AZ_W-6*lsz)/2+1,ly+(lh-8*lsz)/2); gfx_print(lb); }
+}
 static void drawAZBar(){
+  NeoScope _ns;
+  if(g_neo){ neoAZBar(); return; }   // lab16b-P4
   if(!active_letter_count)return;
   int azBottom=AZ_TOP+AZ_H;
   int togY=azBottom-AZ_TOG_H;                       // toggle top; letters occupy the strip above it
@@ -3788,6 +4203,13 @@ static void drawAZBar(){
 }
 
 static bool handleAlphabetTouch(uint16_t px,uint16_t py){
+  if(g_neo){   // lab16b-P4: one column of every letter
+    if(px<AZ_X||px>=(uint16_t)(AZ_X+AZ_W)||py<AZ_TOP||py>=(uint16_t)(AZ_TOP+AZ_H)||!active_letter_count)return false;
+    int r=((int)py-(AZ_TOP+AZ_SRCH_H+4))/neoAZLetterH(); if(r<0)r=0; if(r>=active_letter_count)r=active_letter_count-1;
+    char letter=active_letters[r];
+    int target=0;for(int i=0;i<(int)g_games.size();i++){if(bucketOf(g_games[i].name)>=letter){target=i;break;}}
+    setActiveLetter(letter); g_sel=target;g_scrollPx=min((float)(target*LIST_ITEM_H),(float)maxScrollPx());g_inertia_on=false;
+    return true; }
   if(px<AZ_X||py<AZ_TOP||py>=(uint16_t)(AZ_TOP+AZ_H)||!active_letter_count)return false;
   int togY=AZ_TOP+AZ_H-AZ_TOG_H;
   // Toggle button (taller hit region at the strip bottom) — manual page peek
@@ -3817,6 +4239,20 @@ static void drawCarouselIcon(int cx,int cy,uint16_t col){
 }
 // Vince test: single bar split by divider lines, white-on-black on every theme.
 static void drawBottomBar(){
+  NeoScope _ns;
+  if(g_neo){   // lab16b-P4: five pills - PREV / NEXT slate, INSERT cyan (EJECT red), REEL slate, CONFIG gold
+    int y=VH-BOTTOM_H; fillBack(0,y,VW,BOTTOM_H); int bw=VW/5, pad=6, bh=BOTTOM_H-14, by=y+7;
+    String il=T(L_INSERT); uint16_t ic0=COL_BLUE;
+    if(!g_games.empty()){ auto&gm=g_games[g_sel];
+      if(g_loaded&&g_loaded_game_idx==g_sel&&g_loaded_disk_idx==g_disk_sel){ il=T(L_EJECT); ic0=0xC1A6; }
+      else if(gm.disk_count>1&&g_disk_sel>0) il=String(T(L_INSERT))+" "+String(g_disk_sel+1); }
+    else ic0=COL_CIRC;
+    neoPill(0*bw+pad,by,bw-2*pad,bh,COL_ACCENT,String("< ")+T(L_PREV),false);
+    neoPill(1*bw+pad,by,bw-2*pad,bh,COL_ACCENT,String(T(L_NEXT))+" >",false);
+    neoPill(2*bw+pad,by,bw-2*pad,bh,ic0,il,false);
+    neoPill(3*bw+pad,by,bw-2*pad,bh,COL_ACCENT,T(L_REEL),false);
+    neoPill(4*bw+pad,by,bw-2*pad,bh,COL_AMBER,T(L_INFO),false);
+    return; }
   const uint16_t bg=TFT_BLACK, ink=TFT_WHITE;
   int y=VH-BOTTOM_H;gfx_fillRect(0,y,VW,BOTTOM_H,bg);gfx_hline(0,y,VW,COL_SEP);
   const int nb=4;int bw=VW/nb;
@@ -3855,7 +4291,6 @@ static void drawBottomBar(){
 // Sources cycle ALL -> FAV -> MOST -> RND (RND = shuffle-jump to one random
 // cover). Tap center = INSERT/EJECT (deliberate; no automount). [LIST] exits.
 // ════════════════════════════════════════════════════════════════════════════
-static bool g_car_active=false;
 static int  g_car_src=0;                        // 0=ALL 1=FAV 2=MOST 3=RND
 static std::vector<int> g_car_list;             // reel order -> g_games indices
 static float g_car_pos=0;                       // fractional reel position
@@ -4293,6 +4728,15 @@ static void carMicroBuild(){
   gLog("[micro] build done: %d games in %lus | tiles %u decoded %u none %u\n",n,(unsigned long)((millis()-t0)/1000),(unsigned)nTile,(unsigned)nDec,(unsigned)nNone);   // lab15a3
   SD_LOCK(); carMicroSave(); SD_UNLOCK();
 }
+static uint16_t* neoMicroTile(int gi,int*dim){ uint16_t*m=carMicro(gi); *dim=m?g_car_micro_dim:0; return m; }   // lab16b-P4
+static void neoMicroWarm(){   // lab16b-P4: list thumbnails = the reel's micro-thumbs. Load the saved pack once per library;
+  static int tried=-1;        //   if there is none (or it is stale) the list shows initials until the reel has built it.
+  if(!g_covers_on||car_micro_block||g_games.empty()||tried==(int)g_games.size())return;
+  tried=(int)g_games.size();
+  carMicroInit(); if(!car_micro_block)return;
+  bool hit; SD_LOCK(); hit=carMicroLoad(); SD_UNLOCK();
+  if(!hit){ carMicroFree(); gLog("[neo] no micro-thumb pack yet - list shows initials until the reel builds it\n"); }
+}
 static void carMicroEnsure(){
   if(car_micro_block&&g_car_micro_n==(int)g_games.size())return;
   carMicroInit();
@@ -4390,7 +4834,7 @@ static void carBlit(uint16_t*tile,int srcDim,int cx,int cy,int w,int h,int dim){
 
 // The d6 overlay: pips while rolling, final face at rest — or "23" on the lucky roll.
 static void carDrawDie(){
-  int s=26,bw=VW/3,x=2*bw+(bw-s)/2,y=VH-BOTTOM_H-s-14;   // v5.4.2: hover a few lines ABOVE the ROLL button (dice / gap / button)
+  int s=26,bw=g_neo?VW/4:VW/3,x=(g_neo?3:2)*bw+(bw-s)/2,y=VH-BOTTOM_H-s-14;   // v5.4.2: hover a few lines ABOVE the ROLL button (dice / gap / button); lab16a-P4: NEO ROLL is slot 4 of 4
   gfx_fillRoundRect(x,y,s,s,5,0xFFFF);
   gfx_drawRoundRect(x,y,s,s,5,COL_ACCENT);
   int c=x+s/2,m=y+s/2,o=7;
@@ -4405,7 +4849,27 @@ static void carDrawDie(){
   if(f==6){gfx_fillCircle(c-o,m,2,TFT_BLACK);gfx_fillCircle(c+o,m,2,TFT_BLACK);}
 }
 
+// lab16c-P4: the picture inside a reel tile (tile pixels), found once per game from its full tile and kept in a small cache.
+struct NeoCrop{ int gi; uint8_t x,y,w,h; };
+static NeoCrop g_neo_crop[64];
+static bool g_neo_crop_init=false;
+static bool neoCropGet(int gi,uint16_t*tile,int&x,int&y,int&w,int&h){
+  if(!g_neo_crop_init){ for(int i=0;i<64;i++)g_neo_crop[i].gi=-1; g_neo_crop_init=true; }
+  NeoCrop&c=g_neo_crop[gi&63];
+  if(c.gi!=gi){ if(!tile)return false;
+    int px,py,pw,ph; tilePicRect(tile,CAR_TILE,px,py,pw,ph);
+    if(pw<8||ph<8){px=0;py=0;pw=CAR_TILE;ph=CAR_TILE;}
+    c.gi=gi; c.x=(uint8_t)px; c.y=(uint8_t)py; c.w=(uint8_t)pw; c.h=(uint8_t)ph; }
+  x=c.x;y=c.y;w=c.w;h=c.h; return true;
+}
+// lab16e-P4: centre line of the reel covers. Landscape: just under the top bar (as before). NEO portrait: the cover + title +
+// disks + dots block (about 120 above the centre line, 226 below) sits in the middle of the free space.
+#define NEO_VINFO_H 120   // lab16f-P4: portrait reel - height of the title / disks / dots strip above the bottom buttons
+static inline bool carVert(){ return g_neo&&g_portrait; }   // lab16f-P4: portrait reel runs up and down
+static int carVInfoTop(){ return VH-BOTTOM_H-NEO_VINFO_H; }
+static int carCcy(){ if(carVert()) return (STATUS_H+carVInfoTop())/2; return STATUS_H+12+CAR_TILE/2; }
 static void drawCarousel(){
+  NeoScope _ns; neoBgEnsure();   // lab16a-P4
   uint32_t _rp_f0=micros();
   if(g_reelprof&&g_rp_frames&&millis()-g_rp_t0>=1500){   // 5.9.33-lab3: where did the frame actually go?
     uint32_t f=g_rp_frames,span=millis()-g_rp_t0;
@@ -4418,9 +4882,9 @@ static void drawCarousel(){
   }
   if(!g_rp_t0)g_rp_t0=millis();
   drawStatusBar();
-  {uint32_t _c0=micros(); gfx_fillRect(0,STATUS_H,VW,VH-STATUS_H-BOTTOM_H,COL_BG); g_rp_clear+=micros()-_c0;}
+  {uint32_t _c0=micros(); fillBack(0,STATUS_H,VW,VH-STATUS_H-BOTTOM_H); g_rp_clear+=micros()-_c0;}   // lab16a-P4: NEO background
   int n=carN();
-  int ccx=VW/2, ccy=STATUS_H+12+CAR_TILE/2;              // center cover: y 32..182
+  int ccx=VW/2, ccy=carCcy();                            // center cover (lab16e-P4: centred in NEO portrait)
   g_car_disk_n=0;                                        // reset reel disk-button rect each frame; set below if multi-disk
   if(n==0){
     gfx_setTextSize(2);gfx_setTextColor(COL_LIT,COL_BG);
@@ -4454,6 +4918,8 @@ static void drawCarousel(){
       if(maxOff>=1){carTile(g_car_list[carWrap(ci-1)],true);carTile(g_car_list[carWrap(ci+1)],true);}
     }
     // far to near, center last (painter's order)
+    const bool vert=carVert(); int _cy0=g_clip_y0,_cy1=g_clip_y1;
+    if(vert){ g_clip_y0=STATUS_H; g_clip_y1=carVInfoTop()-4; }   // lab16f-P4: covers stay inside the reel area
     static const int order[5]={-2,2,-1,1,0};
     for(int oi=0;oi<5;oi++){
       int off=order[oi];if(abs(off)>maxOff)continue;
@@ -4461,24 +4927,36 @@ static void drawCarousel(){
       float rel=(float)off-frac;
       float ar=fabsf(rel);if(ar>2.6f)continue;
       int x=ccx+(int)(rel*161.0f*(1.0f-min(ar,1.0f)*0.22f));   // P4: wider reel spacing (220 px tiles)
+      int cy=ccy;
       float scale=1.0f-ar*0.28f;if(scale<0.42f)scale=0.42f;
       float squash=1.0f-ar*0.20f;if(squash<0.55f)squash=0.55f;
       int h=(int)(CAR_TILE*scale),w=(int)(CAR_TILE*scale*squash);
+      if(vert){ x=ccx; cy=ccy+(int)(rel*175.0f*(1.0f-min(ar,1.0f)*0.22f)); w=(int)(CAR_TILE*scale); h=(int)(CAR_TILE*scale*squash); }   // lab16f-P4: stacked, squashed in height
       int dim=(ar<0.5f)?0:((ar<1.6f)?1:2);
+      // lab16c-P4 NEO: shrink the box to the picture inside the tile (no grey letterbox), as big as the square allows
+      int cpx=0,cpy=0,cpw=CAR_TILE,cph=CAR_TILE; bool crop=false;
+      if(g_neo&&g_covers_on&&g_games[gi].jpg_path!="?"){
+        bool ok0=false; uint16_t*t0=carTileEx(gi,false,&ok0); if(!ok0)t0=NULL;   // only a tile that really decoded
+        crop=neoCropGet(gi,t0,cpx,cpy,cpw,cph)&&(cpw<CAR_TILE||cph<CAR_TILE);
+        if(crop){ float e=min((float)CAR_TILE/cpw,(float)CAR_TILE/cph); int nw=(int)(cpw*e*w/CAR_TILE), nh=(int)(cph*e*h/CAR_TILE);
+          if(nw<4||nh<4)crop=false; else { w=nw; h=nh; } } }
       {uint32_t _b0=micros();
       if(!g_covers_on){
         // 5.9.33-lab3: COVERS=OFF now really means OFF. It used to still fetch a
         // tile (carTile hands back its COL_BAR-prefilled buffer even when the
         // decode fails) and run the full per-pixel scaler over it — so the reel
         // paid the entire cover-rendering cost to draw flat grey. A rect is a rect.
-        gfx_fillRect(x-w/2,ccy-h/2,w,h,carDim(COL_BAR,dim));
+        gfx_fillRect(x-w/2,cy-h/2,w,h,carDim(COL_BAR,dim));
       }else{
       uint16_t*tile=carTile(gi,!moving&&ar<1.6f);
-      if(tile){ carBlit(tile,CAR_TILE,x,ccy,w,h,dim);
+      if(crop&&tile){ g_cb_sx0=cpx;g_cb_sy0=cpy;g_cb_sw=cpw;g_cb_sh=cph; }
+      if(tile){ carBlit(tile,CAR_TILE,x,cy,w,h,dim); g_cb_sw=0;g_cb_sh=0;
 #if CAR_BENCH
         g_bench_sharp++;
 #endif
-      }else{ uint16_t*m=carMicro(gi); carBlit(m,m?g_car_micro_dim:CAR_TILE,x,ccy,w,h,dim);
+      }else{ uint16_t*m=carMicro(gi);
+        if(crop&&m){ int md=g_car_micro_dim; g_cb_sx0=cpx*md/CAR_TILE;g_cb_sy0=cpy*md/CAR_TILE;g_cb_sw=max(1,cpw*md/CAR_TILE);g_cb_sh=max(1,cph*md/CAR_TILE); }
+        carBlit(m,m?g_car_micro_dim:CAR_TILE,x,cy,w,h,dim); g_cb_sw=0;g_cb_sh=0;
 #if CAR_BENCH
         if(m)g_bench_micro++; else g_bench_square++;
 #endif
@@ -4487,29 +4965,50 @@ static void drawCarousel(){
       g_rp_blit+=micros()-_b0;}
       auto&gm=g_games[gi];
       bool isLd=(g_loaded&&g_loaded_game_idx==gi);
+      if(g_neo){   // lab16a-P4: centre cover = gold frame + glow (green when it is in the drive); sides = thin slate line
+        if(ar<0.5f){ uint16_t fc=isLd?COL_GREEN:COL_AMBER; neoGlow(x-w/2-4,cy-h/2-4,w+8,h+8,10,fc,8); neoFrame(x-w/2-1,cy-h/2-1,w+2,h+2,2,fc,4); }
+        else if(g_reelborder) gfx_drawRect(x-w/2-1,cy-h/2-1,w+2,h+2,COL_SEP);
+      } else {
       if(g_reelborder){   // MasterTelly CR: REELBORDER=OFF drops the per-cover frame for a clean, frameless reel
         uint16_t bord=(ar<0.5f)?(isLd?COL_GREEN:COL_AMBER):COL_ACCENT;
-        gfx_drawRect(x-w/2-1,ccy-h/2-1,w+2,h+2,bord);
+        gfx_drawRect(x-w/2-1,cy-h/2-1,w+2,h+2,bord);
       }
-      if(isLd)gfx_drawRect(x-w/2-2,ccy-h/2-2,w+4,h+4,COL_GREEN);   // loaded game stays marked green even with the border off
+      if(isLd)gfx_drawRect(x-w/2-2,cy-h/2-2,w+4,h+4,COL_GREEN);   // loaded game stays marked green even with the border off
+      }
       // no-art placeholder letter
       if(gm.jpg_path=="?"){int ls=(w>=110)?4:2;char ib[2]={(char)toupper(gm.name.charAt(0)),0};
         gfx_setTextSize(ls);gfx_setTextColor(carDim(COL_LIT,dim),carDim(COL_BAR,dim));
-        gfx_setCursor(x-3*ls,ccy-4*ls);gfx_print(ib);}
+        gfx_setCursor(x-3*ls,cy-4*ls);gfx_print(ib);}
       // favourite star on the center cover
-      if(ar<0.5f&&gm.fav)gfx_fillStar(x+w/2-13,ccy-h/2+13,9.0f,COL_STAR);
+      if(ar<0.5f&&gm.fav)gfx_fillStar(x+w/2-13,cy-h/2+13,9.0f,COL_STAR);
       // v4.8.0: floppy icon on the center cover — a save-copy exists for this game
-      if(ar<0.5f&&showSav)drawSaveFloppy(x-w/2+4,ccy-h/2+4);
+      if(ar<0.5f&&showSav)drawSaveFloppy(x-w/2+4,cy-h/2+4);
     }
+    g_clip_y0=_cy0; g_clip_y1=_cy1;
     // center title + info
     int gi=g_car_list[carWrap(ci)];
     auto&game=g_games[gi];
     // v5.7.x: reset the reel disk selection when the centered game changes
     static int carDiskGi=-1;
     if(carDiskGi!=gi){carDiskGi=gi; g_disk_sel=(g_loaded&&g_loaded_game_idx==gi)?g_loaded_disk_idx:0;}
+    int neoY=carVert()?carVInfoTop()+6:ccy+CAR_TILE/2+14;   // lab16a-P4: NEO puts title / disks / dots UNDER the cover (lab16f: portrait = the fixed strip)
+    if(g_neo){ gfx_setTextColor(TFT_WHITE,COL_BG); const int maxW=VW-40; String t=game.name;   // lab16c-P4: no cut-off names
+      gfx_setTextSize(3);
+      if(gfx_textWidth(t)<=maxW){ gfx_setCursor((VW-gfx_textWidth(t))/2,neoY);gfx_print(t); }
+      else { gfx_setTextSize(2);
+        if(gfx_textWidth(t)<=maxW){ gfx_setCursor((VW-gfx_textWidth(t))/2,neoY+4);gfx_print(t); }
+        else { int best=-1,bd=99999; for(int i=1;i<(int)t.length();i++) if(t[i]==' '){ int d=abs(i-(int)t.length()/2); if(d<bd){bd=d;best=i;} }
+          String a=best>0?t.substring(0,best):t, b=best>0?t.substring(best+1):String("");
+          while(gfx_textWidth(a)>maxW&&a.length()>3)a.remove(a.length()-1);
+          while(gfx_textWidth(b)>maxW&&b.length()>3)b.remove(b.length()-1);
+          gfx_setCursor((VW-gfx_textWidth(a))/2,neoY-6);gfx_print(a);
+          gfx_setCursor((VW-gfx_textWidth(b))/2,neoY+14);gfx_print(b);
+          neoY+=14; } } }
+    else{
     gfx_setTextSize(2);gfx_setTextColor(COL_LIT,COL_BG);
     String t=game.name;while(gfx_textWidth(t)>VW-24&&t.length()>3)t=t.substring(0,t.length()-1);
     gfx_setCursor((VW-gfx_textWidth(t))/2,190);gfx_print(t);
+    }
     // lazy NFO blurb (same pattern as the cover panel, keyed to the center game)
     static int carNfoSel=-1;static String carBlurb="";
     if(carNfoSel!=gi&&moving&&!game.nfo_done){carNfoSel=-1;carBlurb="";}   // lab14i: never search the card for a description while the reel moves - wait until it stops
@@ -4520,6 +5019,23 @@ static void drawCarousel(){
           if(nf){char _nb[513];int _nr=nf.read((uint8_t*)_nb,512);if(_nr<0)_nr=0;_nb[_nr]=0;nf.close();String txt(_nb);parseNFO(txt,nT,nB);
             if(nT.length()&&game.name==basenameNoExt(filenameOnly(g_files[game.first_file_idx])))game.name=nT;carBlurb=nB;}}
         game.blurb=carBlurb;game.nfo_done=true;}}
+    if(g_neo){   // lab16a-P4: DISK [1][2][3] n/N pills, or the description; then the page dots
+      if(game.disk_count>1){
+        int nd=game.disk_count, ph=26, pb=min(42,(VW-140)/nd), pw=pb-8, dy=neoY+40;
+        gfx_setTextSize(1); int total=44+nd*pb+44, x0=(VW-total)/2;
+        gfx_setTextColor(COL_DIM,COL_BG); gfx_setCursor(x0,dy+(ph-8)/2); gfx_print("DISK");
+        int dx0=x0+44;
+        g_car_disk_n=nd; g_car_disk_x=dx0; g_car_disk_y=dy; g_car_disk_bw=pb; g_car_disk_h=ph;
+        for(int d=0;d<nd;d++){ int bx=dx0+d*pb;
+          bool dLd=(g_loaded&&g_loaded_game_idx==gi&&g_loaded_disk_idx==d), dSel=(d==g_disk_sel);
+          uint16_t bc=dLd?COL_NOW:(dSel?COL_AMBER:COL_CIRC), oc=dLd?COL_GREEN:(dSel?0xFEB0:COL_SEP), tc=dLd?COL_GREEN:(dSel?TFT_BLACK:TFT_WHITE);
+          gfx_fillRoundRect(bx,dy,pw,ph,8,bc); neoFrame(bx,dy,pw,ph,8,oc,2);
+          String dl=String(d+1); gfx_setTextSize(2); gfx_setTextColor(tc,bc); gfx_setCursor(bx+(pw-gfx_textWidth(dl))/2,dy+(ph-16)/2); gfx_print(dl); }
+        gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_BG); gfx_setCursor(dx0+nd*pb+6,dy+(ph-8)/2); gfx_print(String(g_disk_sel+1)+"/"+String(nd));
+      } else if(carBlurb.length()){ gfx_setTextSize(1); drawWrapped(100,neoY+38,carBlurb,VW-200,11,2,neoY+66,COL_DIM,COL_BG); }
+      { int dots=min(9,n), dyy=neoY+82, dsp=16, x0=VW/2-(dots-1)*dsp/2, cur=(n>1)?(carWrap(ci)*(dots-1)+(n-1)/2)/(n-1):0;
+        for(int k=0;k<dots;k++){ if(k==cur) gfx_fillCircle(x0+k*dsp,dyy,4,COL_AMBER); else gfx_fillCircle(x0+k*dsp,dyy,3,COL_SEP); } }
+    } else
     if(game.disk_count>1){
       // v5.7.x: reel disk buttons — pick a disk (unloaded) or clean-swap to it (loaded), without leaving the reel.
       int nd=game.disk_count, dh=20, dy=VH-BOTTOM_H-42-26;
@@ -4537,10 +5053,18 @@ static void drawCarousel(){
       }
     } else if(carBlurb.length()){gfx_setTextSize(1);
       drawWrapped(70,210,carBlurb,VW-140,10,2,232,COL_MID,COL_BG);}
+    if(g_neo&&n>1){   // lab16b-P4: round < > at the edges (a tap on either side already steps the reel)
+      if(carVert()){ for(int s=0;s<2;s++){ int ax=VW-32, ay=s?ccy+56:ccy-56; gfx_fillCircle(ax,ay,17,COL_BAR); gfx_drawCircle(ax,ay,17,COL_SEP);   // lab16f-P4: up / down
+          for(int k=-7;k<=7;k++){ int py2=s?(ay+4-abs(k)):(ay-4+abs(k)); gfx_fillRect(ax+k,py2-1,1,3,TFT_WHITE); } } }
+      else
+      for(int s=0;s<2;s++){ int ax=s?VW-24:24; gfx_fillCircle(ax,ccy,17,COL_BAR); gfx_drawCircle(ax,ccy,17,COL_SEP);
+        for(int k=-7;k<=7;k++){ int px2=s?(ax+4-abs(k)):(ax-4+abs(k)); gfx_fillRect(px2-1,ccy+k,3,1,TFT_WHITE); } } }
     // reel position "i/n" top-right of the stage
+    if(!g_neo){
     gfx_setTextSize(1);gfx_setTextColor(COL_DIM,COL_BG);
     String pn=String(carWrap(ci)+1)+"/"+String(n);
     gfx_setCursor(VW-8-gfx_textWidth(pn),STATUS_H+4);gfx_print(pn);
+    }
 #if CAR_BENCH
     {gfx_setTextSize(1);gfx_setTextColor(g_bench_square?0xF800:0x07E0,COL_BG);
      char _bb[40];snprintf(_bb,sizeof _bb,"sq%lu mi%lu sh%lu",(unsigned long)g_bench_square,(unsigned long)g_bench_micro,(unsigned long)g_bench_sharp);
@@ -4549,6 +5073,8 @@ static void drawCarousel(){
     // INSERT/EJECT — an explicit button under the nfo (v4.7.3: tap-the-cover-to-
     // load removed; in portrait the cover fills the width, so swipes grazed
     // into accidental loads. Mounting is always a deliberate button on the GTi.)
+    if(g_neo){ g_car_ins_x=g_car_ins_y=g_car_ins_w=g_car_ins_h=0; }   // lab16a-P4: NEO's INSERT lives in the bottom bar
+    else
     {bool isLd=(g_loaded&&g_loaded_game_idx==gi);
      g_car_ins_w=170;g_car_ins_h=34;
      g_car_ins_x=(VW-g_car_ins_w)/2;g_car_ins_y=VH-BOTTOM_H-42;
@@ -4559,6 +5085,17 @@ static void drawCarousel(){
      const char*lbl=isLd?T(L_EJECT):T(L_INSERT);int tw=gfx_textWidth(lbl);
      gfx_setCursor(g_car_ins_x+(g_car_ins_w-tw)/2,g_car_ins_y+(g_car_ins_h-16)/2);gfx_print(lbl);}
   }
+  if(g_neo){   // lab16a-P4: INSERT n / EJECT (cyan / red) | < ALL > | LIST | ROLL (gold) - four pills on the background
+    int y=VH-BOTTOM_H; fillBack(0,y,VW,BOTTOM_H); int bw=VW/4, pad=6, bh=BOTTOM_H-2*pad, by=y+pad;
+    String il=T(L_INSERT); uint16_t ic0=COL_BLUE;
+    if(n>0){ int cgi=g_car_list[carWrap((int)lroundf(g_car_pos))]; auto&cg=g_games[cgi];
+      if(g_loaded&&g_loaded_game_idx==cgi){ il=T(L_EJECT); ic0=0xC1A6; }
+      else if(cg.disk_count>1&&g_disk_sel>0) il=String(T(L_INSERT))+" "+String(g_disk_sel+1); }
+    neoPill(0*bw+pad,by,bw-2*pad,bh,ic0,il,false);
+    neoPill(1*bw+pad,by,bw-2*pad,bh,COL_ACCENT,String("< ")+carSrcName()+" >",false);
+    neoPill(2*bw+pad,by,bw-2*pad,bh,COL_ACCENT,T(L_LIST),false);
+    neoPill(3*bw+pad,by,bw-2*pad,bh,COL_AMBER,T(L_ROLL),false);
+  } else
   if(g_btn_pill){                                             // 5.8.3: coloured rounded pill buttons
     int y=VH-BOTTOM_H; gfx_fillRect(0,y,VW,BOTTOM_H,COL_BG); gfx_hline(0,y,VW,COL_SEP);
     int bw=VW/3, pad=5, bh=BOTTOM_H-2*pad, r=bh/2, by=y+pad;
@@ -4569,8 +5106,9 @@ static void drawCarousel(){
       drawListIcon(sx+7,by+bh/2,ic); gfx_setTextColor(ic,bc);
       gfx_setCursor(sx+16,by+(bh-16)/2); gfx_print(T(L_LIST)); }
     { uint16_t bc=COL_AMBER, ic=inkFor(bc); int bx=1*bw+pad, w=bw-2*pad;
-      gfx_fillRoundRect(bx,by,w,bh,r,bc); String sl=carSrcName(); int tw=gfx_textWidth(sl);
-      gfx_setTextColor(ic,bc); gfx_setCursor(bx+(w-tw)/2,by+(bh-16)/2); gfx_print(sl); }
+      gfx_fillRoundRect(bx,by,w,bh,r,bc); String sl=carSrcName(); int ts=2; if(gfx_textWidth(sl)>w-bh){ts=1;gfx_setTextSize(1);}   // lab15q: long words fit the pill
+      int tw=gfx_textWidth(sl);
+      gfx_setTextColor(ic,bc); gfx_setCursor(bx+(w-tw)/2,by+(bh-8*ts)/2); gfx_print(sl); gfx_setTextSize(2); }
     { uint16_t bc=COL_GREEN, ic=inkFor(bc); int bx=2*bw+pad, w=bw-2*pad;
       gfx_fillRoundRect(bx,by,w,bh,r,bc);
       int tw=gfx_textWidth(T(L_ROLL)),ds=16,total=ds+4+tw,sx=bx+(w-total)/2;
@@ -4593,8 +5131,9 @@ static void drawCarousel(){
     drawListIcon(sx+7,y+BOTTOM_H/2,ink);
     gfx_setCursor(sx+16,y+(BOTTOM_H-16)/2);gfx_print(T(L_LIST)); }
   // SOURCE — cycles ALL/FAV/MOST (word is the current source)
-  { int bx=1*bw;String sl=carSrcName();int tw=gfx_textWidth(sl);
-    gfx_setCursor(bx+(bw-tw)/2,y+(BOTTOM_H-16)/2);gfx_print(sl); }
+  { int bx=1*bw;String sl=carSrcName();int ts=2;if(gfx_textWidth(sl)>bw-12){ts=1;gfx_setTextSize(1);}   // lab15q: long words fit the slot
+    int tw=gfx_textWidth(sl);
+    gfx_setCursor(bx+(bw-tw)/2,y+(BOTTOM_H-8*ts)/2);gfx_print(sl);gfx_setTextSize(2); }
   // ROLL — die glyph + word
   { int bx=2*bw,tw=gfx_textWidth(T(L_ROLL)),ds=16,total=ds+4+tw,sx=bx+(bw-total)/2;
     int dx=sx+ds/2,dy2=y+BOTTOM_H/2;
@@ -4665,7 +5204,24 @@ static void carRollDice(){
   drawCarousel();gfx_flush();
 }
 
+static void carInsertTap(int ci){   // INSERT/EJECT for the centre game (classic button and NEO's bottom-bar slot)
+  int gi=g_car_list[ci];
+  g_sel=gi;g_disk_page=0;setActiveLetter(bucketOf(g_games[gi].name));
+  if(g_loaded&&g_loaded_game_idx==gi)doUnload();
+  else{auto&gm=g_games[gi];int d=(g_disk_sel>=0&&g_disk_sel<(int)gm.disk_indices.size())?g_disk_sel:0;doLoadSelected(g_files[gm.disk_indices.empty()?gm.first_file_idx:gm.disk_indices[d]]);}
+  if(g_car_active){drawCarousel();gfx_flush();}        // repaint over the list redraw the loader did
+}
 static void carHandleTap(uint16_t px,uint16_t py){
+  if(g_neo&&py<(uint16_t)STATUS_H&&px>=(uint16_t)(VW-NEO_GEAR_W)){   // lab16a-P4: gear -> Settings (CLOSE goes back to the list)
+    g_car_active=false; if(g_car_bootmode==2)writeLastView(0);
+    g_info_showing=true;g_info_page=0;g_info_test=false;g_info_last=IA_NONE;drawInfoFull();return; }
+  if(g_neo&&py>=(uint16_t)(VH-BOTTOM_H)){   // lab16a-P4: INSERT | source | LIST | ROLL
+    int slot=px/(VW/4); if(slot>3)slot=3;
+    if(slot==0){ if(carN()>0)carInsertTap(carWrap((int)lroundf(g_car_pos))); }
+    else if(slot==1)carCycleSrc();
+    else if(slot==2)carExit();
+    else carRollDice();
+    return; }
   if(py>=(uint16_t)(VH-BOTTOM_H)){
     if(px<(uint16_t)(VW/3))carExit();
     else if(px<(uint16_t)(2*VW/3))carCycleSrc();
@@ -4673,7 +5229,7 @@ static void carHandleTap(uint16_t px,uint16_t py){
     return;}
   int n=carN();if(!n)return;
   int ci=carWrap((int)lroundf(g_car_pos));
-  int ccx=VW/2,ccy=STATUS_H+12+CAR_TILE/2;
+  int ccx=VW/2,ccy=carCcy();   // lab16e-P4
   // v5.7.x: reel disk buttons (multi-disk centered game) — checked before INSERT
   if(g_car_disk_n>0 && py>=(uint16_t)g_car_disk_y && py<(uint16_t)(g_car_disk_y+g_car_disk_h) &&
      px>=(uint16_t)g_car_disk_x && px<(uint16_t)(g_car_disk_x+g_car_disk_bw*g_car_disk_n)){
@@ -4693,17 +5249,22 @@ static void carHandleTap(uint16_t px,uint16_t py){
   // INSERT/EJECT button (checked FIRST — its corners overlap the side zones)
   if(px>=(uint16_t)g_car_ins_x&&px<(uint16_t)(g_car_ins_x+g_car_ins_w)&&
      py>=(uint16_t)g_car_ins_y&&py<(uint16_t)(g_car_ins_y+g_car_ins_h)){
-    int gi=g_car_list[ci];
-    g_sel=gi;g_disk_page=0;setActiveLetter(bucketOf(g_games[gi].name));
-    if(g_loaded&&g_loaded_game_idx==gi)doUnload();
-    else{auto&gm=g_games[gi];int d=(g_disk_sel>=0&&g_disk_sel<(int)gm.disk_indices.size())?g_disk_sel:0;doLoadSelected(g_files[gm.disk_indices.empty()?gm.first_file_idx:gm.disk_indices[d]]);}
-    if(g_car_active){drawCarousel();gfx_flush();}        // repaint over the list redraw the loader did
+    carInsertTap(ci);
     return;
   }
   // center cover = DEAD ZONE (v4.7.3: no tap-to-load — portrait thumbs kept
   // grazing it into accidental mounts; the button above is the only trigger)
   if(px>=(uint16_t)(ccx-CAR_TILE/2)&&px<(uint16_t)(ccx+CAR_TILE/2)&&
      py>=(uint16_t)(ccy-CAR_TILE/2)&&py<(uint16_t)(ccy+CAR_TILE/2))return;
+  if(carVert()){   // lab16f-P4: portrait reel - above = previous, below = next (incl. the up/down arrows on the right)
+    if(py<(uint16_t)STATUS_H||py>=(uint16_t)carVInfoTop())return;
+    if(px>=(uint16_t)(ccx+CAR_TILE/2)) g_car_pos+=(py<(uint16_t)ccy)?-1.0f:1.0f;
+    else if(py<(uint16_t)(ccy-CAR_TILE/2)) g_car_pos-=1.0f;
+    else if(py>=(uint16_t)(ccy+CAR_TILE/2)) g_car_pos+=1.0f;
+    else return;
+    g_car_pos=(float)carWrap((int)lroundf(g_car_pos));
+    g_car_coast=false;drawCarousel();gfx_flush();
+    return; }
   // side tap = step one cover toward that side
   if(px<(uint16_t)(ccx-CAR_TILE/2))g_car_pos-=1.0f;
   else if(px>=(uint16_t)(ccx+CAR_TILE/2))g_car_pos+=1.0f;
@@ -4721,14 +5282,15 @@ static void carTick(bool touch,uint16_t px,uint16_t py,uint32_t now){
       // a touch mid-roll skips the spin straight to the result; any touch clears the die
       if(g_car_spin){g_car_spin=false;g_car_pos=(float)carWrap((int)lroundf(g_car_spinTarget));}
       g_car_dieShow=false;
-      g_car_touch=true;g_car_moved=false;g_car_x0=px;g_car_y0=py;g_car_lastX=px;
+      g_car_touch=true;g_car_moved=false;g_car_x0=px;g_car_y0=py;g_car_lastX=carVert()?py:px;   // lab16f-P4: lastX = the drag axis
       g_car_pos0=g_car_pos;g_car_vel=0;g_car_coast=false;g_car_lastMs=now;
     }else{
-      if(abs((int)px-g_car_x0)>DRAG_THRESH)g_car_moved=true;
-      if(g_car_moved&&n>0&&py<(uint16_t)(VH-BOTTOM_H)){
-        g_car_pos=g_car_pos0-((float)((int)px-g_car_x0))/CAR_PX_PER_STEP;
+      const bool vt=carVert(); const int ax=vt?(int)py:(int)px, a0=vt?g_car_y0:g_car_x0; const float sp=vt?175.0f:CAR_PX_PER_STEP;   // lab16f-P4
+      if(abs(ax-a0)>DRAG_THRESH)g_car_moved=true;
+      if(g_car_moved&&n>0&&(vt?g_car_y0:(int)py)<(int)(VH-BOTTOM_H)){   // portrait: judged by where the finger went down
+        g_car_pos=g_car_pos0-((float)(ax-a0))/sp;
         uint32_t dt=now-g_car_lastMs;
-        if(dt>0){g_car_vel=((float)((int)px-g_car_lastX))/(float)dt;g_car_lastX=px;g_car_lastMs=now;}
+        if(dt>0){g_car_vel=((float)(ax-g_car_lastX))/(float)dt;g_car_lastX=ax;g_car_lastMs=now;}
         drawCarousel();gfx_flush();
       }
     }
@@ -4737,7 +5299,7 @@ static void carTick(bool touch,uint16_t px,uint16_t py,uint32_t now){
   if(g_car_touch){
     if(++g_car_rel<RELEASE_FRAMES)return;
     g_car_touch=false;g_car_rel=0;
-    if(g_car_moved){g_car_ivel=-g_car_vel*16.0f/CAR_PX_PER_STEP;g_car_coast=(fabsf(g_car_ivel)>0.004f);if(!g_car_coast){g_car_coast=true;g_car_ivel=0;}}
+    if(g_car_moved){g_car_ivel=-g_car_vel*16.0f/(carVert()?175.0f:CAR_PX_PER_STEP);g_car_coast=(fabsf(g_car_ivel)>0.004f);if(!g_car_coast){g_car_coast=true;g_car_ivel=0;}}
     else carHandleTap((uint16_t)g_car_x0,(uint16_t)g_car_y0);
     return;
   }
@@ -4801,7 +5363,7 @@ static void carTick(bool touch,uint16_t px,uint16_t py,uint32_t now){
   }
 }
 
-static void drawFullUI(){gfx_fillScreen(COL_BG);drawStatusBar();drawCoverPanel();drawActionStrip();drawModeBar();drawFileList();drawNowPlayingBar();drawAZBar();drawBottomBar();}
+static void drawFullUI(){NeoScope _ns;clearBack();drawStatusBar();drawCoverPanel();drawActionStrip();drawModeBar();drawFileList();drawNowPlayingBar();drawAZBar();drawBottomBar();}
 static void drawListAndCover(){drawCoverPanel();drawActionStrip();drawFileList();drawNowPlayingBar();drawAZBar();}
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -4921,7 +5483,7 @@ static bool svPatchCore(const String&master,const String&sav,const uint8_t*map,u
 }
 static void svToast(const String&msg){
   gfx_fillRect(0,0,VW,STATUS_H,COL_GREEN);gfx_setTextSize(1);gfx_setTextColor(TFT_BLACK,COL_GREEN);
-  int tw=gfx_textWidth(msg);gfx_setCursor((VW-tw)/2,6);gfx_print(msg);gfx_flush();
+  int tw=gfx_textWidth(msg);gfx_setCursor((VW-tw)/2,(STATUS_H-8)/2);gfx_print(msg);gfx_flush();
   delay(1200);drawStatusBar();gfx_flush();
 }
 // lab15c: a save file that already exists (COPY: the .sav from an earlier save; OVERWRITE: the image
@@ -5046,12 +5608,12 @@ static bool doLoadSelected(const String&adfPath){
   // Standalone HD load (cable) is unaffected either way.
   bool hdDongleReady = espnowIsPaired() && g_espnow_dongle_board==1 && !g_hivemind;
   if(g_wireless_mode && g_mode==MODE_ADF && isHDImage(adfPath) && !hdDongleReady){
-    gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
-    gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_HD_NO_WIRELESS));
+    gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL);
+    gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);gfx_setCursor(COVER_X+12,COVER_Y+16);gfx_print(T(L_HD_NO_WIRELESS));
     gfx_setTextColor(COL_LIT,COL_PANEL);
-    gfx_setCursor(6,STATUS_H+30);gfx_print(T(L_NO_WIRELESS_DEV));
-    gfx_setCursor(6,STATUS_H+42);gfx_print(T(L_AVAIL_HD));
-    gfx_setCursor(6,STATUS_H+56);gfx_print(T(L_USE_CABLE));
+    gfx_setCursor(COVER_X+12,COVER_Y+30);gfx_print(T(L_NO_WIRELESS_DEV));
+    gfx_setCursor(COVER_X+12,COVER_Y+42);gfx_print(T(L_AVAIL_HD));
+    gfx_setCursor(COVER_X+12,COVER_Y+56);gfx_print(T(L_USE_CABLE));
     gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
   }
   // v4.8.0 interlocks: pending saves die when the RAM disk is rebuilt — drain first
@@ -5076,18 +5638,18 @@ static bool doLoadSelected(const String&adfPath){
       }
     }
   }
-  gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
+  gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL);
   gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);String tn=basenameNoExt(filenameOnly(adfPath));if(tn.length()>16)tn=tn.substring(0,16);
-  gfx_setCursor(6,STATUS_H+16);gfx_print(tn);gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(6,STATUS_H+28);gfx_print(T(L_LOADING));
+  gfx_setCursor(COVER_X+12,COVER_Y+16);gfx_print(tn);gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(COVER_X+12,COVER_Y+28);gfx_print(T(L_LOADING));
   gfx_flush();
   // Clean swap: if a disk is already mounted, cleanly eject first so the host re-reads the new media.
   // FORCESWAP=ON skips this and swaps the bytes in place (faster, but the host may not notice).
   if(g_loaded && !g_forceswap) hardDetach();
-  File f=SD_MMC.open(loadPath.c_str(),FILE_READ);if(!f){gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_FAILED));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
+  File f=SD_MMC.open(loadPath.c_str(),FILE_READ);if(!f){gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(COVER_X+12,COVER_Y+40);gfx_print(T(L_FAILED));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
   // Use VFS to get real file size (SD_MMC f.size() returns 0 for subdirectory files)
   String vfsLoad="/sdcard"+loadPath;
   struct stat stLoad;
-  if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
+  if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(COVER_X+12,COVER_Y+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
   uint32_t fsz=(uint32_t)stLoad.st_size;
   uint32_t copied=0;
   if(g_wireless_mode){
@@ -5096,14 +5658,14 @@ static bool doLoadSelected(const String&adfPath){
     //    and the BIGDISK size remains the hard ceiling for anything sent by radio.
     if(fsz>MAX_FILE_BYTES){
       f.close();
-      gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
+      gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL);
       gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_TOO_BIG));
+      gfx_setCursor(COVER_X+12,COVER_Y+16);gfx_print(T(L_TOO_BIG));
       gfx_setTextColor(COL_LIT,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB");
-      gfx_setCursor(6,STATUS_H+44);gfx_print(T(L_HD_NO_WIRELESS));
+      gfx_setCursor(COVER_X+12,COVER_Y+30);gfx_print(String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB");
+      gfx_setCursor(COVER_X+12,COVER_Y+44);gfx_print(T(L_HD_NO_WIRELESS));
       gfx_setTextColor(COL_DIM,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+58);gfx_print(T(L_USE_CABLE));
+      gfx_setCursor(COVER_X+12,COVER_Y+58);gfx_print(T(L_USE_CABLE));
       gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
     }
     g_alias=false;
@@ -5132,13 +5694,13 @@ static bool doLoadSelected(const String&adfPath){
     String vn = presentName(adfPath);   // lab14q: GEN real name, ADF/DSK DISK.xxx unless LONGNAME=ON
     if(!geomOk || !aliasMount(loadPath,fsz,vn.c_str(),pS,pC,&aerr)){
       g_alias=false;
-      gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
+      gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL);
       gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_FAILED));
+      gfx_setCursor(COVER_X+12,COVER_Y+16);gfx_print(T(L_FAILED));
       gfx_setTextColor(COL_LIT,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB");
+      gfx_setCursor(COVER_X+12,COVER_Y+30);gfx_print(String(fsz/1024)+"KB");
       gfx_setTextColor(COL_DIM,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+44);gfx_print(aerr);
+      gfx_setCursor(COVER_X+12,COVER_Y+44);gfx_print(aerr);
       gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
     }
     copied=fsz;
@@ -5163,8 +5725,8 @@ static bool doLoadSelected(const String&adfPath){
     if(mcN>0&&g_hivemind){                                  // multicast: fan the disk out to every MuCa- dongle in turn (v4.8.1: only when HIVEMIND=ON)
       g_sv_wl_path="";g_sv_wl_loadid=0;g_sv_wl_tag="";g_sv_wl_orig="";   // Hivemind saves: PINNED — no writeback mapping for multicast
       for(int i=0;i<mcN;i++){
-        gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_fillRect(4,STATUS_H+24,150,12,COL_PANEL);
-        gfx_setCursor(6,STATUS_H+26);gfx_print("Multicast "+String(i+1)+"/"+String(mcN));gfx_flush();
+        gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_fillRect(COVER_X+10,COVER_Y+24,150,12,COL_PANEL);
+        gfx_setCursor(COVER_X+12,COVER_Y+26);gfx_print("Multicast "+String(i+1)+"/"+String(mcN));gfx_flush();
         espnowSendDiskTo(mcMacs[i],copied);
       }
     } else if(g_link_home && g_home_ssid.length()){         // 5.8.6: home-WiFi transport — route via the router to the dongle's gotek.local
@@ -5253,9 +5815,9 @@ static void diagInflate(const uint8_t*src,uint32_t slen,uint8_t*dst){
 // Mount the built-in Amiga Test Kit as the emulated disk — works with no SD card inserted.
 static void doLoadDiag(){
   g_info_showing=false;
-  gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
-  gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_setCursor(6,STATUS_H+16);gfx_print("AMIGA TEST KIT");
-  gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(6,STATUS_H+28);gfx_print(T(L_LOADING_DIAG));gfx_flush();
+  gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL);
+  gfx_setTextSize(1);gfx_setTextColor(TFT_CYAN,COL_PANEL);gfx_setCursor(COVER_X+12,COVER_Y+16);gfx_print("AMIGA TEST KIT");
+  gfx_setTextColor(COL_LIT,COL_PANEL);gfx_setCursor(COVER_X+12,COVER_Y+28);gfx_print(T(L_LOADING_DIAG));gfx_flush();
   if(g_loaded && !g_forceswap) hardDetach();
   g_alias=false;mscAnnounce(TOTAL_SECTORS);               // 5.9.37: diag disk is a RAM-disk mount
   build_volume("DISK.ADF",DIAG_ADF_SIZE);                 // force an .ADF image regardless of MODE
@@ -7088,7 +7650,7 @@ static void redrawListArea(){drawFileList();drawNowPlayingBar();drawAZBar();gfx_
 // True if the selected game's name is too long for its lane (needs a marquee)
 static bool selNameOverflows(){
   if(g_sel<0||g_sel>=(int)g_games.size())return false;
-  auto&g=g_games[g_sel];int r=8+g_name_sz*3,nx=LIST_X+6+r+r+6;int maxNW=LIST_W-(nx-LIST_X)-8-(g.disk_count>1?36:0);
+  auto&g=g_games[g_sel];int maxNW=rowNameMaxW(g_sel);   // lab16b-P4: shared lane maths
   gfx_setTextSize(g_name_sz);return gfx_textWidth(g.name)>maxNW;
 }
 
@@ -7206,7 +7768,7 @@ static void doCategoryBrowse(){
     if(dirty){dirty=false;
       gfx_fillScreen(COL_BG); drawStatusBar();
       gfx_fillRect(0,STATUS_H,VW,MODE_BAR_H,COL_BAR); gfx_setTextSize(1);
-      gfx_setTextColor(COL_AMBER,COL_BAR);gfx_setCursor(6,STATUS_H+6);gfx_print("CATEGORIES");
+      gfx_setTextColor(COL_AMBER,COL_BAR);gfx_setCursor(COVER_X+12,COVER_Y+6);gfx_print("CATEGORIES");
       {String p=g_libpath.length()?g_libpath:"/";gfx_setTextColor(COL_MID,COL_BAR);gfx_setCursor(VW-6-gfx_textWidth(p),STATUS_H+6);gfx_print(p);}
       gfx_setTextSize(2);gfx_setTextColor(COL_LIT,COL_BG);gfx_setCursor(8,STATUS_H+MODE_BAR_H+8);gfx_print("CATEGORIES");
       int y=listTop;
@@ -7257,6 +7819,17 @@ static void switchLib(int m){   // int, not DiskMode: Arduino auto-generates thi
   drawFullUI();gfx_flush();
 }
 static void drawInfoBottomBar(){
+  NeoScope _ns;
+  if(g_neo){   // lab16b-P4: < BACK (page back, or out) | PAGE n / N | TEST TOOLS | NEXT > gold (DONE on the last page)
+    int y=VH-BOTTOM_H; fillBack(0,y,VW,BOTTOM_H); int bw=VW/4, pad=6, bh=BOTTOM_H-14, by=y+7;
+    neoPill(0*bw+pad,by,bw-2*pad,bh,COL_ACCENT,String("< ")+T(L_BACK),false);
+    String pn="PAGE "+String(g_info_page+1)+" / "+String(g_info_pages);
+    gfx_fillRoundRect(1*bw+pad,by,bw-2*pad,bh,bh/2,COL_BAR); gfx_setTextSize(2); if(gfx_textWidth(pn)>bw-2*pad-12)gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_BAR);
+    gfx_setCursor(1*bw+(bw-gfx_textWidth(pn))/2,by+(bh-8*text_size)/2); gfx_print(pn);
+    if(g_devmode&&!g_info_test) neoPill(2*bw+pad,by,bw-2*pad,bh,COL_ACCENT,"TEST TOOLS",false);
+    bool last=(g_info_page>=g_info_pages-1);
+    neoPill(3*bw+pad,by,bw-2*pad,bh,COL_AMBER,last?String("DONE"):String(T(L_NEXT))+" >",false);
+    return; }
   const uint16_t bg=TFT_BLACK, ink=TFT_WHITE;
   int y=VH-BOTTOM_H,bw=VW/5;
   gfx_fillRect(0,y,VW,BOTTOM_H,bg);gfx_hline(0,y,VW,COL_SEP);   // Vince test: single bar split by dividers, white-on-black
@@ -7289,7 +7862,7 @@ static void drawInfoBottomBar(){
   }
 }
 static void drawInfoFull(){
-  gfx_fillScreen(COL_BG);drawStatusBar();drawInfoPanel();drawInfoBottomBar();gfx_flush();
+  {NeoScope _ns;clearBack();drawStatusBar();drawInfoPanel();drawInfoBottomBar();}gfx_flush();   // lab16a-P4: NEO background
 }
 static void infoAction(uint8_t act){
   switch(act){
@@ -7329,6 +7902,9 @@ static void infoAction(uint8_t act){
                       g_rp_frames=g_rp_draw=g_rp_clear=g_rp_blit=g_rp_sav=g_rp_flush=0; g_rp_t0=millis();
                       drawInfoFull(); break;   // 5.9.33-lab3: live frame breakdown into /gti.log
     case IA_SDSOAK: sdSoakTest(); drawInfoFull(); break;   // lab14g
+    case IA_USRDSK: { g_info_showing=false; String p=doUserDisks();   // lab16b-P4: same as the old USR-DSK button
+      if(p.length()){ if(doLoadSelected(p)){g_loaded_game_idx=-1;String nm=p;int s=nm.lastIndexOf('/');if(s>=0)nm=nm.substring(s+1);int d=nm.lastIndexOf('.');if(d>0)nm=nm.substring(0,d);g_loaded_name=nm;} }
+      drawFullUI();gfx_flush(); } break;
     case IA_LISTTILE: g_listtile=!g_listtile; saveConfigKey("LISTTILE", g_listtile?"ON":"OFF"); drawInfoFull(); break;   // 5.9.34-lab4: list cover from the reel tile vs a fresh JPEG decode
     case IA_SSMODE:
       if(g_ss_slides){ g_ss_slides=false; g_ss_matrix=false; saveConfigKey("SSMODE","BOUNCE"); }
@@ -7344,6 +7920,16 @@ static void infoAction(uint8_t act){
 static void handleTap(uint16_t px,uint16_t py){
   // ── v5.5.4: full-screen paginated INFO — swallow ALL taps while settings are open ──
   if(g_info_showing){
+    if(g_neo&&py<(uint16_t)STATUS_H&&px>=(uint16_t)(VW-NEO_GEAR_W)){ g_info_showing=false;g_info_test=false;drawFullUI();gfx_flush();return; }   // lab16a-P4: gear closes Settings
+    if(g_neo&&py>=(uint16_t)(VH-BOTTOM_H)){   // lab16b-P4: BACK | (page) | TEST TOOLS | NEXT / DONE
+      int slot=px/(VW/4); if(slot>3)slot=3;
+      if(slot==0){ if(g_info_page>0){g_info_page--;drawInfoFull();}
+                   else if(g_info_test){g_info_test=false;g_info_page=0;g_info_last=IA_NONE;drawInfoFull();}
+                   else {g_info_showing=false;drawFullUI();gfx_flush();} }
+      else if(slot==2){ if(g_devmode&&!g_info_test){g_info_test=true;g_info_page=0;g_info_last=IA_NONE;drawInfoFull();} }
+      else if(slot==3){ if(g_info_page<g_info_pages-1){g_info_page++;drawInfoFull();}
+                        else {g_info_showing=false;g_info_test=false;drawFullUI();gfx_flush();} }
+      return; }
     if(py>=(uint16_t)(VH-BOTTOM_H)){
       int bw=VW/5,bsel=px/bw; if(bsel>4)bsel=4;
       if(bsel==0){ if(g_info_page>0){g_info_page--;drawInfoFull();} }
@@ -7353,12 +7939,30 @@ static void handleTap(uint16_t px,uint16_t py){
     }
     for(int i=0;i<g_ir_n;i++){
       if(px>=(uint16_t)g_ir[i].x&&px<(uint16_t)(g_ir[i].x+g_ir[i].w)&&py>=(uint16_t)g_ir[i].y&&py<(uint16_t)(g_ir[i].y+g_ir[i].h)){
-        uint32_t t0=millis(); uint8_t a=g_ir[i].act; infoAction(a);   // lab15a2: slow Settings taps go in the log
+        uint32_t t0=millis(); uint8_t a=g_ir[i].act; g_info_last=a; infoAction(a);   // lab16a-P4: remember it for the gold outline   // lab15a2: slow Settings taps go in the log
         uint32_t dt=millis()-t0; if(dt>300) gLog("[slow] settings action %u took %lums | int=%u psram=%u largest-int=%u\n",(unsigned)a,(unsigned long)dt,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),(unsigned)ESP.getFreePsram(),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         return; }
     }
     return;
   }
+  // ── lab16a-P4: NEO gear (top-right) opens Settings ──
+  if(g_neo&&py<(uint16_t)STATUS_H&&px>=(uint16_t)(VW-NEO_GEAR_W)){ g_info_showing=true;g_info_page=0;g_info_test=false;g_info_last=IA_NONE;drawInfoFull();return; }
+  // ── lab16b-P4: the library name in the top bar = the old mode-bar button (switch library, or open the categories) ──
+  if(g_neo&&py<(uint16_t)STATUS_H&&g_neo_ctr_x1>g_neo_ctr_x0&&px+12>=(uint16_t)g_neo_ctr_x0&&px<(uint16_t)(g_neo_ctr_x1+12)){
+    if(g_categories){ g_libpath=""; reloadLevel(); doCategoryBrowse(); drawFullUI(); gfx_flush(); }
+    else switchLib((g_mode+1)%3);
+    return; }
+  // ── lab16b-P4: FAV pill and DISK pills on the game panel ──
+  if(g_neo&&!g_games.empty()){
+    if(g_neo_fav_bw&&px>=(uint16_t)g_neo_fav_bx&&px<(uint16_t)(g_neo_fav_bx+g_neo_fav_bw)&&py>=(uint16_t)(g_neo_fav_by-4)&&py<(uint16_t)(g_neo_fav_by+g_neo_fav_bh+4)){
+      g_games[g_sel].fav=!g_games[g_sel].fav; saveStats(); drawListAndCover(); gfx_flush(); return; }
+    if(g_nd_n>0&&py>=(uint16_t)(g_nd_y-6)&&py<(uint16_t)(g_nd_y+g_nd_h+6)){
+      auto&game=g_games[g_sel];
+      if(g_nd_more_x>=0&&px>=(uint16_t)g_nd_more_x&&px<(uint16_t)(g_nd_more_x+g_nd_pb)){ g_disk_page++; drawCoverPanel(); gfx_flush(); return; }
+      if(px>=(uint16_t)g_nd_x&&px<(uint16_t)(g_nd_x+g_nd_n*g_nd_pb)){
+        int d=g_nd_first+(px-g_nd_x)/g_nd_pb; if(d>=game.disk_count)d=game.disk_count-1;
+        g_disk_sel=d; if(g_hotswap&&g_loaded&&g_loaded_game_idx==g_sel)doLoadSelected(g_files[game.disk_indices[g_disk_sel]]); else{drawCoverPanel();gfx_flush();}
+        return; } } }
   // ── v4.9.2: book button on the cover — opens the .rtfm manual full-screen ──
   if(!g_info_showing&&g_manual_bw&&g_manual_path.length()&&px>=(uint16_t)g_manual_bx&&px<(uint16_t)(g_manual_bx+g_manual_bw)&&py>=(uint16_t)g_manual_by&&py<(uint16_t)(g_manual_by+g_manual_bh)){
     doManual(g_manual_path); drawFullUI(); gfx_flush(); return; }
@@ -7371,8 +7975,8 @@ static void handleTap(uint16_t px,uint16_t py){
     return; }
 
   // ── A-Z bar (letters + toggle button) — suppressed where the INFO panel covers it ──
-  if(px>=AZ_X&&py>=AZ_TOP&&py<(uint16_t)(AZ_TOP+AZ_H)&&!(g_info_showing&&px<(uint16_t)(g_info_x+g_info_w)&&py<(uint16_t)g_info_bottom)){
-    if(py<(uint16_t)(AZ_TOP+AZ_SRCH_H)&&active_letter_count){doSearch();drawFullUI();gfx_flush();return;}   // v4.8.2: magnifier
+  if(px>=AZ_X&&px<(uint16_t)(AZ_X+AZ_W)&&py>=AZ_TOP&&py<(uint16_t)(AZ_TOP+AZ_H)&&!(g_info_showing&&px<(uint16_t)(g_info_x+g_info_w)&&py<(uint16_t)g_info_bottom)){
+    if(py<(uint16_t)(AZ_TOP+AZ_SRCH_H+(g_neo?4:0))&&active_letter_count){doSearch();drawFullUI();gfx_flush();return;}   // v4.8.2: magnifier
     if(handleAlphabetTouch(px,py)){drawListAndCover();gfx_flush();}return;}
 
   // ── INSERT/EJECT (cover button or compact action strip) ──
@@ -7385,7 +7989,7 @@ static void handleTap(uint16_t px,uint16_t py){
     return;}}
 
   // ── Disk selection (landscape grid / portrait stepper / compact thumbnail) ──
-  if(!g_games.empty()){auto&game=g_games[g_sel];if(game.disk_count>1){
+  if(!g_neo&&!g_games.empty()){auto&game=g_games[g_sel];if(game.disk_count>1){
     if(COVER_ON&&!g_portrait){
       DiskGrid L=diskGrid(game.disk_count);
       if(L.multiPage){int pby=L.gridY+L.gridH+L.pageGap;if(py>=(uint16_t)pby&&py<(uint16_t)(pby+L.pageBtnH)&&px>=(uint16_t)L.gx&&px<(uint16_t)(L.gx+L.gridW)){g_disk_page=(g_disk_page+1)%L.pages;drawCoverPanel();gfx_flush();return;}}
@@ -7402,7 +8006,7 @@ static void handleTap(uint16_t px,uint16_t py){
   }}
 
   // ── Mode bar ──
-  if(py>=STATUS_H&&py<STATUS_H+MODE_BAR_H&&px>=LIST_X){
+  if(!g_neo&&py>=STATUS_H&&py<STATUS_H+MODE_BAR_H&&px>=LIST_X){
     if(g_categories){ if(px<LIST_X+110){ g_libpath=""; reloadLevel(); doCategoryBrowse(); drawFullUI(); gfx_flush(); return; } }   // v5.6.0: Categories button = jump to top + browse
     else{
     if(px<LIST_X+110){ switchLib((g_mode+1)%3); return; }   // lab15g: one button, cycles ADF->DSK->GEN (was three 36 px targets)
@@ -7413,7 +8017,7 @@ static void handleTap(uint16_t px,uint16_t py){
   if(px>=LIST_X&&px<AZ_X&&py>=LIST_TOP&&py<LIST_BOTTOM){
     bool wasInfo=g_info_showing; g_info_showing=false;
     int gi=(int)((g_scrollPx+(py-LIST_TOP))/LIST_ITEM_H);if(gi>=0&&gi<(int)g_games.size()){
-      {int r=8+g_name_sz*3;if(px<=(uint16_t)(LIST_X+6+2*r+3)){g_games[gi].fav=!g_games[gi].fav;saveStats();if(wasInfo)drawFullUI();else drawFileList();gfx_flush();return;}}
+      {int r=8+g_name_sz*3;if(px<=(uint16_t)(g_neo?(LIST_X+10+neoThumbS()+6):(LIST_X+6+2*r+3))){g_games[gi].fav=!g_games[gi].fav;saveStats();if(wasInfo)drawFullUI();else drawFileList();gfx_flush();return;}}
       if(gi==g_sel){
         // Default: tapping the already-selected row does nothing (load only via INSERT).
         // TAPLOAD=ON restores the old tap-again-to-load/eject behaviour.
@@ -7425,12 +8029,26 @@ static void handleTap(uint16_t px,uint16_t py){
     return;}
 
   // ── Bottom bar ── (slot count follows drawBottomBar: 5 with carousel, else 4)
+  if(g_neo&&py>=VH-BOTTOM_H){   // lab16b-P4: PREV | NEXT | INSERT | REEL | CONFIG
+    int btn=px/(VW/5); if(btn>4)btn=4;
+    if(btn==2){ if(!g_games.empty()){
+        auto&gm=g_games[g_sel];int idx=gm.disk_indices.empty()?gm.first_file_idx:gm.disk_indices[min(g_disk_sel,(int)gm.disk_indices.size()-1)];
+        if(g_loaded&&g_loaded_game_idx==g_sel){ if(g_loaded_disk_idx==g_disk_sel)doUnload(); else doLoadSelected(g_files[idx]); }
+        else doLoadSelected(g_files[idx]); }
+      return; }
+    if(btn>2)btn--;   // fall through to the classic 4-slot handling: 0 PREV, 1 NEXT, 2 REEL, 3 CONFIG
+    if(btn==0&&g_sel>0){g_sel--;g_disk_sel=0;g_disk_page=0;setActiveLetter(bucketOf(g_games[g_sel].name));if((float)(g_sel*LIST_ITEM_H)<g_scrollPx)g_scrollPx=g_sel*LIST_ITEM_H;drawListAndCover();gfx_flush();}
+    else if(btn==1&&g_sel<(int)g_games.size()-1){g_sel++;g_disk_sel=0;g_disk_page=0;setActiveLetter(bucketOf(g_games[g_sel].name));if((float)((g_sel+1)*LIST_ITEM_H)>g_scrollPx+(LIST_BOTTOM-LIST_TOP))g_scrollPx=(g_sel+1)*LIST_ITEM_H-(LIST_BOTTOM-LIST_TOP);drawListAndCover();gfx_flush();}
+    else if(btn==2){ g_info_showing=false; carEnter(); }
+    else if(btn==3){ g_info_showing=true; g_info_page=0;g_info_test=false;g_info_last=IA_NONE;drawInfoFull(); }
+    return;
+  }
   if(py>=VH-BOTTOM_H){
     const int nb=4;int bw=VW/nb,btn=px/bw;if(btn>=nb)btn=nb-1;   // Vince test: THEME removed from the bar (4 slots)
     if(btn==0&&g_sel>0){g_sel--;g_disk_sel=0;g_disk_page=0;setActiveLetter(bucketOf(g_games[g_sel].name));if((float)(g_sel*LIST_ITEM_H)<g_scrollPx)g_scrollPx=g_sel*LIST_ITEM_H;drawListAndCover();gfx_flush();}
     else if(btn==1&&g_sel<(int)g_games.size()-1){g_sel++;g_disk_sel=0;g_disk_page=0;setActiveLetter(bucketOf(g_games[g_sel].name));if((float)((g_sel+1)*LIST_ITEM_H)>g_scrollPx+(LIST_BOTTOM-LIST_TOP))g_scrollPx=(g_sel+1)*LIST_ITEM_H-(LIST_BOTTOM-LIST_TOP);drawListAndCover();gfx_flush();}
     else if(btn==2){ g_info_showing=false; carEnter(); }   // REEL — enter the carousel
-    else if(btn==3){ g_info_showing=!g_info_showing; if(g_info_showing){g_info_page=0;g_info_test=false;drawInfoFull();} else {drawFullUI();gfx_flush();} }
+    else if(btn==3){ g_info_showing=!g_info_showing; if(g_info_showing){g_info_page=0;g_info_test=false;g_info_last=IA_NONE;drawInfoFull();} else {drawFullUI();gfx_flush();} }
     return;
   }
 }
@@ -7444,7 +8062,7 @@ void loop(){
   { static uint32_t _sgT=0; if(g_sdg.pending_report && millis()-_sgT>2000){ _sgT=millis(); sdGuardReport(false); } }   // lab14g
   if(g_espnow_link_just_established){g_espnow_link_just_established=false;
     gfx_fillRect(0,0,VW,STATUS_H,0x07E0);gfx_setTextSize(1);gfx_setTextColor(TFT_BLACK,0x07E0);
-    gfx_setCursor(VW/2-57,6);gfx_print(T(L_DONGLE_LINKED));gfx_flush();delay(2000);drawStatusBar();gfx_flush();}
+    gfx_setCursor(VW/2-57,(STATUS_H-8)/2);gfx_print(T(L_DONGLE_LINKED));gfx_flush();delay(2000);drawStatusBar();gfx_flush();}
 
   static uint32_t last=0;if(millis()-last<16){delay(1);return;}last=millis();
   bool frame=Touch_ReadFrame();uint16_t px=0,py=0;bool touch=frame&&getTouchXY(&px,&py);
@@ -7517,7 +8135,7 @@ void loop(){
   // idle: bounce the selected over-long name (scroll to the end, pause ~1s, reverse)
   else if(!g_info_showing&&selNameOverflows()){
     if(g_marquee_sel!=g_sel){g_marquee_sel=g_sel;g_marquee_off=0;g_marquee_dir=1;g_marquee_pause=now;}   // pause at start on new selection
-    auto&g=g_games[g_sel];int r=8+g_name_sz*3,nx=LIST_X+6+r+r+6;int maxNW=LIST_W-(nx-LIST_X)-8-(g.disk_count>1?36:0);
+    auto&g=g_games[g_sel];int maxNW=rowNameMaxW(g_sel);   // lab16b-P4
     gfx_setTextSize(g_name_sz);int mx=gfx_textWidth(g.name)-maxNW+8;if(mx<0)mx=0;
     static uint32_t lastMq=0;
     if(g_marquee_pause){ if(now-g_marquee_pause>=1000){g_marquee_pause=0;g_marquee_dir=(g_marquee_off<=0)?1:-1;lastMq=now;} }

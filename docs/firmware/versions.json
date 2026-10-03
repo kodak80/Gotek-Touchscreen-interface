@@ -19,12 +19,20 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "A600",
+        "ch": "stable",
+        "date": "2026-10-04",
+        "app": "firmware/jc3248/GTi-JC35-A600-update.bin",
+        "note": "STABLE - A600 (4 Oct 2026, the pre-Kickstart release). Everything from the 5.9.41 lab series in one: big libraries (tested to 20,000 games), safe saves (Game.sav.adf; a dongle's saves go to their own Game.sav.XXXX file), never formats a card, SD guard; tap a game's text for its whole .nfo; covers fill their frame; Polish and Czech screen text; take-over check when two screens share a dongle; in ESP-NOW mode the GTi's own Wi-Fi is GTi_Omega-XXXX (password gotekXXXX) with its web page at 192.168.4.1. Pairs with Webby-1.6.10 dongles. Built with ESP32 core 3.3.12.",
+        "latest": true
+      },
+      {
         "v": "5.9.41-lab15q",
         "ch": "beta",
         "date": "2026-10-03",
         "app": "firmware/jc3248-lab/GTi-JC35-5.9.41-lab15q-update.bin",
         "note": "Latest (3 Oct). Same as lab15m, plus: two new screen languages, Polish (PL, checked by 8-Bitz) and Czech (CS) - Settings > LANG, or LANG=PL / LANG=CS in CONFIG.TXT; the web page's language list now has NL, PL and CS. In ESP-NOW mode the GTi's own Wi-Fi is now GTi_Omega-XXXX with password gotekXXXX (it used to be an open, unnamed ESP_xxxxxx network) and serves the GTi web page at 192.168.4.1; Settings shows the name and password. Your phone drops off it for a few seconds while a disk is sent to a dongle. Built with ESP32 core 3.3.12.",
-        "latest": true
+        "latest": false
       },
       {
         "v": "5.9.41-lab15m",
@@ -205,12 +213,20 @@
     "appOffset": 65536,
     "builds": [
       {
+        "v": "A600",
+        "ch": "stable",
+        "date": "2026-10-04",
+        "full": "firmware/jc4827/manifest-A600.json",
+        "note": "STABLE - A600 (4 Oct 2026, the pre-Kickstart release), same features as the 3.5\" A600: big libraries, safe saves, SD guard, .nfo reader, covers fill their frame, Polish and Czech, take-over check, GTi_Omega-XXXX Wi-Fi + web page in ESP-NOW mode; buttons and covers sized for the 4.3\" panel. FULL CLEAN FLASH: new flash layout with two larger app slots (your settings live in CONFIG.TXT on the SD card, so they survive). Already on a 5.9.x build? The SD update.bin also works: firmware/jc4827/GTi-JC43-A600-update.bin. Built with ESP32 core 3.3.12.",
+        "latest": true
+      },
+      {
         "v": "5.9.7",
         "ch": "beta",
         "date": "2026-09-09",
         "app": "firmware/jc4827-beta/GTi-JC43-5.9.7-update.bin",
         "note": "sample manual rewrite (jump [Section] markers); config names OMEGA theme & Dutch",
-        "latest": true
+        "latest": false
       },
       {
         "v": "5.9.6",
@@ -226,11 +242,11 @@
     "builds": [
       {
         "v": "Webby-1.6.10-supermini",
-        "ch": "beta",
+        "ch": "stable",
         "latest": true,
         "date": "2026-10-03",
         "full": "firmware/supermini-beta/manifest-1.6.10-supermini.json",
-        "note": "Latest (3 Oct). For the Super Mini (two small LEDs, red + blue); for a Waveshare S3-Zero (one colour LED) use the S3-Zero entry. NEEDS GTi 5.9.41-lab14t or newer on the screen. Same as 1.6.9, plus: the dongle's page (192.168.4.1) in Polish (checked by 8-Bitz) and Czech - a phone or browser set to either gets it automatically, or tap PL / CS. Pair again after flashing (full wipe)."
+        "note": "STABLE (4 Oct, with the GTi A600 release). For the Super Mini (two small LEDs, red + blue); for a Waveshare S3-Zero (one colour LED) use the S3-Zero entry. NEEDS GTi 5.9.41-lab14t or newer on the screen. Same as 1.6.9, plus: the dongle's page (192.168.4.1) in Polish (checked by 8-Bitz) and Czech - a phone or browser set to either gets it automatically, or tap PL / CS. Pair again after flashing (full wipe)."
       },
       {
         "v": "Webby-1.6.9-supermini",
@@ -303,11 +319,11 @@
     "builds": [
       {
         "v": "Webby-1.6.10-zero",
-        "ch": "beta",
+        "ch": "stable",
         "latest": true,
         "date": "2026-10-03",
         "full": "firmware/zero-beta/manifest-1.6.10-zero.json",
-        "note": "Latest (3 Oct). For the Waveshare ESP32-S3-Zero (one colour status LED) - same firmware as Webby-1.6.10-supermini, only the status light differs; don't put it on a Super Mini. NEEDS GTi 5.9.41-lab14t or newer on the screen. Same as 1.6.9, plus the dongle's page in Polish and Czech. Pair after flashing (full wipe)."
+        "note": "STABLE (4 Oct, with the GTi A600 release). For the Waveshare ESP32-S3-Zero (one colour status LED) - same firmware as Webby-1.6.10-supermini, only the status light differs; don't put it on a Super Mini. NEEDS GTi 5.9.41-lab14t or newer on the screen. Same as 1.6.9, plus the dongle's page in Polish and Czech. Pair after flashing (full wipe)."
       },
       {
         "v": "Webby-1.6.9-zero",
