@@ -237,6 +237,86 @@
       }
     ]
   },
+  "p4": {
+    "chipFamily": "ESP32-P4",
+    "shared": [
+      {
+        "path": "firmware/_shared/p4/bootloader.bin",
+        "offset": 8192
+      },
+      {
+        "path": "firmware/_shared/p4/partitions.bin",
+        "offset": 32768
+      },
+      {
+        "path": "firmware/_shared/p4/boot_app0.bin",
+        "offset": 57344
+      }
+    ],
+    "appOffset": 65536,
+    "builds": [
+      {
+        "v": "5.9.42-lab1-P4",
+        "ch": "lab",
+        "date": "2026-10-03",
+        "full": "firmware/p4-beta/manifest-5.9.42-lab1.json",
+        "app": "firmware/p4-beta/GTi-P4-5.9.42-lab1-update.bin",
+        "note": "LAB - the new NEO look: list + game panel, big covers, up/down reel in portrait; cable + wireless tested. Full image includes the WiFi co-processor (C6) firmware. For P4 chips revision v1.x (the IDE says \"Before v3.00\"). After flashing, power it off and on once before saving games.",
+        "latest": true
+      },
+      {
+        "v": "5.9.11-P4",
+        "ch": "beta",
+        "date": "2026-09-14",
+        "full": "firmware/p4-beta/manifest.json",
+        "app": "firmware/p4-beta/GTi-P4-5.9.11-update.bin",
+        "note": "BETA (older look) - WiFi co-processor bring-up fixes, stable mode switch, dongle scan + send, 40 MHz SD. The C6 update comes from the SD card file (c6_network_adapter_2.12.13.bin)."
+      },
+      {
+        "v": "5.9.7-P4",
+        "ch": "beta",
+        "date": "2026-09-09",
+        "app": "firmware/p4-beta/GTi-P4-5.9.7-update.bin",
+        "note": "BETA (older look) - sample manual rewrite (jump [Section] markers), OMEGA theme + Dutch in the config names. App image only: flashes with the P4 boot parts and keeps the rest of the flash."
+      },
+      {
+        "v": "5.9.4-P4",
+        "ch": "beta",
+        "date": "2026-09-08",
+        "app": "firmware/p4-beta/GTi-P4-5.9.4-update.bin",
+        "note": "BETA (older look) - first public P4 build. App image only."
+      }
+    ]
+  },
+  "jc1060": {
+    "chipFamily": "ESP32-P4",
+    "shared": [
+      {
+        "path": "firmware/_shared/p4/bootloader.bin",
+        "offset": 8192
+      },
+      {
+        "path": "firmware/_shared/p4/partitions.bin",
+        "offset": 32768
+      },
+      {
+        "path": "firmware/_shared/p4/boot_app0.bin",
+        "offset": 57344
+      }
+    ],
+    "appOffset": 65536,
+    "builds": [
+      {
+        "v": "5.9.42-lab4-P4G7",
+        "ch": "lab",
+        "date": "2026-10-03",
+        "full": "firmware/p4g7-lab/manifest-5.9.42-lab4.json",
+        "app": "firmware/p4g7-lab/GTi-P4G7-5.9.42-lab4-update.bin",
+        "note": "LAB - first 7\" P4 build: the NEO look at 1024x600, cable + wireless tested (send, eject, save pull back). Full image includes the WiFi co-processor (C6) firmware. For P4 chips revision v1.x (\"Before v3.00\"). The Gotek / PC goes on the HIGH-SPEED USB-C (next to the Ethernet jack).",
+        "latest": true
+      }
+    ]
+  },
   "supermini": {
     "chipFamily": "ESP32-S3",
     "builds": [
