@@ -98,3 +98,8 @@ bool   espnowSendDiskTo(const uint8_t* mac, uint32_t size);   // multicast: send
 bool   espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, uint32_t size);
 void   espnowSetFlingName(const String& nameWithExt);   // 1.6.3 wireless DSK fix: real filename+ext for the next fling (sent as CMD_SET_NAME)
 void   espnowSendEject();
+// lab3-P4G7 (P4 Wi-Fi-direct only): the sketch registers its save writer once; the radio layer then pulls the dongle's game
+// saves back before every new send to that dongle and on EJECT. Results for the UI after espnowSendEject():
+void   espnowSetSavePersist(SavePersistCb cb);
+extern volatile int  g_p4_eject_result;   // 1 = dongle ejected, 2 = dongle kept the disk (unsaved writes), 0 = no link / no answer, -1 = nothing to eject
+extern volatile int  g_p4_saved_secs;     // sectors written back by the last save pull (0 = none), -1 = the pull failed

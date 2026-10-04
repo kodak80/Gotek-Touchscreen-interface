@@ -51,7 +51,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.42-lab1-P4"   // 5.9.42-lab1-P4 (4 Oct 2026) = 5.9.41-lab16f-P4, renamed only (no code change): the NEO look, first P4 lab release on the web flasher | lab16f-P4: PORTRAIT REEL RUNS UP AND DOWN - covers stacked vertically (next one below), swipe up/down, coast + snap as before; round up/down arrows on the right; tap above/below the centre cover steps one; title / DISK pills / dots in a fixed strip above the bottom buttons. Landscape unchanged | lab16e-P4: portrait reel centred - cover + title + disks + dots sit in the middle of the screen (was at the top with empty space under it); landscape unchanged | lab16d-P4: game panel cover is BIG (full panel width, picture centred), favourite = star badge in the cover's top-right corner (tap it), the .rtfm book button is back in its usual place on the cover's left edge (16b had moved it to a MANUAL pill), HD chip bottom-right; title + "n disks - ADF" under the cover, then the description and the DISK pills | lab16c-P4 (Mez's photos of 16b): NEO text at size 2+ is drawn bold (one pixel wider strokes) so dark text on the gold / cyan / green pills reads like the mock-up; reel covers drop the grey letterbox baked into the tile (picture cut out, frame hugs it, same cut on the micro-thumbs while it slides); long names wrap to two lines under the reel cover instead of being cut; in the game panel a long name moves under the cover, full width | lab16b-P4: NEO is the only look for now (THEME, BUTTONS and COMPACT are off the Settings list; CONFIG THEME= is ignored) and the screens follow the mock-ups: list on the LEFT in a rounded panel, A-Z strip, game panel on the RIGHT (cover, title, disks/format, FAV and MANUAL pills, description, DISK pills), bottom bar PREV / NEXT / INSERT / REEL / CONFIG; top bar 40 px with the firmware version under GOTEK GTi, tap the library name to switch library (or open categories); reel arrows; Settings = two columns of capsules + a row of action pills + BACK / PAGE / TEST TOOLS / NEXT; USER DISKS moved into Settings | lab16a-P4: NEW LOOK "NEO" (Settings > THEME > NEO, or THEME=NEO): navy-to-purple background with faint circuit lines; top bar GOTEK GTi + firmware version, library + game count, a CABLE/DONGLE state chip and a gear that opens Settings; reel: gold-framed glowing centre cover, title under it, DISK pills, page dots, bottom bar INSERT / < ALL > / LIST / ROLL; list: gold-framed selection, IN DRIVE tag, cyan INSERT; Settings: capsule rows with the value in a coloured chip, last tap outlined in gold. Other themes look and work as before | lab15q-P4 (from the 3.5" 15o + 15q): Polish (8-Bitz's text) and Czech on the screen (LANG=PL / CS, CZ accepted); the reel bar's ALL/FAV/MOST word shrinks when too long; STANDALONE banner centred on the translated word. (3.5" 15p, the GTi_Omega Wi-Fi, does not apply: the P4's C6 radio never runs an access point) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
+#define FW_VERSION "5.9.42-lab2-P4"   // lab2-P4 (= the 7" lab2+lab3+lab4 radio fixes): every dongle join starts with a 0.3 s channel-6 scan; the dongle's real Wi-Fi name (GotekOMEGA-XXXX) remembered (CONFIG.TXT XIAO_SSID=) or looked up by a quick channel-6 scan before every join, two join tries; EJECT really ejects the dongle (was a no-op on the P4) after pulling the game saves back; saves also pulled before the next disk goes to the same dongle (the save pull could never join a Webby 1.6.8+ dongle); C6 firmware version + every wireless step in gti.log; top-bar chip never says OFFLINE (no heartbeat on the P4) | 5.9.42-lab1-P4 (4 Oct 2026) = 5.9.41-lab16f-P4, renamed only (no code change): the NEO look, first P4 lab release on the web flasher | lab16f-P4: PORTRAIT REEL RUNS UP AND DOWN - covers stacked vertically (next one below), swipe up/down, coast + snap as before; round up/down arrows on the right; tap above/below the centre cover steps one; title / DISK pills / dots in a fixed strip above the bottom buttons. Landscape unchanged | lab16e-P4: portrait reel centred - cover + title + disks + dots sit in the middle of the screen (was at the top with empty space under it); landscape unchanged | lab16d-P4: game panel cover is BIG (full panel width, picture centred), favourite = star badge in the cover's top-right corner (tap it), the .rtfm book button is back in its usual place on the cover's left edge (16b had moved it to a MANUAL pill), HD chip bottom-right; title + "n disks - ADF" under the cover, then the description and the DISK pills | lab16c-P4 (Mez's photos of 16b): NEO text at size 2+ is drawn bold (one pixel wider strokes) so dark text on the gold / cyan / green pills reads like the mock-up; reel covers drop the grey letterbox baked into the tile (picture cut out, frame hugs it, same cut on the micro-thumbs while it slides); long names wrap to two lines under the reel cover instead of being cut; in the game panel a long name moves under the cover, full width | lab16b-P4: NEO is the only look for now (THEME, BUTTONS and COMPACT are off the Settings list; CONFIG THEME= is ignored) and the screens follow the mock-ups: list on the LEFT in a rounded panel, A-Z strip, game panel on the RIGHT (cover, title, disks/format, FAV and MANUAL pills, description, DISK pills), bottom bar PREV / NEXT / INSERT / REEL / CONFIG; top bar 40 px with the firmware version under GOTEK GTi, tap the library name to switch library (or open categories); reel arrows; Settings = two columns of capsules + a row of action pills + BACK / PAGE / TEST TOOLS / NEXT; USER DISKS moved into Settings | lab16a-P4: NEW LOOK "NEO" (Settings > THEME > NEO, or THEME=NEO): navy-to-purple background with faint circuit lines; top bar GOTEK GTi + firmware version, library + game count, a CABLE/DONGLE state chip and a gear that opens Settings; reel: gold-framed glowing centre cover, title under it, DISK pills, page dots, bottom bar INSERT / < ALL > / LIST / ROLL; list: gold-framed selection, IN DRIVE tag, cyan INSERT; Settings: capsule rows with the value in a coloured chip, last tap outlined in gold. Other themes look and work as before | lab15q-P4 (from the 3.5" 15o + 15q): Polish (8-Bitz's text) and Czech on the screen (LANG=PL / CS, CZ accepted); the reel bar's ALL/FAV/MOST word shrinks when too long; STANDALONE banner centred on the translated word. (3.5" 15p, the GTi_Omega Wi-Fi, does not apply: the P4's C6 radio never runs an access point) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -3017,6 +3017,8 @@ static void gLog(const char*fmt,...){
   Serial.print(buf);
   if(g_log_enabled){ File lf=SD_MMC.open(GTI_LOG_PATH,FILE_APPEND); if(lf){ lf.print(buf); lf.close(); } }
 }
+void p4wifiLog(const char* s){ gLog("%s",s); }   // lab2-P4G7: the radio layer's [P4WIFI] lines into gti.log
+static char g_c6_ver[40]="C6 ?";                      // lab2-P4G7: shown on Settings > TEST TOOLS
 
 // ── lab14g: SD GUARD install (see gti_sdguard.h for the why) ──────────────────
 // The card's FatFs drive (pdrv) gets our checking driver; the real SD driver is registered a
@@ -3560,7 +3562,7 @@ static void neoStatusBar(){
   neoGear(VW-22,STATUS_H/2,TFT_WHITE,COL_BAR);
   // state chip: same logic as the classic bar (cable: g_loaded; wireless: the dongle's heartbeat)
   String lw; uint16_t lc; bool fill;
-  { bool wl=(g_wireless_mode&&g_espnow_started);
+  { bool wl=false;   // lab2-P4G7: the P4 cannot hear the dongle's heartbeat (no ESP-NOW receive) - show what the GTi sent, never OFFLINE
     bool alive = wl ? (millis()-g_espnow_xiao_last_seen < 8000UL) : true;
     bool ld, desync=false;
     if(wl){ ld=alive&&g_dongle_loaded; desync=g_loaded&&(!alive||!g_dongle_loaded); }
@@ -4038,7 +4040,7 @@ static void neoInfoGrid(){
     if(g_ir_n<20){g_ir[g_ir_n].x=bx;g_ir[g_ir_n].y=by;g_ir[g_ir_n].w=aw;g_ir[g_ir_n].h=ah;g_ir[g_ir_n].act=a;g_ir_n++;}
   }
   if(g_info_test){ gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_BG);
-    String hs="Heap:"+String(ESP.getFreeHeap()/1024)+"K  PSRAM:"+String(ESP.getFreePsram()/1024)+"K  Games:"+String(g_games.size());
+    String hs="Heap:"+String(ESP.getFreeHeap()/1024)+"K  PSRAM:"+String(ESP.getFreePsram()/1024)+"K  Games:"+String(g_games.size())+"  "+String(g_c6_ver);   // lab2-P4G7
     gfx_setCursor((VW-gfx_textWidth(hs))/2,aTop-14); gfx_print(hs); }
 }
 static void drawModeBar(){
@@ -5803,7 +5805,18 @@ static void doUnload(){
   if(svPending())svFlushStandalone();
   if(g_wireless_mode&&g_espnow_started&&g_espnow_dirty)svFetchWireless();
   hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_orig="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();g_alias=false;   // 5.9.37: drop any alias mapping
-  if(g_wireless_mode&&g_espnow_started&&espnowIsPaired())espnowSendEject();drawStatusBar();drawListAndCover();gfx_flush();}
+  if(g_wireless_mode&&g_espnow_started&&espnowIsPaired()&&!g_link_home){   // lab3-P4G7: real eject over Wi-Fi (saves pulled first)
+    gfx_fillRect(0,VH/2-24,VW,48,COL_ACCENT);gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
+    {const char*m="EJECTING ON THE DONGLE...";int tw=gfx_textWidth(m);gfx_setCursor((VW-tw)/2,VH/2-8);gfx_print(m);}gfx_flush();
+    String nm=g_sv_wl_path.length()?basenameNoExt(filenameOnly(g_sv_wl_path)):String("disk");
+    espnowSendEject();
+    drawStatusBar();drawListAndCover();gfx_flush();
+    if(g_p4_saved_secs>0)svToast("SAVED: "+nm);
+    else if(g_p4_saved_secs<0)svToast("SAVE PULL FAILED");
+    if(g_p4_eject_result==0)svToast("DONGLE NOT REACHED - not ejected there");
+    else if(g_p4_eject_result==2)svToast("DONGLE KEPT THE DISK (unsaved writes)");
+    gfx_flush(); return; }
+  drawStatusBar();drawListAndCover();gfx_flush();}
 
 // Expand the zero-RLE embedded ADF straight into the RAM-disk data area. No SD needed.
 static void diagInflate(const uint8_t*src,uint32_t slen,uint8_t*dst){
@@ -7415,6 +7428,8 @@ static void c6SelfUpdate(){
   bool haveVer = (esp_hosted_get_coprocessor_fwversion(&v)==ESP_OK);
   // Skip only if the C6 is already at 2.12.13 or newer; anything lower is offered the update.
   auto c6AtLeast=[&](int a,int b,int c){ if(v.major1!=a)return v.major1>a; if(v.minor1!=b)return v.minor1>b; return v.patch1>=c; };
+  if(haveVer) snprintf(g_c6_ver,sizeof g_c6_ver,"C6 v%d.%d.%d",v.major1,v.minor1,v.patch1); else snprintf(g_c6_ver,sizeof g_c6_ver,"C6 version unknown");
+  gLog("[c6] co-processor firmware %s (%s)\n", haveVer?g_c6_ver+3:"unknown - no answer", (haveVer&&c6AtLeast(2,12,13))?"OK, >= 2.12.13":"older than 2.12.13 - update offered if an image is present");   // lab2-P4G7
   if(haveVer && c6AtLeast(2,12,13)){ g_c6_ready=true; return; }   // 5.9.12: radio always-on; leave STA up so espnowBegin never re-inits the hosted radio (that OFF->STA re-init crashed)
 
   // Image source: an SD override wins (drop a newer c6_network_adapter_*.bin on the card),
@@ -7429,7 +7444,7 @@ static void c6SelfUpdate(){
       }
     }
   }
-  if(!useSD && c6len==0){ WiFi.mode(WIFI_OFF); return; }     // no SD image, no embedded image -> normal boot
+  if(!useSD && c6len==0){ gLog("[c6] no update image (SD %s missing, no embedded c6fw) - wireless stays off\n",C6BIN); WiFi.mode(WIFI_OFF); return; }     // no SD image, no embedded image -> normal boot
 
   auto msg=[&](const char*l1,const char*l2,uint16_t col){
     gfx_fillScreen(COL_BG);
@@ -7610,7 +7625,8 @@ void setup(){
        (unsigned long)g_img_max_kb,(unsigned long)TOTAL_SECTORS,(unsigned)SECTORS_PER_CLUSTER,
        (unsigned long)TOTAL_SECTORS*512UL,(unsigned)ESP.getFreePsram());
   build_volume(getOutputFilename(),g_mode==MODE_ADF?ADF_DEFAULT_SIZE:64);
-  espnowSetClaimAsk(claimAskUI);   // lab14s: take-over question for a shared dongle
+  espnowSetClaimAsk(claimAskUI);
+  espnowSetSavePersist(svPersistWireless);   // lab3-P4G7: saves pulled back on EJECT and before the next send   // lab14s: take-over question for a shared dongle
   if(g_wireless_mode && !g_link_home && !sdAccessReq && g_c6_ready){espnowBegin();g_espnow_started=true;}   // v5.1: not in SD access. P4: only once the C6 is confirmed up to date (c6SelfUpdate)
   if(g_cracktro>=0)drawCracktro(g_cracktro);   // CRACKTRO=OFF/NONE (-1) skips the boot demo entirely
   USB.onEvent(usbEventCB);
