@@ -51,7 +51,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.42-lab2-P4"   // lab2-P4 (= the 7" lab2+lab3+lab4 radio fixes): every dongle join starts with a 0.3 s channel-6 scan; the dongle's real Wi-Fi name (GotekOMEGA-XXXX) remembered (CONFIG.TXT XIAO_SSID=) or looked up by a quick channel-6 scan before every join, two join tries; EJECT really ejects the dongle (was a no-op on the P4) after pulling the game saves back; saves also pulled before the next disk goes to the same dongle (the save pull could never join a Webby 1.6.8+ dongle); C6 firmware version + every wireless step in gti.log; top-bar chip never says OFFLINE (no heartbeat on the P4) | 5.9.42-lab1-P4 (4 Oct 2026) = 5.9.41-lab16f-P4, renamed only (no code change): the NEO look, first P4 lab release on the web flasher | lab16f-P4: PORTRAIT REEL RUNS UP AND DOWN - covers stacked vertically (next one below), swipe up/down, coast + snap as before; round up/down arrows on the right; tap above/below the centre cover steps one; title / DISK pills / dots in a fixed strip above the bottom buttons. Landscape unchanged | lab16e-P4: portrait reel centred - cover + title + disks + dots sit in the middle of the screen (was at the top with empty space under it); landscape unchanged | lab16d-P4: game panel cover is BIG (full panel width, picture centred), favourite = star badge in the cover's top-right corner (tap it), the .rtfm book button is back in its usual place on the cover's left edge (16b had moved it to a MANUAL pill), HD chip bottom-right; title + "n disks - ADF" under the cover, then the description and the DISK pills | lab16c-P4 (Mez's photos of 16b): NEO text at size 2+ is drawn bold (one pixel wider strokes) so dark text on the gold / cyan / green pills reads like the mock-up; reel covers drop the grey letterbox baked into the tile (picture cut out, frame hugs it, same cut on the micro-thumbs while it slides); long names wrap to two lines under the reel cover instead of being cut; in the game panel a long name moves under the cover, full width | lab16b-P4: NEO is the only look for now (THEME, BUTTONS and COMPACT are off the Settings list; CONFIG THEME= is ignored) and the screens follow the mock-ups: list on the LEFT in a rounded panel, A-Z strip, game panel on the RIGHT (cover, title, disks/format, FAV and MANUAL pills, description, DISK pills), bottom bar PREV / NEXT / INSERT / REEL / CONFIG; top bar 40 px with the firmware version under GOTEK GTi, tap the library name to switch library (or open categories); reel arrows; Settings = two columns of capsules + a row of action pills + BACK / PAGE / TEST TOOLS / NEXT; USER DISKS moved into Settings | lab16a-P4: NEW LOOK "NEO" (Settings > THEME > NEO, or THEME=NEO): navy-to-purple background with faint circuit lines; top bar GOTEK GTi + firmware version, library + game count, a CABLE/DONGLE state chip and a gear that opens Settings; reel: gold-framed glowing centre cover, title under it, DISK pills, page dots, bottom bar INSERT / < ALL > / LIST / ROLL; list: gold-framed selection, IN DRIVE tag, cyan INSERT; Settings: capsule rows with the value in a coloured chip, last tap outlined in gold. Other themes look and work as before | lab15q-P4 (from the 3.5" 15o + 15q): Polish (8-Bitz's text) and Czech on the screen (LANG=PL / CS, CZ accepted); the reel bar's ALL/FAV/MOST word shrinks when too long; STANDALONE banner centred on the translated word. (3.5" 15p, the GTi_Omega Wi-Fi, does not apply: the P4's C6 radio never runs an access point) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
+#define FW_VERSION "5.9.42-lab3-P4"   // lab3-P4 (kodak80, 4 Oct): MATRIX saver fills the whole width; top-left brand is the OMEGAWARE omega + GTi (was "GOTEK GTi"); SYNTHWAVE cracktro grid symmetric (was 6 lines left, 12 right) and scaled to the screen (columns were capped at 64 = 768 px of the 7"'s 1024; the 4.3" lost 32 px in landscape); gti.log now logs every disk insert / eject ([load] name, KB, mode, USB host yes/no; [eject]) and every USB host connect / disconnect ([usb]) - so "the laptop never saw it" can be read off the log | lab2-P4 (= the 7" lab2+lab3+lab4 radio fixes): every dongle join starts with a 0.3 s channel-6 scan; the dongle's real Wi-Fi name (GotekOMEGA-XXXX) remembered (CONFIG.TXT XIAO_SSID=) or looked up by a quick channel-6 scan before every join, two join tries; EJECT really ejects the dongle (was a no-op on the P4) after pulling the game saves back; saves also pulled before the next disk goes to the same dongle (the save pull could never join a Webby 1.6.8+ dongle); C6 firmware version + every wireless step in gti.log; top-bar chip never says OFFLINE (no heartbeat on the P4) | 5.9.42-lab1-P4 (4 Oct 2026) = 5.9.41-lab16f-P4, renamed only (no code change): the NEO look, first P4 lab release on the web flasher | lab16f-P4: PORTRAIT REEL RUNS UP AND DOWN - covers stacked vertically (next one below), swipe up/down, coast + snap as before; round up/down arrows on the right; tap above/below the centre cover steps one; title / DISK pills / dots in a fixed strip above the bottom buttons. Landscape unchanged | lab16e-P4: portrait reel centred - cover + title + disks + dots sit in the middle of the screen (was at the top with empty space under it); landscape unchanged | lab16d-P4: game panel cover is BIG (full panel width, picture centred), favourite = star badge in the cover's top-right corner (tap it), the .rtfm book button is back in its usual place on the cover's left edge (16b had moved it to a MANUAL pill), HD chip bottom-right; title + "n disks - ADF" under the cover, then the description and the DISK pills | lab16c-P4 (Mez's photos of 16b): NEO text at size 2+ is drawn bold (one pixel wider strokes) so dark text on the gold / cyan / green pills reads like the mock-up; reel covers drop the grey letterbox baked into the tile (picture cut out, frame hugs it, same cut on the micro-thumbs while it slides); long names wrap to two lines under the reel cover instead of being cut; in the game panel a long name moves under the cover, full width | lab16b-P4: NEO is the only look for now (THEME, BUTTONS and COMPACT are off the Settings list; CONFIG THEME= is ignored) and the screens follow the mock-ups: list on the LEFT in a rounded panel, A-Z strip, game panel on the RIGHT (cover, title, disks/format, FAV and MANUAL pills, description, DISK pills), bottom bar PREV / NEXT / INSERT / REEL / CONFIG; top bar 40 px with the firmware version under GOTEK GTi, tap the library name to switch library (or open categories); reel arrows; Settings = two columns of capsules + a row of action pills + BACK / PAGE / TEST TOOLS / NEXT; USER DISKS moved into Settings | lab16a-P4: NEW LOOK "NEO" (Settings > THEME > NEO, or THEME=NEO): navy-to-purple background with faint circuit lines; top bar GOTEK GTi + firmware version, library + game count, a CABLE/DONGLE state chip and a gear that opens Settings; reel: gold-framed glowing centre cover, title under it, DISK pills, page dots, bottom bar INSERT / < ALL > / LIST / ROLL; list: gold-framed selection, IN DRIVE tag, cyan INSERT; Settings: capsule rows with the value in a coloured chip, last tap outlined in gold. Other themes look and work as before | lab15q-P4 (from the 3.5" 15o + 15q): Polish (8-Bitz's text) and Czech on the screen (LANG=PL / CS, CZ accepted); the reel bar's ALL/FAV/MOST word shrinks when too long; STANDALONE banner centred on the translated word. (3.5" 15p, the GTi_Omega Wi-Fi, does not apply: the P4's C6 radio never runs an access point) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -3353,19 +3353,26 @@ static void crkBoing(float t){
 }
 // 6: SYNTHWAVE
 static void crkSynth(float t){
+  // lab3-P4: scaled to the screen (it was laid out for a 320-tall one: on the 7" the grid stopped half way down) and the
+  //   grid is symmetric - the old x=-6..12 put 6 lines left of centre and 12 right.
+  const float s=gH/320.0f;
   for(int y=0;y<gH;y++){float f=(float)y/gH; uint16_t col;
     if(f<0.52f) col=crk_lerp(24,11,51, 90,26,110, f/0.52f);
     else        col=crk_lerp(11,10,26, 4,4,12, (f-0.53f)/0.47f);
     gfx_fillRect(0,y,gW,1,col);}
-  for(int i=0;i<26;i++){int sx=(i*53+7)%gW, sy=(i*29)%150; gfx_drawPixel(sx,sy,TFT_WHITE);}
-  int sunx=gW/2,suny=168,sr=58;
+  const int hz=(int)(176*s);
+  { int ns=26*gW/480, sh=hz-(int)(26*s); if(sh<1)sh=1; for(int i=0;i<ns;i++){int sx=(i*53+7)%gW, sy=(i*29)%sh; gfx_drawPixel(sx,sy,TFT_WHITE);} }
+  int sunx=gW/2,suny=(int)(168*s),sr=(int)(58*s);
   for(int yy=-sr;yy<=0;yy++){int w=(int)sqrtf((float)(sr*sr-yy*yy)); gfx_fillRect(sunx-w,suny+yy,2*w,1,CRK_RGB(255,91,138));}
-  for(int i=0;i<6;i++){int yy=118+i*8; gfx_fillRect(sunx-60,yy,120,3+i,CRK_RGB(24,11,51));}
-  uint16_t grc=CRK_RGB(0,229,255); int hz=176;
-  for(int i=0;i<8;i++){int yy=hz+(int)(i*i*2.4f); if(yy<gH) gfx_hline(0,yy,gW,grc);}
-  for(int x=-6;x<=12;x++){int px=gW/2+(x*70); int x0=gW/2+(int)((px-gW/2)*0.18f); crk_line(x0,hz,px,gH,grc);}
-  crk_txtShadow(gW/2,40,"OMEGAWARE",3,CRK_RGB(49,232,255));
-  crk_txtC(gW/2,74,"RETRO FUTURE",1,CRK_RGB(255,122,176));
+  for(int i=0;i<6;i++){int yy=suny+(int)((-50+i*8)*s); int h=(int)((3+i)*s); if(h<1)h=1; gfx_fillRect(sunx-sr-2,yy,2*sr+4,h,CRK_RGB(24,11,51));}
+  uint16_t grc=CRK_RGB(0,229,255);
+  for(int i=0;i<8;i++){int yy=hz+(int)(i*i*2.4f*s); if(yy<gH) gfx_hline(0,yy,gW,grc);}
+  { const int sp=(int)(70*s); const int n=(gW/2)/sp+2;   // same count each side, enough to reach both bottom corners
+    for(int x=-n;x<=n;x++){int px=gW/2+x*sp; int x0=gW/2+(int)((px-gW/2)*0.18f); crk_line(x0,hz,px,gH,grc);} }
+  int ts=(int)(3*s+0.5f); if(ts<3)ts=3; while(ts>3&&crk_txtW("OMEGAWARE",ts)>gW-24)ts--;
+  int ss=(int)(s+0.5f); if(ss<1)ss=1;
+  crk_txtShadow(gW/2,(int)(40*s),"OMEGAWARE",ts,CRK_RGB(49,232,255));
+  crk_txtC(gW/2,(int)(40*s)+8*ts+10*ss,"RETRO FUTURE",ss,CRK_RGB(255,122,176));
   crk_scroller(t,CRK_RGB(255,79,160),8,false);
 }
 
@@ -3536,7 +3543,7 @@ static int drawWrapped(int x,int y,const String&s,int maxW,int lineH,int maxLine
   if(line.length()&&n<maxLines&&y+gh<=bottomY){gfx_setCursor(x,y);gfx_print(line);y+=lineH;}
   return y;
 }
-// lab16b-P4 NEO top bar (40 px): GOTEK GTi with the firmware version under it | library + games (tap = switch
+// lab16b-P4 NEO top bar (40 px): (omega) GTi with the firmware version under it | library + games (tap = switch
 // library, or open the categories) | CABLE/DONGLE state chip | gear (opens / closes Settings)
 #define NEO_GEAR_W 44   // tap width of the gear, top-right
 static int g_neo_ctr_x0=0,g_neo_ctr_x1=0;   // the tappable library text (list view only; 0/0 = none)
@@ -3551,9 +3558,17 @@ static void neoDotPrint(const String&s,uint16_t col){
       if(i<(int)s.length()){ int dx=text_x+9*text_size, dy=text_y+4*text_size-1; gfx_fillCircle(dx,dy,text_size>1?2:1,col); text_x+=18*text_size; }
       seg0=i+1; } }
 }
+// lab3-P4 (Mez): the OMEGAWARE omega, drawn in the 6x8 font's own pixel grid (7 rows = the capital height) at the current
+//   text size and cursor, bold like the NEO text; advances the cursor one glyph cell.
+static void gfx_printOmega(uint16_t col){
+  static const uint8_t OM[7]={0x1C,0x22,0x41,0x41,0x41,0x22,0x63};   // ..###.. .#...#. #.....# x3 .#...#. ##...##
+  const int s=text_size, bw=s+((g_neo_depth>0&&s>=2)?1:0);
+  for(int r=0;r<7;r++)for(int c=0;c<7;c++)if(OM[r]&(0x40>>c))gfx_fillRect(text_x+c*s,text_y+r*s,bw,s,col);
+  text_x+=8*s;
+}
 static void neoStatusBar(){
   gfx_fillRect(0,0,VW,STATUS_H,COL_BAR); gfx_hline(0,STATUS_H-1,VW,COL_SEP);
-  gfx_setTextSize(2); gfx_setTextColor(COL_AMBER,COL_BAR); gfx_setCursor(12,5); gfx_print("GOTEK");
+  gfx_setTextSize(2); gfx_setCursor(12,5); gfx_printOmega(COL_AMBER);   // lab3-P4: was "GOTEK" - Gotek isn't our brand, GTi already says it
   gfx_setTextColor(TFT_WHITE,COL_BAR); gfx_print(" GTi");
   int leftEnd=text_x;
   gfx_setTextSize(1); gfx_setTextColor(COL_DIM,COL_BAR); gfx_setCursor(12,STATUS_H-13); gfx_print(FW_VERSION);
@@ -5714,6 +5729,7 @@ static bool doLoadSelected(const String&adfPath){
   }
   mscAnnounce(g_alias?g_alias_sectors:TOTAL_SECTORS);
   hardAttach();g_loaded=true;g_loaded_name=basenameNoExt(filenameOnly(adfPath));g_loaded_path=loadPath;g_loaded_game_idx=g_sel;g_loaded_disk_idx=g_disk_sel;
+  gLog("[load] %s (%u KB, %s) mode=%s - USB host: %s\n",loadPath.c_str(),(unsigned)(fsz/1024),g_alias?"from the card":"RAM disk",g_wireless_mode?"WIRELESS":"STANDALONE",tud_mounted()?"connected":"none yet");   // lab3-P4
   g_loaded_orig=adfPath;g_sv_cable_rebased=false;             // lab15i
   if(g_lastused&&g_loaded_game_idx>=0&&g_loaded_game_idx<(int)g_games.size())writeLastUsed(g_files[g_games[g_loaded_game_idx].first_file_idx]);   // remember this game for next boot
   if(g_sel>=0&&g_sel<(int)g_games.size()){if(g_games[g_sel].plays<65535)g_games[g_sel].plays++;saveStats();}
@@ -5804,6 +5820,7 @@ static void doUnload(){
   // (v4.8.1: own-disk flush in any mode)
   if(svPending())svFlushStandalone();
   if(g_wireless_mode&&g_espnow_started&&g_espnow_dirty)svFetchWireless();
+  if(g_loaded)gLog("[eject] %s\n",g_loaded_path.length()?g_loaded_path.c_str():g_loaded_name.c_str());   // lab3-P4
   hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_orig="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;svDirtyReset();g_alias=false;   // 5.9.37: drop any alias mapping
   if(g_wireless_mode&&g_espnow_started&&espnowIsPaired()&&!g_link_home){   // lab3-P4G7: real eject over Wi-Fi (saves pulled first)
     gfx_fillRect(0,VH/2-24,VW,48,COL_ACCENT);gfx_setTextSize(2);gfx_setTextColor(TFT_WHITE,COL_ACCENT);
@@ -6167,9 +6184,9 @@ static void runSlideshow(std::vector<String>&pool){
 // glyph trails at ~16 fps.
 static void runMatrixRain(){
   const int CW=12, CH=16;                       // cell (text size 2)
-  int cols=gW/CW; if(cols>64)cols=64; if(cols<1)cols=1;
+  int cols=gW/CW; if(cols>128)cols=128; if(cols<1)cols=1;   // lab3-P4: was 64 (768 px) - the 7" is 1024 wide
   int rows=gH/CH; if(rows<1)rows=1;
-  int head[64], spd[64];
+  int head[128], spd[128];
   for(int c=0;c<cols;c++){ head[c]=-(int)(esp_random()%(uint32_t)(rows+1)); spd[c]=1+(int)(esp_random()%2); }
   static const char GL[]="0123456789ABCDEFGHKMNPRXZ<>[]=+*/";
   const int NG=(int)sizeof(GL)-1;
@@ -8076,6 +8093,8 @@ static void handleTap(uint16_t px,uint16_t py){
 void loop(){
   webPanelService();   // one web client + one queued DAV load per pass (merge step 2)
   { static uint32_t _sgT=0; if(g_sdg.pending_report && millis()-_sgT>2000){ _sgT=millis(); sdGuardReport(false); } }   // lab14g
+  { static uint32_t _uT=0; static int _uS=-1; if(millis()-_uT>500){ _uT=millis(); int m=tud_mounted()?1:0;   // lab3-P4: [usb] host connect / disconnect
+      if(m!=_uS){ if(_uS>=0||m) gLog("[usb] %s\n",m?"host connected (a Gotek or PC enumerated the GTi)":"host gone"); _uS=m; } } }
   if(g_espnow_link_just_established){g_espnow_link_just_established=false;
     gfx_fillRect(0,0,VW,STATUS_H,0x07E0);gfx_setTextSize(1);gfx_setTextColor(TFT_BLACK,0x07E0);
     gfx_setCursor(VW/2-57,(STATUS_H-8)/2);gfx_print(T(L_DONGLE_LINKED));gfx_flush();delay(2000);drawStatusBar();gfx_flush();}
