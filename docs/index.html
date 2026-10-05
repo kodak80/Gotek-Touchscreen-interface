@@ -45,6 +45,9 @@
   .lane p{font-size:.77rem;color:var(--dim);line-height:1.45;margin:0}
   .lane .go{position:absolute;right:1rem;top:1.15rem;color:var(--copper2);font-size:1.05rem;opacity:.45;transition:opacity .15s,transform .15s}
   .lane:hover .go{opacity:1;transform:translateX(3px)}
+  a.lane{display:block;text-decoration:none}
+  .lane.wide{grid-column:1/-1;border-color:var(--copper1)}
+  .lane.wide .tag{display:inline-block;font-size:.66rem;letter-spacing:.12em;color:#1a1200;background:var(--copper2);border-radius:3px;padding:.1rem .4rem;margin-left:.5rem;vertical-align:middle}
 
   .subdoors{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem}
   .subdoor{flex:1 1 240px;text-align:left;background:none;border:1px dashed var(--border);border-radius:5px;padding:.75rem .9rem;cursor:pointer;color:var(--dim);font-family:var(--mono);font-size:.76rem;transition:border-color .15s,color .15s}
@@ -221,6 +224,12 @@
         <h3>Flash a wireless dongle</h3>
         <p>Flash the little board that plugs into the Gotek and loads disks over the air — Super Mini, S3-Zero or XIAO.</p>
       </button>
+      <a class="lane wide" href="demo/">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="12" rx="1.5"/><path d="M10 9l4 2-4 2z" fill="currentColor"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+        <span class="go">→</span>
+        <h3>Try it in your browser <span class="tag">NEW</span></h3>
+        <p>No hardware needed: the real 3.5″ firmware running in your browser. Browse the free demo games or your own folder, insert disks, try every screen and setting.</p>
+      </a>
     </div>
     <div class="subdoors">
       <button class="subdoor" onclick="go('howto')"><b>How to use the GTi</b>First boot, loading games, covers, settings — the full guide.</button>
@@ -425,7 +434,7 @@
 
 <footer>
   Same flasher engine under the hood — <span class="eng"><b>esp-web-tools</b> over Web Serial, Chrome / Edge on desktop.</span><br>
-  Need help? Join the <a href="https://discord.gg/7gY4PKUnnf" target="_blank" rel="noopener">OMEGAWARE Discord</a> · <a href="help.html">Help &amp; guides</a> · <a href="features.html">Feature list</a> (<a href="GTi-Features.pdf">PDF</a>) · <a href="matrix.html">Feature matrix</a> · <a href="c6-update.html">C6 update path</a> · <a href="contributors.html">Contributors</a> · <a href="https://ko-fi.com/mesarim" target="_blank" rel="noopener">Donate &#9829;</a>
+  Need help? Join the <a href="https://discord.gg/7gY4PKUnnf" target="_blank" rel="noopener">OMEGAWARE Discord</a> · <a href="demo/">Try it in your browser</a> · <a href="help.html">Help &amp; guides</a> · <a href="features.html">Feature list</a> (<a href="GTi-Features.pdf">PDF</a>) · <a href="matrix.html">Feature matrix</a> · <a href="c6-update.html">C6 update path</a> · <a href="contributors.html">Contributors</a> · <a href="https://ko-fi.com/mesarim" target="_blank" rel="noopener">Donate &#9829;</a>
 </footer>
 
 <script>
