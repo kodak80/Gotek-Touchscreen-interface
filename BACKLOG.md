@@ -61,3 +61,5 @@ where it was decided. Move an item to Done with its commit or branch once it lan
 - The firmware/*/build/ .bins stay committed as the release library people pick from and
   downgrade to. (How to keep stale build output out of them is still open: relay #34.)
 - Every setting must be reachable both in CONFIG.TXT and on the Settings screen.
+- Toolchain: arduino-esp32 core 3.3.12 on both sides (Mez asked, relay #63; Dimitri updated
+  6 Oct 2026, Gotek_JC3248 compiles clean on it).

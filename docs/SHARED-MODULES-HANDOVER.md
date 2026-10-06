@@ -130,7 +130,7 @@ changed = old server).
 Both sketches build with the BUILDING.md settings
 (`FlashSize=16M,PSRAM=opi,PartitionScheme=huge_app,USBMode=default,CDCOnBoot=default`;
 JC4827 additionally needs the `bb_captouch` library). Core: arduino-esp32
-3.3.11 on both sides.
+3.3.12 on both sides.
 
 ---
 
