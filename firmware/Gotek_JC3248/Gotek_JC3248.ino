@@ -49,7 +49,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "A600-lab1-JC3248"  // A600-lab1-JC3248 (Mez, 5 Oct): LANGUAGE and THEME open a pick page in Settings - every choice as its own button (languages in their own name, themes in their own colour), tap one and you are back where you were; the current one is marked > < | was A600 (4 Oct 2026, pre-Kickstart release) = 5.9.41-lab15q-JC3248, renamed only (no code change) | lab15q: Polish screen text corrected by 8-Bitz (ROLKA, TERAZ GRA, WSZYSTKIE, ULUBIONE...); the reel bar's ALL/FAV/MOST word shrinks when it is too long for its button | lab15p: ESP-NOW mode - the GTi's own Wi-Fi is now GTi_Omega-XXXX, password gotekXXXX (was an OPEN, unnamed ESP_xxxxxx), and serves the GTi web page at 192.168.4.1; Settings shows the name + password | lab15o: Polish (LANG=PL) and Czech (LANG=CS) on the screen + NL/PL/CS in the web page's language list; the STANDALONE banner centres on the translated word | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j: tap the game text in the list (title + description) = the whole .nfo full-screen in the manual reader (scroll, SIZE, TOP, CLOSE) | lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
+#define FW_VERSION "A600-lab1-JC3248-hfe1"  // hfe1-JC3248 (kodak80, 13 Oct): WIRELESS HFE OF ANY SIZE - a disk bigger than the RAM disk (BIGDISK) is no longer TOO BIG for a dongle: the GTi's own USB mounts it from the card like STANDALONE and the dongle gets it streamed straight off the card (the dongle's own size is the limit: XIAO Webby hfe3 6 MB); dongle saves for images over 1 MB are taken back (the save fetch refused maps over 256 bytes = 1 MB, so every HFE / HD ADF save stayed on the dongle; now up to 8 MB); GENERIC saves on the GTi's own USB in Wireless mode | A600-lab1-JC3248 (Mez, 5 Oct): LANGUAGE and THEME open a pick page in Settings - every choice as its own button (languages in their own name, themes in their own colour), tap one and you are back where you were; the current one is marked > < | was A600 (4 Oct 2026, pre-Kickstart release) = 5.9.41-lab15q-JC3248, renamed only (no code change) | lab15q: Polish screen text corrected by 8-Bitz (ROLKA, TERAZ GRA, WSZYSTKIE, ULUBIONE...); the reel bar's ALL/FAV/MOST word shrinks when it is too long for its button | lab15p: ESP-NOW mode - the GTi's own Wi-Fi is now GTi_Omega-XXXX, password gotekXXXX (was an OPEN, unnamed ESP_xxxxxx), and serves the GTi web page at 192.168.4.1; Settings shows the name + password | lab15o: Polish (LANG=PL) and Czech (LANG=CS) on the screen + NL/PL/CS in the web page's language list; the STANDALONE banner centres on the translated word | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j: tap the game text in the list (title + description) = the whole .nfo full-screen in the manual reader (scroll, SIZE, TOP, CLOSE) | lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -5114,31 +5114,21 @@ static bool doLoadSelected(const String&adfPath){
   if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(6,STATUS_H+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
   uint32_t fsz=(uint32_t)stLoad.st_size;
   uint32_t copied=0;
-  if(g_wireless_mode){
-    // ── WIRELESS: unchanged. The dongle receives the image bytes out of
+  if(g_wireless_mode && fsz<=MAX_FILE_BYTES){   // hfe1: bigger images take the alias path below and are streamed to the dongle
+    // ── WIRELESS, image fits the RAM disk: unchanged. The dongle receives the image bytes out of
     //    g_disk (espnowSendDisk reads from it), so it has to be copied there,
-    //    and the BIGDISK size remains the hard ceiling for anything sent by radio.
-    if(fsz>MAX_FILE_BYTES){
-      f.close();
-      gfx_fillRect(0,STATUS_H,COVER_W,VH-STATUS_H-BOTTOM_H,COL_PANEL);
-      gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+16);gfx_print(T(L_TOO_BIG));
-      gfx_setTextColor(COL_LIT,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+30);gfx_print(String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB");
-      gfx_setCursor(6,STATUS_H+44);gfx_print(T(L_HD_NO_WIRELESS));
-      gfx_setTextColor(COL_DIM,COL_PANEL);
-      gfx_setCursor(6,STATUS_H+58);gfx_print(T(L_USE_CABLE));
-      gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
-    }
+    //    hfe1: an image bigger than the RAM disk no longer stops here ("TOO BIG"): it is
+    //    mounted from the card like STANDALONE and streamed to the dongle from the card.
     g_alias=false;
     {String pn=presentName(adfPath);build_volume(pn.c_str(),fsz);}   // v5.2: GEN keeps the real name+ext so FlashFloppy detects the format; lab14q: LONGNAME
     uint8_t*dst=g_disk+DATA_LBA*512;uint8_t*buf=(uint8_t*)malloc(16384);uint32_t remain=fsz;
     while(remain&&buf){size_t n=remain>16384?16384:remain;int rd=f.read(buf,n);if(rd<=0)break;memcpy(dst+copied,buf,rd);remain-=rd;copied+=rd;}
     if(buf)free(buf);f.close();
     // v4.8.0: fresh disk in the RAM disk = fresh save tracking
-    g_sv_img_size=(g_mode==MODE_GEN)?0:fsz;svDirtyReset();   // v5.2: GEN has no Amiga save-writeback (0 = no dirty tracking)
+    g_sv_img_size=fsz;svDirtyReset();   // hfe1: GENERIC too (HFE, ST, IMG...) - the GTi's own USB copy saves like standalone (lab15c); v5.2 had 0 = no tracking for GEN
   } else {
-    // ── STANDALONE: ALIAS, always, any size (5.9.37). Nothing is copied; the
+    // ── STANDALONE, and (hfe1) WIRELESS with an image bigger than the RAM disk:
+    //    ALIAS, always, any size (5.9.37). Nothing is copied; the
     //    data area IS the file on the card. g_disk holds the FAT12 metadata and
     //    acts as the write overlay for saves (see onRead / onWrite).
     f.close();
@@ -5184,6 +5174,7 @@ static bool doLoadSelected(const String&adfPath){
     { String fn = (g_mode==MODE_GEN) ? filenameOnly(adfPath)
                                      : (basenameNoExt(filenameOnly(adfPath)) + (g_mode==MODE_ADF ? ".adf" : ".dsk"));
       espnowSetFlingName(fn); }
+    espnowSetSendFile(g_alias?loadPath:String(""));   // hfe1: aliased = not in g_disk - the dongle gets it straight off the card
     if(mcN>0&&g_hivemind){                                  // multicast: fan the disk out to every MuCa- dongle in turn (v4.8.1: only when HIVEMIND=ON)
       g_sv_wl_path="";g_sv_wl_loadid=0;g_sv_wl_tag="";g_sv_wl_orig="";   // Hivemind saves: PINNED — no writeback mapping for multicast
       for(int i=0;i<mcN;i++){
@@ -5203,6 +5194,7 @@ static bool doLoadSelected(const String&adfPath){
         g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;g_sv_wl_orig=adfPath;g_sv_wl_tag=wlTag;   // lab15i
       } else if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
     }
+    espnowSetSendFile("");                                   // hfe1: back to g_disk for anything else
   }
   drawStatusBar();drawListAndCover();gfx_flush();return true;
 }

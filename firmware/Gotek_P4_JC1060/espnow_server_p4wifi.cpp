@@ -346,7 +346,7 @@ static int pullSavesOnLink(const String& ip){
     uint32_t loadId =(uint32_t)hdr[4]|((uint32_t)hdr[5]<<8)|((uint32_t)hdr[6]<<16)|((uint32_t)hdr[7]<<24);
     uint32_t imgSz  =(uint32_t)hdr[8]|((uint32_t)hdr[9]<<8)|((uint32_t)hdr[10]<<16)|((uint32_t)hdr[11]<<24);
     uint16_t mapLen =(uint16_t)hdr[12]|((uint16_t)hdr[13]<<8);
-    bool okMap = (mapLen<=1024);
+    bool okMap = (mapLen<=2048);   // hfe1: 2048 = 8 MB covers the XIAO hfe3 6 MB disk (1534-byte map); was 1024 = 4 MB
     if (okMap && mapLen>0) { mapBuf=(uint8_t*)malloc(mapLen); okMap = mapBuf && readFullP(client,mapBuf,mapLen,5000); }
     uint32_t nSec=0; if (okMap && mapBuf) for(uint32_t i=0;i<(uint32_t)mapLen*8;i++) if((mapBuf[i>>3]>>(i&7))&1) nSec++;
     bool dataOk = okMap;
@@ -367,6 +367,35 @@ static int pullSavesOnLink(const String& ip){
   return result;
 }
 
+
+// hfe1: the image can come from a card file instead of the RAM disk. A disk bigger than the RAM disk
+// (BIGDISK) is mounted on the GTi's own USB as an alias of the card file, so it is not in g_disk -
+// it is streamed to the dongle from the file. "" = from g_disk (every other send, as before).
+static String _sendFile = "";
+void espnowSetSendFile(const String& sdPath){ _sendFile = sdPath; }
+static uint32_t sendImageBytes(WiFiClient& c, uint32_t size){
+  uint32_t sent = 0;
+  if (_sendFile.length()) {
+    File f = SD_MMC.open(_sendFile.c_str(), FILE_READ);
+    if (!f) return 0;
+    const size_t BUF = 16384; uint8_t* b = (uint8_t*)malloc(BUF);
+    if (!b) { f.close(); return 0; }
+    while (sent < size) {
+      size_t n = min((uint32_t)BUF, size - sent);
+      int rd = f.read(b, n); if (rd <= 0) break;
+      size_t off = 0;
+      while (off < (size_t)rd) { size_t w = c.write(b + off, rd - off); if (!w) break; off += w; }
+      sent += off; if (off < (size_t)rd) break;
+    }
+    free(b); f.close();
+    return sent;
+  }
+  const uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
+  const size_t BUF = 4096;
+  while (sent < size) { size_t n = min((uint32_t)BUF, size - sent); size_t w = c.write(src + sent, n); if (!w) break; sent += w; }
+  return sent;
+}
+
 static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uint32_t connectTimeoutMs, bool claim) {
   String ip = String(ipc && ipc[0] ? ipc : DONGLE_AP_IP);
 
@@ -384,11 +413,11 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
     WiFi.disconnect(); g_espnow_xiao_error = true; return false;
   }
 
-  uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
   uint8_t hdr[4] = { (uint8_t)(size>>24),(uint8_t)(size>>16),(uint8_t)(size>>8),(uint8_t)size };
   client.write(hdr, 4);
-  uint32_t sent = 0; const size_t BUF = 4096; uint32_t ts=millis();
-  while (sent < size) { size_t n = min((uint32_t)BUF, size-sent); size_t w = client.write(src+sent, n); if(!w){ P4LOG("[P4WIFI] write err at %lu bytes\n",(unsigned long)sent); break; } sent += w; }
+  uint32_t ts=millis();
+  uint32_t sent = sendImageBytes(client, size);   // hfe1: g_disk, or streamed off the card for a disk bigger than the RAM disk
+  if (sent < size) P4LOG("[P4WIFI] write err at %lu bytes%s\n",(unsigned long)sent, _sendFile.length() ? " (from the card)" : "");
   client.clear();
   P4LOG("[P4WIFI] sent %lu of %lu bytes in %lu ms\n",(unsigned long)sent,(unsigned long)size,(unsigned long)(millis()-ts));
 
@@ -448,11 +477,9 @@ bool espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, ui
       tcpSendSetName(ip.c_str());   // wireless DSK fix: real filename+ext for the fling
       WiFiClient client;
       if (client.connect(ip.c_str(), DONGLE_TCP_PORT)) {
-        uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
         uint8_t hdr[4] = { (uint8_t)(size>>24),(uint8_t)(size>>16),(uint8_t)(size>>8),(uint8_t)size };
         client.write(hdr, 4);
-        uint32_t sent = 0; const size_t BUF = 4096;
-        while (sent < size) { size_t n = min((uint32_t)BUF, size-sent); size_t w = client.write(src+sent, n); if(!w) break; sent += w; }
+        uint32_t sent = sendImageBytes(client, size);   // hfe1: g_disk or the card file
         client.clear();
         t0 = millis(); while (!client.available() && millis()-t0 < 10000) delay(10);
         if (client.available()) {
