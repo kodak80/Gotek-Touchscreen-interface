@@ -52,7 +52,7 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.4-xiao"   // 1.6.4-xiao: brought level with SuperMini Webby-1.6.4 (DSK/GENERIC keep their extension over wireless, LED HAL + LED=OFF); same number = same features
+#define FW_VERSION     "Webby-1.6.4-xiao-hfe2"   // hfe2: HFE mounts under its raw sent filename (VFAT long name, ext forced .hfe). hfe1: 4.5 MB ramdisk (DD + HD HFE fit), HFE header sniff names the FAT file .HFE, web pages accept .hfe. 1.6.4-xiao: brought level with SuperMini Webby-1.6.4 (DSK/GENERIC keep their extension over wireless, LED HAL + LED=OFF)
 #define ESPNOW_CHANNEL 6
 // ── Board profile ──────────────────────────────────────────
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -126,24 +126,32 @@ struct PktStatus { uint8_t type; uint8_t loaded; uint32_t load_id; uint32_t imag
 #pragma pack(pop)
 
 // FAT12 geometry
-#define SECTOR_SIZE      512
-#define TOTAL_SECTORS    3584   // HD: 1.75MB RAM disk (holds a 1.76MB HD ADF + FAT); leaves ~256KB PSRAM free on a 2MB board. Do NOT set to the full 2MB (4096) — ps_malloc can't take 100% of PSRAM.
+// hfe1: the XIAO S3R8 has 8 MB OPI PSRAM, so the RAM disk is 4.5 MB - enough for an HFE
+// image (80-track DD ~2.0 MB, 84-track DD ~2.1 MB, HD ~4.0 MB) as well as any ADF/DSK.
+// Size is picked at boot: 4.5 MB if PSRAM gives it, else the old 1.75 MB (HD ADF) disk.
+// 2 KB clusters keep both sizes FAT12 (2300 / 892 clusters); an 8-sector FAT holds 2730.
+#define SECTOR_SIZE         512
+#define TOTAL_SECTORS_BIG   9216   // 4.5 MB
+#define TOTAL_SECTORS_SMALL 3584   // 1.75 MB fallback (holds a 1.76 MB HD ADF)
+static uint32_t TOTAL_SECTORS = TOTAL_SECTORS_BIG;   // set in setup() from what PSRAM allowed
 #define RESERVED_SECTORS 1
-#define SECTORS_PER_FAT  6
+#define SECTORS_PER_FAT  8
 #define NUM_FATS         1
-#define SECTORS_PER_CLUSTER 2   // HD: 1KB clusters -> ~2042 clusters, safely FAT12
+#define SECTORS_PER_CLUSTER 4
 #define ROOT_ENTRIES     64
 #define ROOT_DIR_SECTORS 4
-#define DATA_LBA         11
-#define MAX_FILE_BYTES   ((uint32_t)(TOTAL_SECTORS-DATA_LBA)*SECTOR_SIZE)
+#define DATA_LBA         (RESERVED_SECTORS + NUM_FATS*SECTORS_PER_FAT + ROOT_DIR_SECTORS)   // = 13
+// whole clusters only, so the file's last cluster never runs past the end of the volume
+#define MAX_FILE_BYTES   ((uint32_t)(((TOTAL_SECTORS-DATA_LBA)/SECTORS_PER_CLUSTER)*SECTORS_PER_CLUSTER)*SECTOR_SIZE)
 #define ADF_DEFAULT_SIZE 901120
 
 static uint8_t* g_disk = nullptr;
 
-// Save-writeback state (unchanged from base)
+// Save-writeback state (unchanged from base). Bitmaps are sized for the biggest disk.
+#define IMG_CAP_SECTORS (TOTAL_SECTORS_BIG - DATA_LBA)
 #define IMG_MAX_SECTORS (TOTAL_SECTORS - DATA_LBA)
-static uint8_t  g_dirty[(IMG_MAX_SECTORS+7)/8];
-static uint8_t  g_snap [(IMG_MAX_SECTORS+7)/8];
+static uint8_t  g_dirty[(IMG_CAP_SECTORS+7)/8];
+static uint8_t  g_snap [(IMG_CAP_SECTORS+7)/8];
 static volatile uint16_t g_dirty_count   = 0;
 static volatile uint32_t g_last_write_ms = 0;
 static volatile uint32_t g_total_writes  = 0;
@@ -260,7 +268,11 @@ static void fat12_set(uint8_t*fat,uint16_t cl,uint16_t v){
 // controls whether the data region is cleared too. WEBBY streams the file straight
 // into the data area first, then lays the metadata with wipeAll=false so the bytes
 // already written survive. The base path uses wipeAll=true (fresh volume).
-static void build_volume_ex(const char* outName, uint32_t fsz, bool wipeAll) {
+// hfe2: `longName` (optional) is written in front of the 8.3 entry as VFAT long-name
+// entries - the same scheme as the GTi's LONGNAME=ON (build_root in Gotek_P4_JC1060).
+// FlashFloppy reads the long name when present (and takes the format from ITS extension),
+// and shows it on an OLED/LCD. The 8.3 entry becomes the alias NAME~1.EXT.
+static void build_volume_ex(const char* outName, uint32_t fsz, bool wipeAll, const char* longName = nullptr) {
   if (fsz>MAX_FILE_BYTES) fsz=MAX_FILE_BYTES;
   memset(g_disk, 0, (wipeAll ? (size_t)TOTAL_SECTORS*SECTOR_SIZE : (size_t)DATA_LBA*SECTOR_SIZE));
   uint8_t* bs=g_disk;
@@ -281,8 +293,34 @@ static void build_volume_ex(const char* outName, uint32_t fsz, bool wipeAll) {
   size_t nl=dot?(size_t)(dot-outName):strlen(outName);
   for(size_t i=0;i<nl&&i<8;i++) n[i]=toupper(outName[i]);
   if(dot) for(size_t i=0;i<3&&dot[1+i];i++) e[i]=toupper(dot[1+i]);
-  memcpy(&root[0],n,8);memcpy(&root[8],e,3);
-  root[11]=0x20;wr16(root,26,2);wr32(root,28,fsz);
+  uint8_t* sfn=root;
+  if(longName && longName[0]){
+    int ni=0; while(ni<8 && n[ni]!=' ') ni++;
+    int keep=ni<6?ni:6; n[keep]='~'; n[keep+1]='1'; for(int i=keep+2;i<8;i++) n[i]=' ';   // alias NAME~1.EXT
+    uint16_t u[255]; int ul=0;                          // the name as UCS-2 (UTF-8 decoded; anything else -> '_')
+    for(const uint8_t* p=(const uint8_t*)longName; *p && ul<255; ){
+      uint32_t cp;
+      if(*p<0x80){ cp=*p++; }
+      else if((*p&0xE0)==0xC0 && (p[1]&0xC0)==0x80){ cp=((uint32_t)(p[0]&0x1F)<<6)|(p[1]&0x3F); p+=2; }
+      else if((*p&0xF0)==0xE0 && (p[1]&0xC0)==0x80 && (p[2]&0xC0)==0x80){ cp=((uint32_t)(p[0]&0x0F)<<12)|((uint32_t)(p[1]&0x3F)<<6)|(p[2]&0x3F); p+=3; }
+      else { cp='_'; p++; while((*p&0xC0)==0x80) p++; }
+      if(cp<0x20||cp=='/'||cp=='\\'||cp==':'||cp=='*'||cp=='?'||cp=='"'||cp=='<'||cp=='>'||cp=='|') cp='_';   // not legal in a VFAT name
+      u[ul++]=(uint16_t)cp;
+    }
+    int cnt=(ul+12)/13; if(cnt<1) cnt=1;                // <=20 entries; the root has 64 slots
+    uint8_t sn[11]; memcpy(sn,n,8); memcpy(sn+8,e,3);
+    uint8_t sum=0; for(int i=0;i<11;i++) sum=(uint8_t)(((sum&1)<<7)+(sum>>1)+sn[i]);
+    static const uint8_t off[13]={1,3,5,7,9,14,16,18,20,22,24,28,30};
+    for(int k=0;k<cnt;k++){                             // highest part first, part 1 just before the 8.3 entry
+      int ord=cnt-k; uint8_t* d=root+k*32;
+      d[0]=(uint8_t)(ord|(k==0?0x40:0)); d[11]=0x0F; d[13]=sum;
+      for(int jj=0;jj<13;jj++){ int ci=(ord-1)*13+jj; uint16_t ch= ci<ul ? u[ci] : (ci==ul ? 0x0000 : 0xFFFF);
+        d[off[jj]]=(uint8_t)(ch&0xFF); d[off[jj]+1]=(uint8_t)(ch>>8); }
+    }
+    sfn=root+cnt*32;
+  }
+  memcpy(&sfn[0],n,8);memcpy(&sfn[8],e,3);
+  sfn[11]=0x20;wr16(sfn,26,2);wr32(sfn,28,fsz);
 }
 static void build_volume(const char* outName, uint32_t fsz){ build_volume_ex(outName,fsz,true); }
 
@@ -319,6 +357,34 @@ static String to83keepext(const String& in){
     if((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')) ext += (char)toupper(c); } }
   if(ext.length()==0) ext="ADF";
   return base + "." + ext;
+}
+
+// hfe1: HxC HFE images start with "HXCPICFE" (v1/v2) or "HXCHFEV3" (v3). FlashFloppy picks
+// the format from the extension, so an HFE that arrives as DISK.ADF (no CMD_SET_NAME from an
+// older panel, or an ADF-mode library renaming it .adf) would fail to mount. If the bytes say
+// HFE, make the FAT name say .HFE - whatever name it came with.
+static bool isHfeImage(const uint8_t* p, uint32_t n){
+  return n >= 512 && (memcmp(p,"HXCPICFE",8)==0 || memcmp(p,"HXCHFEV3",8)==0);
+}
+static String fatNameForContent(const String& fatName, const uint8_t* data, uint32_t n){
+  if (!isHfeImage(data, n)) return fatName;
+  int d = fatName.lastIndexOf('.');
+  String base = d > 0 ? fatName.substring(0, d) : fatName;
+  return base + ".HFE";
+}
+// hfe2: an HFE is presented under the raw filename it was sent with (as a VFAT long name),
+// not DISK.ADF / an 8.3 mangle. Returns "" when this isn't an HFE or no name was sent (the
+// 8.3 DISK.HFE from fatNameForContent is all there is then). The long name's extension is
+// what FlashFloppy goes by, so it is forced to .hfe if the sender labelled it otherwise.
+static String hfeLongName(const String& raw, const uint8_t* data, uint32_t n){
+  String nm = raw; int sl = nm.lastIndexOf('/'); if (sl >= 0) nm = nm.substring(sl+1, nm.length());
+  if (nm.length() == 0) return String("");
+  int d = nm.lastIndexOf('.');
+  String ext = d > 0 ? nm.substring(d+1, nm.length()) : String("");
+  bool extHfe = ext.length()==3 && (ext[0]|0x20)=='h' && (ext[1]|0x20)=='f' && (ext[2]|0x20)=='e';
+  if (!extHfe && !isHfeImage(data, n)) return String("");
+  if (!extHfe) nm = (d > 0 ? nm.substring(0, d) : nm) + ".hfe";
+  return nm;
 }
 
 static String macToStr(const uint8_t* mac) {
@@ -634,6 +700,13 @@ static void handleTCPClient(WiFiClient& client) {
   }
   free(buf);
   if (received == size) {
+    // hfe1: the volume was laid before any data arrived; if the bytes are HFE and the
+    // name isn't, re-lay just the metadata (wipeAll=false keeps the received data).
+    // hfe2: an HFE also gets the raw sent filename as its long name.
+    { String byContent = fatNameForContent(fatName, dst, size);
+      String longN = hfeLongName(g_next_name, dst, size);
+      if (byContent != fatName || longN.length()) {
+        fatName = byContent; build_volume_ex(fatName.c_str(), size, false, longN.length() ? longN.c_str() : nullptr); } }
     g_load_id++; g_image_size = size; dirtyReset();
     { String pretty = g_next_name.length() ? g_next_name : String("DISK.ADF");   // #24/1.6.3: pretty display name (extension stripped)
       int d = pretty.lastIndexOf('.'); if (d > 0) pretty = pretty.substring(0, d);
@@ -679,6 +752,7 @@ static String statusJson(){
   s += ",\"heap\":"; s += String((unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));   // HD test
   s += ",\"psram\":"; s += String((unsigned)ESP.getFreePsram());
   s += ",\"disk\":"; s += String((unsigned)((uint32_t)TOTAL_SECTORS*SECTOR_SIZE));
+  s += ",\"max\":"; s += String((unsigned)MAX_FILE_BYTES);   // hfe1: largest image this dongle takes (the page checks it)
   s += "}";
   return s;
 }
@@ -686,7 +760,11 @@ static String statusJson(){
 // Finalize a browser upload: lay metadata over the streamed data, re-insert.
 static void webFinishLoad(){
   uint32_t size = g_up_recv;
-  build_volume_ex(to83keepext(g_up_name).c_str(), size, false);   // #24/1.6.3: 8.3-mangle keeping the real extension so FF detects DSK/ADF/etc; full name kept in g_loaded_name (below)
+  // #24/1.6.3: 8.3-mangle keeping the real extension so FF detects DSK/ADF/etc; full name kept in g_loaded_name (below)
+  // hfe1: HFE bytes -> .HFE.  hfe2: an HFE keeps its raw filename (VFAT long name).
+  { const uint8_t* data = g_disk + DATA_LBA*SECTOR_SIZE;
+    String longN = hfeLongName(g_up_name, data, size);
+    build_volume_ex(fatNameForContent(to83keepext(g_up_name), data, size).c_str(), size, false, longN.length() ? longN.c_str() : nullptr); }
   g_image_size = size; g_load_id++; dirtyReset();
   if (g_disk_loaded) hardDetach();
   hardAttach(); g_disk_loaded = true; g_next_status_ms = 0; ledBlue(true); ledActivity();
@@ -710,7 +788,7 @@ static void handleUpload(){
   }
 }
 static void handleUploadDone(){
-  if (g_up_overflow) { server.send(413,"application/json","{\"ok\":false,\"err\":\"image too big for the 1MB ramdisk (DD only)\"}"); return; }
+  if (g_up_overflow) { server.send(413,"application/json","{\"ok\":false,\"err\":\"image too big for this dongle (max "+String((unsigned)(MAX_FILE_BYTES/1024))+" KB)\"}"); return; }
   if (g_up_recv == 0) { server.send(400,"application/json","{\"ok\":false,\"err\":\"empty upload\"}"); return; }
   g_loaded_name = g_up_name;
   webFinishLoad();
@@ -813,8 +891,8 @@ footer{text-align:center;color:#5b6076;font-size:11px;margin-top:22px}.hidden{di
   <div class="meta" style="min-width:0"><div class="name" id="dname" data-i18n="no_disk">-- no disk --</div><div class="sub" id="dsub" data-i18n="load_ins">Load an ADF to insert it</div></div>
   <button class="btn ghost eject" id="ejectBtn" onclick="ejectDisk()" disabled data-i18n="eject">Eject</button></div></div>
  <div class="card"><h2 data-i18n="load_img">Load image</h2>
-  <label class="drop" id="drop" for="file"><div class="plus">+</div><div class="big" data-i18n="tap_choose">Tap to choose an ADF</div><div class="small"><span data-i18n="drag_hint">or drag a file here</span> &middot; .adf .adz .img</div></label>
-  <input type="file" id="file" accept=".adf,.adz,.img" onchange="picked(this.files[0])">
+  <label class="drop" id="drop" for="file"><div class="plus">+</div><div class="big" data-i18n="tap_choose">Tap to choose an ADF</div><div class="small"><span data-i18n="drag_hint">or drag a file here</span> &middot; .adf .adz .img .dsk .hfe</div></label>
+  <input type="file" id="file" accept=".adf,.adz,.img,.dsk,.hfe" onchange="picked(this.files[0])">
   <div class="prog" id="prog"><i id="bar"></i></div><div class="note" data-i18n="dd_note">DD image up to ~880&nbsp;KB &middot; one disk at a time</div></div>
 </section>
 <section id="vWifi" class="hidden">
@@ -839,6 +917,7 @@ function san(s){var o='',last='';for(var i=0;i<s.length&&o.length<24;i++){var c=
 function toast(m,e){var t=document.getElementById('toast');t.textContent=m;t.classList.toggle('err',!!e);t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('show')},2600);}
 function view(v){document.getElementById('vDisk').classList.toggle('hidden',v!=='disk');document.getElementById('vWifi').classList.toggle('hidden',v!=='wifi');document.getElementById('tabDisk').classList.toggle('on',v==='disk');document.getElementById('tabWifi').classList.toggle('on',v==='wifi');}
 function paint(s){
+ if(s&&s.max)window.__max=s.max;
  var pill=document.getElementById('conntxt'),dot=document.getElementById('condot');
  if(s.mode==='wifi'){pill.textContent=s.ip||'gotekomega.local';dot.classList.remove('ap');}else{pill.textContent='ESP-NOW / AP';dot.classList.add('ap');}
  var ab=document.getElementById('addrbox');
@@ -850,8 +929,8 @@ function paint(s){
 function poll(){fetch('/status').then(function(r){return r.json()}).then(paint).catch(function(){});}
 function picked(f){
  if(!f)return;
- if(!/\.(adf|adz|img)$/i.test(f.name)){toast('Not an ADF (.adf .adz .img)',1);return;}
- if(f.size>1048576){toast('HD image too big - DD only (~880 KB)',1);return;}
+ if(!/\.(adf|adz|img|dsk|hfe)$/i.test(f.name)){toast('Not a disk image (.adf .adz .img .dsk .hfe)',1);return;}
+ if(window.__max&&f.size>window.__max){toast('Too big for this dongle (max '+fmt(window.__max)+')',1);return;}
  var fd=new FormData();fd.append('f',f,f.name);
  var x=new XMLHttpRequest();x.open('POST','/upload');
  var prog=document.getElementById('prog'),bar=document.getElementById('bar');prog.style.display='block';bar.style.width='0';
@@ -948,7 +1027,7 @@ static void apiDiskUnload(){
   server.send(200,"application/json","{\"status\":\"ok\"}");
 }
 static void apiGamesUploadDone(){
-  if (g_up_overflow) { server.send(413,"application/json","{\"error\":\"image too big for the HD ramdisk\"}"); return; }
+  if (g_up_overflow) { server.send(413,"application/json","{\"error\":\"image too big for this dongle (max "+String((unsigned)(MAX_FILE_BYTES/1024))+" KB)\"}"); return; }
   if (g_up_recv == 0) { server.send(400,"application/json","{\"error\":\"empty upload\"}"); return; }
   g_loaded_name = g_up_name;
   webFinishLoad();
@@ -1253,8 +1332,13 @@ void setup() {
   _rxQueue = xQueueCreate(32, sizeof(RxPkt));
 
   // PSRAM ramdisk
+  // hfe1: 4.5 MB if PSRAM has it (any S3R8/N8R8 board), else the old 1.75 MB disk.
+  TOTAL_SECTORS = TOTAL_SECTORS_BIG;
   g_disk = (uint8_t*)ps_malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE);
+  if (!g_disk) { TOTAL_SECTORS = TOTAL_SECTORS_SMALL; g_disk = (uint8_t*)ps_malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE); }
   if (!g_disk) g_disk = (uint8_t*)malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE);
+  Serial.printf("[disk] RAM disk %u KB, max image %u KB%s\n", (unsigned)(TOTAL_SECTORS/2), (unsigned)(MAX_FILE_BYTES/1024),
+                TOTAL_SECTORS==TOTAL_SECTORS_BIG ? " (HFE OK)" : " (small: HFE won't fit - is PSRAM set to OPI?)");
   if (!g_disk) { Serial.println("[FATAL] RAM disk alloc failed \u2014 enable PSRAM (OPI - the XIAO S3R8 is octal) in the board menu, or the disk is too big for this board's PSRAM"); oledStatus("FATAL: no RAM","Set PSRAM=OPI","in board menu",""); while(true){ledRed(true);delay(200);ledRed(false);delay(200);} }
   build_volume("DISK.ADF", ADF_DEFAULT_SIZE);
 
