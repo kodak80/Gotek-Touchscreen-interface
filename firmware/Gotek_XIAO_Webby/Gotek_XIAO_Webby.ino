@@ -52,7 +52,7 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.4-xiao-hfe2"   // hfe2: HFE mounts under its raw sent filename (VFAT long name, ext forced .hfe). hfe1: 4.5 MB ramdisk (DD + HD HFE fit), HFE header sniff names the FAT file .HFE, web pages accept .hfe. 1.6.4-xiao: brought level with SuperMini Webby-1.6.4 (DSK/GENERIC keep their extension over wireless, LED HAL + LED=OFF)
+#define FW_VERSION     "Webby-1.6.4-xiao-hfe3"   // hfe3: 6 MB RAM disk (HFE up to ~6 MB; falls back to 4.5 MB, then 1.75 MB), 12-sector FAT. hfe2: HFE mounts under its raw sent filename (VFAT long name, ext forced .hfe). hfe1: 4.5 MB ramdisk (DD + HD HFE fit), HFE header sniff names the FAT file .HFE, web pages accept .hfe. 1.6.4-xiao: brought level with SuperMini Webby-1.6.4 (DSK/GENERIC keep their extension over wireless, LED HAL + LED=OFF)
 #define ESPNOW_CHANNEL 6
 // ── Board profile ──────────────────────────────────────────
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -126,21 +126,23 @@ struct PktStatus { uint8_t type; uint8_t loaded; uint32_t load_id; uint32_t imag
 #pragma pack(pop)
 
 // FAT12 geometry
-// hfe1: the XIAO S3R8 has 8 MB OPI PSRAM, so the RAM disk is 4.5 MB - enough for an HFE
-// image (80-track DD ~2.0 MB, 84-track DD ~2.1 MB, HD ~4.0 MB) as well as any ADF/DSK.
-// Size is picked at boot: 4.5 MB if PSRAM gives it, else the old 1.75 MB (HD ADF) disk.
-// 2 KB clusters keep both sizes FAT12 (2300 / 892 clusters); an 8-sector FAT holds 2730.
+// hfe1/hfe3: the XIAO S3R8 has 8 MB OPI PSRAM, so the RAM disk is 6 MB - enough for an HFE
+// image (80-track DD ~2.0 MB, HD ~4.0 MB, big high-rate / v3 dumps up to ~6 MB) and any ADF/DSK.
+// Size is picked at boot: 6 MB if PSRAM gives it, else 4.5 MB, else the old 1.75 MB (HD ADF) disk.
+// 2 KB clusters keep every size FAT12 (3067 / 2299 / 891 clusters, limit 4084); a 12-sector FAT
+// holds 4096 entries (hfe3: was 8 sectors = 2730, too few for 6 MB).
 #define SECTOR_SIZE         512
-#define TOTAL_SECTORS_BIG   9216   // 4.5 MB
+#define TOTAL_SECTORS_BIG   12288  // 6 MB (hfe3; hfe1 was 4.5 MB)
+#define TOTAL_SECTORS_MID   9216   // 4.5 MB fallback
 #define TOTAL_SECTORS_SMALL 3584   // 1.75 MB fallback (holds a 1.76 MB HD ADF)
 static uint32_t TOTAL_SECTORS = TOTAL_SECTORS_BIG;   // set in setup() from what PSRAM allowed
 #define RESERVED_SECTORS 1
-#define SECTORS_PER_FAT  8
+#define SECTORS_PER_FAT  12
 #define NUM_FATS         1
 #define SECTORS_PER_CLUSTER 4
 #define ROOT_ENTRIES     64
 #define ROOT_DIR_SECTORS 4
-#define DATA_LBA         (RESERVED_SECTORS + NUM_FATS*SECTORS_PER_FAT + ROOT_DIR_SECTORS)   // = 13
+#define DATA_LBA         (RESERVED_SECTORS + NUM_FATS*SECTORS_PER_FAT + ROOT_DIR_SECTORS)   // = 17 (hfe3; 13 with the 8-sector FAT)
 // whole clusters only, so the file's last cluster never runs past the end of the volume
 #define MAX_FILE_BYTES   ((uint32_t)(((TOTAL_SECTORS-DATA_LBA)/SECTORS_PER_CLUSTER)*SECTORS_PER_CLUSTER)*SECTOR_SIZE)
 #define ADF_DEFAULT_SIZE 901120
@@ -1332,13 +1334,13 @@ void setup() {
   _rxQueue = xQueueCreate(32, sizeof(RxPkt));
 
   // PSRAM ramdisk
-  // hfe1: 4.5 MB if PSRAM has it (any S3R8/N8R8 board), else the old 1.75 MB disk.
-  TOTAL_SECTORS = TOTAL_SECTORS_BIG;
-  g_disk = (uint8_t*)ps_malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE);
-  if (!g_disk) { TOTAL_SECTORS = TOTAL_SECTORS_SMALL; g_disk = (uint8_t*)ps_malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE); }
+  // hfe3: 6 MB if PSRAM has it (any S3R8/N8R8 board), else 4.5 MB, else the old 1.75 MB disk.
+  { static const uint32_t TRY[3] = { TOTAL_SECTORS_BIG, TOTAL_SECTORS_MID, TOTAL_SECTORS_SMALL };
+    for (int i = 0; i < 3 && !g_disk; i++) { TOTAL_SECTORS = TRY[i]; g_disk = (uint8_t*)ps_malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE); } }
   if (!g_disk) g_disk = (uint8_t*)malloc((size_t)TOTAL_SECTORS*SECTOR_SIZE);
   Serial.printf("[disk] RAM disk %u KB, max image %u KB%s\n", (unsigned)(TOTAL_SECTORS/2), (unsigned)(MAX_FILE_BYTES/1024),
-                TOTAL_SECTORS==TOTAL_SECTORS_BIG ? " (HFE OK)" : " (small: HFE won't fit - is PSRAM set to OPI?)");
+                TOTAL_SECTORS>=TOTAL_SECTORS_MID ? " (HFE OK)" : " (small: HFE won't fit - is PSRAM set to OPI?)");
+  Serial.printf("[disk] PSRAM left after the disk: %u KB\n", (unsigned)(ESP.getFreePsram()/1024));
   if (!g_disk) { Serial.println("[FATAL] RAM disk alloc failed \u2014 enable PSRAM (OPI - the XIAO S3R8 is octal) in the board menu, or the disk is too big for this board's PSRAM"); oledStatus("FATAL: no RAM","Set PSRAM=OPI","in board menu",""); while(true){ledRed(true);delay(200);ledRed(false);delay(200);} }
   build_volume("DISK.ADF", ADF_DEFAULT_SIZE);
 
