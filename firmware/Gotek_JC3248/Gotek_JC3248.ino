@@ -49,7 +49,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "A600-lab1-JC3248-hfe1"  // hfe1-JC3248 (kodak80, 13 Oct): a dongle that refuses a disk (too big for it - SuperMini 1.76 MB, XIAO hfe3 6 MB) is shown on screen at once as TOO BIG, a dongle that never answers as NOT LOADED (both were silent, after a 10 s wait), and a disk the dongle did not take is no longer shown as IN DRIVE; WIRELESS HFE OF ANY SIZE - a disk bigger than the RAM disk (BIGDISK) is no longer TOO BIG for a dongle: the GTi's own USB mounts it from the card like STANDALONE and the dongle gets it streamed straight off the card (the dongle's own size is the limit: XIAO Webby hfe3 6 MB); dongle saves for images over 1 MB are taken back (the save fetch refused maps over 256 bytes = 1 MB, so every HFE / HD ADF save stayed on the dongle; now up to 8 MB); GENERIC saves on the GTi's own USB in Wireless mode | A600-lab1-JC3248 (Mez, 5 Oct): LANGUAGE and THEME open a pick page in Settings - every choice as its own button (languages in their own name, themes in their own colour), tap one and you are back where you were; the current one is marked > < | was A600 (4 Oct 2026, pre-Kickstart release) = 5.9.41-lab15q-JC3248, renamed only (no code change) | lab15q: Polish screen text corrected by 8-Bitz (ROLKA, TERAZ GRA, WSZYSTKIE, ULUBIONE...); the reel bar's ALL/FAV/MOST word shrinks when it is too long for its button | lab15p: ESP-NOW mode - the GTi's own Wi-Fi is now GTi_Omega-XXXX, password gotekXXXX (was an OPEN, unnamed ESP_xxxxxx), and serves the GTi web page at 192.168.4.1; Settings shows the name + password | lab15o: Polish (LANG=PL) and Czech (LANG=CS) on the screen + NL/PL/CS in the web page's language list; the STANDALONE banner centres on the translated word | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j: tap the game text in the list (title + description) = the whole .nfo full-screen in the manual reader (scroll, SIZE, TOP, CLOSE) | lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
+#define FW_VERSION "A600-lab1-JC3248-hfe1"  // hfe1-JC3248 (kodak80, 13 Oct): a dongle that refuses a disk (too big for it - SuperMini 1.76 MB, XIAO hfe3 6 MB) is shown on screen at once as TOO BIG, a dongle that never answers as NOT LOADED (both were silent, after a 10 s wait), and a disk the dongle did not take is no longer shown as IN DRIVE when nothing is attached to the GTi's own USB (with a Gotek/PC on that USB it stays inserted there, as before); WIRELESS HFE OF ANY SIZE - a disk bigger than the RAM disk (BIGDISK) is no longer TOO BIG for a dongle: the GTi's own USB mounts it from the card like STANDALONE and the dongle gets it streamed straight off the card (the dongle's own size is the limit: XIAO Webby hfe3 6 MB); dongle saves for images over 1 MB are taken back (the save fetch refused maps over 256 bytes = 1 MB, so every HFE / HD ADF save stayed on the dongle; now up to 8 MB); GENERIC saves on the GTi's own USB in Wireless mode | A600-lab1-JC3248 (Mez, 5 Oct): LANGUAGE and THEME open a pick page in Settings - every choice as its own button (languages in their own name, themes in their own colour), tap one and you are back where you were; the current one is marked > < | was A600 (4 Oct 2026, pre-Kickstart release) = 5.9.41-lab15q-JC3248, renamed only (no code change) | lab15q: Polish screen text corrected by 8-Bitz (ROLKA, TERAZ GRA, WSZYSTKIE, ULUBIONE...); the reel bar's ALL/FAV/MOST word shrinks when it is too long for its button | lab15p: ESP-NOW mode - the GTi's own Wi-Fi is now GTi_Omega-XXXX, password gotekXXXX (was an OPEN, unnamed ESP_xxxxxx), and serves the GTi web page at 192.168.4.1; Settings shows the name + password | lab15o: Polish (LANG=PL) and Czech (LANG=CS) on the screen + NL/PL/CS in the web page's language list; the STANDALONE banner centres on the translated word | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j: tap the game text in the list (title + description) = the whole .nfo full-screen in the manual reader (scroll, SIZE, TOP, CLOSE) | lab15i: each dongle keeps its OWN save file (Game.sav.XXXX.adf, XXXX = last 4 hex of the dongle MAC) - two Amigas on the same game (cable + dongle, or two dongles) never mix their saves | lab15h: FIX the lab15e/f/g freeze on disk insert (the Gotek's read took the SD lock twice - SD_MMC.readRAW already goes through the locked driver); includes lab15b-g
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -5065,10 +5065,14 @@ static bool claimAskUI(bool dirty, const char* who){
 // RAM disk (it streams them off the card), so the DONGLE's limit is the one that counts: a SuperMini says
 // no to anything over 1.76 MB, a XIAO Webby hfe3 to anything over ~6 MB. Its "no" is shown here at once.
 static const uint32_t SUPERMINI_MAX_BYTES=1829376;   // SuperMini Webby: (3584-11) sectors x 512
-// hfe1: the dongle did not take the disk, so it is NOT in a drive. Undo the GTi's own side of the load
-// (its USB copy detached, nothing marked IN DRIVE) - the local half of doUnload(). The dongle is NOT
-// ejected: it still holds its previous disk, and the save mapping (g_sv_wl_*) still points at that disk.
+// hfe1: the dongle did not take the disk. In Wireless mode the GTi's own USB carries the game too, on purpose
+// (v4.8.1 "a wireless GTi can still be USB-attached", lab15i "two Amigas can play it at once") - so if a host
+// (a Gotek or a PC) is attached to that USB, the disk IS in a drive there and is kept, exactly as before.
+// Only when nothing is attached is the GTi's side undone (USB copy detached, nothing marked IN DRIVE) - the
+// local half of doUnload(). The dongle is never ejected: it still holds its previous disk, and the save
+// mapping (g_sv_wl_*) still points at that disk.
 static void wlUndoLocalLoad(){
+  if(tud_mounted()){ gLog("[load] the dongle did not take %s - kept on the GTi's own USB (a host is attached there)\n",g_loaded_path.c_str()); return; }
   gLog("[load] not loaded - the dongle did not take %s\n",g_loaded_path.c_str());
   hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_orig="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;
   g_sv_img_size=0;svDirtyReset();g_alias=false;
@@ -5213,7 +5217,7 @@ static bool doLoadSelected(const String&adfPath){
         g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;g_sv_wl_orig=adfPath;g_sv_wl_tag=wlTag;   // lab15i
       } else { if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
                else wlSendFailUI(copied);                                 // hfe1: say why it did not load
-               wlUndoLocalLoad(); }                                       // hfe1: ...and do not show it as IN DRIVE
+               wlUndoLocalLoad(); }                                       // hfe1: ...and not IN DRIVE unless the GTi's own USB has a host
       if(g_dongle_home_ip!=prevIp&&g_dongle_home_ip.length())saveConfigKey("DONGLE_HOME_IP",g_dongle_home_ip);  // persist the resolved IP for next time
     } else if(espnowIsPaired()){                            // single paired dongle — unchanged
       espnowSendNotify(g_loaded_name,g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN",copied);
@@ -5221,7 +5225,7 @@ static bool doLoadSelected(const String&adfPath){
         g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;g_sv_wl_orig=adfPath;g_sv_wl_tag=wlTag;   // lab15i
       } else { if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
                else wlSendFailUI(copied);                                 // hfe1: say why it did not load
-               wlUndoLocalLoad(); }                                       // hfe1: ...and do not show it as IN DRIVE
+               wlUndoLocalLoad(); }                                       // hfe1: ...and not IN DRIVE unless the GTi's own USB has a host
     }
     espnowSetSendFile("");                                   // hfe1: back to g_disk for anything else
   }
