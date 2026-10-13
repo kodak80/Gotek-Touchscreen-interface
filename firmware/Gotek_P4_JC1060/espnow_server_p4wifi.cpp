@@ -372,9 +372,14 @@ static int pullSavesOnLink(const String& ip){
 // (BIGDISK) is mounted on the GTi's own USB as an alias of the card file, so it is not in g_disk -
 // it is streamed to the dongle from the file. "" = from g_disk (every other send, as before).
 static String _sendFile = "";
+static bool   _refused = false;   // hfe1: the dongle answered "no" (0x00) to the last send - e.g. too big for it
+bool espnowLastSendRefused(){ return _refused; }
 void espnowSetSendFile(const String& sdPath){ _sendFile = sdPath; }
 static uint32_t sendImageBytes(WiFiClient& c, uint32_t size){
   uint32_t sent = 0;
+  _refused = false;
+  // A dongle only answers once it has the whole image, so an answer DURING the send is a refusal
+  // (a SuperMini says no straight away to anything over 1.76 MB): stop and let the caller read it.
   if (_sendFile.length()) {
     File f = SD_MMC.open(_sendFile.c_str(), FILE_READ);
     if (!f) return 0;
@@ -383,6 +388,7 @@ static uint32_t sendImageBytes(WiFiClient& c, uint32_t size){
     while (sent < size) {
       size_t n = min((uint32_t)BUF, size - sent);
       int rd = f.read(b, n); if (rd <= 0) break;
+      if (c.available()) break;                  // dongle already answered = refused
       size_t off = 0;
       while (off < (size_t)rd) { size_t w = c.write(b + off, rd - off); if (!w) break; off += w; }
       sent += off; if (off < (size_t)rd) break;
@@ -392,7 +398,7 @@ static uint32_t sendImageBytes(WiFiClient& c, uint32_t size){
   }
   const uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
   const size_t BUF = 4096;
-  while (sent < size) { size_t n = min((uint32_t)BUF, size - sent); size_t w = c.write(src + sent, n); if (!w) break; sent += w; }
+  while (sent < size) { if (c.available()) break; size_t n = min((uint32_t)BUF, size - sent); size_t w = c.write(src + sent, n); if (!w) break; sent += w; }
   return sent;
 }
 
@@ -418,13 +424,14 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
   uint32_t ts=millis();
   uint32_t sent = sendImageBytes(client, size);   // hfe1: g_disk, or streamed off the card for a disk bigger than the RAM disk
   if (sent < size) P4LOG("[P4WIFI] write err at %lu bytes%s\n",(unsigned long)sent, _sendFile.length() ? " (from the card)" : "");
-  client.clear();
+  client.flush();   // hfe1: was clear(), which threw away a "no" the dongle sent mid-transfer - the panel then always waited the full 10 s
   P4LOG("[P4WIFI] sent %lu of %lu bytes in %lu ms\n",(unsigned long)sent,(unsigned long)size,(unsigned long)(millis()-ts));
 
   bool ok = false;
-  uint32_t t0 = millis(); while (!client.available() && millis()-t0 < 10000) delay(10);
+  uint32_t t0 = millis(); while (!client.available() && client.connected() && millis()-t0 < 10000) delay(10);   // hfe1: a closed connection is not going to answer
+  if (!client.available() && sent < size && sent < 65536) _refused = true;   // hfe1: hung up after the first few KB = refused it on the size (the "no" byte lost to the reset)
   if (client.available()) {
-    ok = (client.read() == 0x01);
+    ok = (client.read() == 0x01); _refused = !ok;   // hfe1
     if (ok) {
       uint32_t tid=millis(); uint8_t lid[4]; int got=0;
       while (got<4 && millis()-tid<300) { if(client.available()) lid[got++]=client.read(); else delay(5); }
@@ -480,10 +487,11 @@ bool espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, ui
         uint8_t hdr[4] = { (uint8_t)(size>>24),(uint8_t)(size>>16),(uint8_t)(size>>8),(uint8_t)size };
         client.write(hdr, 4);
         uint32_t sent = sendImageBytes(client, size);   // hfe1: g_disk or the card file
-        client.clear();
-        t0 = millis(); while (!client.available() && millis()-t0 < 10000) delay(10);
+        client.flush();   // hfe1: was clear(), which threw away a "no" the dongle sent mid-transfer - the panel then always waited the full 10 s
+        t0 = millis(); while (!client.available() && client.connected() && millis()-t0 < 10000) delay(10);   // hfe1: a closed connection is not going to answer
+        if (!client.available() && sent < size && sent < 65536) _refused = true;   // hfe1: hung up after the first few KB = refused it on the size (the "no" byte lost to the reset)
         if (client.available()) {
-          ok = (client.read() == 0x01);
+          ok = (client.read() == 0x01); _refused = !ok;   // hfe1
           if (ok) { uint32_t tid=millis(); uint8_t lid[4]; int got=0;
             while (got<4 && millis()-tid<300){ if(client.available()) lid[got++]=client.read(); else delay(5); }
             g_espnow_load_id = (got==4) ? ((uint32_t)lid[0]|((uint32_t)lid[1]<<8)|((uint32_t)lid[2]<<16)|((uint32_t)lid[3]<<24)) : 0;
