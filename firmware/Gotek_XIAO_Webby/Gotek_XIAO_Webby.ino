@@ -52,7 +52,7 @@
 #include <WiFiUdp.h>       // FLEET: UDP discovery beacon (home-WiFi only)
 #include "webui.h"       // PANEL: Dimmy's shared SPA (gzipped) + OMEGA_DARK preset
 
-#define FW_VERSION     "Webby-1.6.4-xiao-hfe3"   // hfe3: 6 MB RAM disk (HFE up to ~6 MB; falls back to 4.5 MB, then 1.75 MB), 12-sector FAT. hfe2: HFE mounts under its raw sent filename (VFAT long name, ext forced .hfe). hfe1: 4.5 MB ramdisk (DD + HD HFE fit), HFE header sniff names the FAT file .HFE, web pages accept .hfe. 1.6.4-xiao: brought level with SuperMini Webby-1.6.4 (DSK/GENERIC keep their extension over wireless, LED HAL + LED=OFF)
+#define FW_VERSION     "Webby-1.6.4-xiao-hfe4"   // hfe4: every format (.st, .adf, .img, .dsk ...) mounts under the raw filename it was sent with (VFAT long name), not only HFE. hfe3: 6 MB RAM disk (HFE up to ~6 MB; falls back to 4.5 MB, then 1.75 MB), 12-sector FAT. hfe2: HFE mounts under its raw sent filename (VFAT long name, ext forced .hfe). hfe1: 4.5 MB ramdisk (DD + HD HFE fit), HFE header sniff names the FAT file .HFE, web pages accept .hfe. 1.6.4-xiao: brought level with SuperMini Webby-1.6.4 (DSK/GENERIC keep their extension over wireless, LED HAL + LED=OFF)
 #define ESPNOW_CHANNEL 6
 // ── Board profile ──────────────────────────────────────────
 // Runs on ANY ESP32-S3 with: >=2MB PSRAM (the RAM disk lives there), the native
@@ -374,18 +374,20 @@ static String fatNameForContent(const String& fatName, const uint8_t* data, uint
   String base = d > 0 ? fatName.substring(0, d) : fatName;
   return base + ".HFE";
 }
-// hfe2: an HFE is presented under the raw filename it was sent with (as a VFAT long name),
-// not DISK.ADF / an 8.3 mangle. Returns "" when this isn't an HFE or no name was sent (the
-// 8.3 DISK.HFE from fatNameForContent is all there is then). The long name's extension is
-// what FlashFloppy goes by, so it is forced to .hfe if the sender labelled it otherwise.
-static String hfeLongName(const String& raw, const uint8_t* data, uint32_t n){
+// hfe2/hfe4: a disk is presented under the raw filename it was sent with (as a VFAT long name),
+// not DISK.ADF / an 8.3 mangle - hfe2 did this for HFE only, hfe4 for every format (.st, .adf,
+// .img, .dsk ...), so a FlashFloppy OLED/LCD shows the real game name. Returns "" when no name was
+// sent, or when the name already IS a plain 8.3 name (DISK.ADF) - then the 8.3 entry says it all.
+// An HFE's long name is forced to .hfe (FlashFloppy goes by the long name's extension), so an
+// HFE sent as "Game.adf" still mounts as HFE.
+static String rawLongName(const String& raw, const uint8_t* data, uint32_t n){
   String nm = raw; int sl = nm.lastIndexOf('/'); if (sl >= 0) nm = nm.substring(sl+1, nm.length());
   if (nm.length() == 0) return String("");
   int d = nm.lastIndexOf('.');
   String ext = d > 0 ? nm.substring(d+1, nm.length()) : String("");
   bool extHfe = ext.length()==3 && (ext[0]|0x20)=='h' && (ext[1]|0x20)=='f' && (ext[2]|0x20)=='e';
-  if (!extHfe && !isHfeImage(data, n)) return String("");
-  if (!extHfe) nm = (d > 0 ? nm.substring(0, d) : nm) + ".hfe";
+  if (!extHfe && isHfeImage(data, n)) nm = (d > 0 ? nm.substring(0, d) : nm) + ".hfe";
+  if (to83keepext(nm) == nm) return String("");   // already an exact 8.3 name: no long name needed
   return nm;
 }
 
@@ -704,9 +706,9 @@ static void handleTCPClient(WiFiClient& client) {
   if (received == size) {
     // hfe1: the volume was laid before any data arrived; if the bytes are HFE and the
     // name isn't, re-lay just the metadata (wipeAll=false keeps the received data).
-    // hfe2: an HFE also gets the raw sent filename as its long name.
+    // hfe2/hfe4: the raw sent filename becomes the long name (every format since hfe4).
     { String byContent = fatNameForContent(fatName, dst, size);
-      String longN = hfeLongName(g_next_name, dst, size);
+      String longN = rawLongName(g_next_name, dst, size);
       if (byContent != fatName || longN.length()) {
         fatName = byContent; build_volume_ex(fatName.c_str(), size, false, longN.length() ? longN.c_str() : nullptr); } }
     g_load_id++; g_image_size = size; dirtyReset();
@@ -763,9 +765,9 @@ static String statusJson(){
 static void webFinishLoad(){
   uint32_t size = g_up_recv;
   // #24/1.6.3: 8.3-mangle keeping the real extension so FF detects DSK/ADF/etc; full name kept in g_loaded_name (below)
-  // hfe1: HFE bytes -> .HFE.  hfe2: an HFE keeps its raw filename (VFAT long name).
+  // hfe1: HFE bytes -> .HFE.  hfe2/hfe4: the disk keeps its raw filename (VFAT long name), any format.
   { const uint8_t* data = g_disk + DATA_LBA*SECTOR_SIZE;
-    String longN = hfeLongName(g_up_name, data, size);
+    String longN = rawLongName(g_up_name, data, size);
     build_volume_ex(fatNameForContent(to83keepext(g_up_name), data, size).c_str(), size, false, longN.length() ? longN.c_str() : nullptr); }
   g_image_size = size; g_load_id++; dirtyReset();
   if (g_disk_loaded) hardDetach();
