@@ -336,10 +336,20 @@ static bool joinDongle(const uint8_t* mac, uint32_t timeoutMs, const char* why){
 }
 // Pull the dongle's game saves over the link that is up (GET_SAVE 0x01). Always answers the dongle (it waits 10 s
 // for the ack). Returns the sectors written (0 = nothing to save), or -1 = the pull failed.
+// hfe3-P4G7: on a weak link the FIRST TCP connect straight after a join often fails (kodak80's gti.log: joined at
+// -87 dBm, then "TCP connect failed" for both the save pull and the eject, so the eject never happened and the
+// screen said SAVE PULL FAILED). Try a few times, a moment apart, before giving up.
+static bool tcpConnectRetry(WiFiClient& c, const String& ip, const char* why, int tries=4){
+  for (int i=0;i<tries;i++){
+    if (c.connect(ip.c_str(), DONGLE_TCP_PORT, 3000)) { if(i) P4LOG("[P4WIFI] %s: TCP connect OK on try %d\n",why,i+1); return true; }
+    c.stop(); delay(400);
+  }
+  return false;
+}
 static int pullSavesOnLink(const String& ip){
   if (!_persistCb) return 0;
   WiFiClient client; int result=-1;
-  if (!client.connect(ip.c_str(), DONGLE_TCP_PORT)) { P4LOG("[P4WIFI/SAVE] TCP connect failed\n"); return -1; }
+  if (!tcpConnectRetry(client, ip, "save pull")) { P4LOG("[P4WIFI/SAVE] TCP connect failed (4 tries)\n"); return -1; }   // hfe3: was one try
   uint8_t esc[5]={0xFF,0xFF,0xFF,0xFF,0x01}; client.write(esc,5);
   uint8_t hdr[14]; uint8_t* mapBuf=nullptr; uint8_t* packed=nullptr;
   if (readFullP(client,hdr,14,5000) && hdr[0]=='S' && hdr[1]=='V' && hdr[2]=='1') {
@@ -515,9 +525,11 @@ void espnowSendEject() {
   if (!g_espnow_paired) return;
   String ip = String(DONGLE_AP_IP);
   if (!joinDongle(_dongle_mac, 12000, "eject")) { g_p4_eject_result = 0; return; }
-  int r = _diskOut ? pullSavesOnLink(ip) : 0; g_p4_saved_secs = r;
+  int r = _diskOut ? pullSavesOnLink(ip) : 0;
+  if (_diskOut && r < 0) { P4LOG("[P4WIFI] eject: save pull failed - one more try\n"); delay(500); r = pullSavesOnLink(ip); }   // hfe3: a short read on a weak link
+  g_p4_saved_secs = r;
   WiFiClient c;
-  if (c.connect(ip.c_str(), DONGLE_TCP_PORT)) {
+  if (tcpConnectRetry(c, ip, "eject")) {   // hfe3: was one try
     uint8_t esc[5]={0xFF,0xFF,0xFF,0xFF,(uint8_t)(r>=0?0x04:0x03)}; c.write(esc,5);
     uint32_t t0=millis(); while(!c.available() && millis()-t0<3000) delay(5);
     int a = c.available() ? c.read() : -1;
