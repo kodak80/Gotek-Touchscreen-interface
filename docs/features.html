@@ -125,7 +125,8 @@ const F=[
  ['Library & disk formats',[
    ['ADF mode','Amiga disk images from /ADF. Self-describing geometry — no config needed.','',''],
    ['DSK mode','Atari ST / PC .dsk / .img and similar from /DSK.','',''],
-   ['GEN mode','The /GENERIC folder mounts ANY file, real name preserved, so FlashFloppy detects the format itself. Add an ff.cfg only for raw/ambiguous images (e.g. an Akai sampler).','',''],
+   ['GEN mode','The /GENERIC folder mounts ANY file, real name preserved, so FlashFloppy detects the format itself. Add an ff.cfg only for raw/ambiguous images (e.g. an Akai sampler). GEN is the library at power-on; LIBRARY= picks another.','LIBRARY','GEN / ADF / DSK — the library shown at power-on'],
+   ['IPF disks (7″ P4)','An .ipf preservation image (Amiga or Atari ST) loads like any other disk: the first load converts it to HFE v3 and stores it beside the .ipf as Game.ipf.hfe (hidden from the list); later loads reuse it. Copy protection survives, and a stock FlashFloppy plays it. The SPS CAPS decoder is for non-commercial use only.','',''],
    ['Categories','Browse the library by folder buckets (Games / Apps / OS…). A top-level folder that holds no disk images — only subfolders — is treated as a category.','CATEGORIES','OFF / ON'],
    ['Nested categories','Allow sub-categories (folders within category folders), lazy-scanned.','NESTING','OFF / ON'],
    ['Recurse-flatten','Any operator foldering (A-Z, categories, release subfolders) is flattened into one clean list on screen.','',''],
@@ -180,6 +181,7 @@ const F=[
  ]],
  ['ESP32-P4 flagship',[
    ['C6 self-update','The P4’s WiFi runs on a companion ESP32-C6; the GTi patches the C6 to 2.12.13 itself — from an embedded flash partition (or an SD file), no ESP-IDF needed. See the C6 update-path page.','',''],
+   ['Big wireless disks','A disk bigger than the GTi’s RAM disk (BIGDISK) is still sent: the GTi serves it from the card on its own USB and streams it to the dongle. A XIAO Webby takes HFEs up to about 6 MB and mounts them under their real file name; a SuperMini (1.76 MB) answers TOO BIG on screen.','BIGDISK','OFF = 1.76 MB RAM disk · ON = 2.9 MB'],
    ['Wireless on the P4','The P4 has no radio of its own — it hands the disk to its companion ESP32-C6 over the internal link and the C6 does all the WiFi. So wireless dongle loading works just as it does on the S3 boards, with nothing extra to set up.','',''],
  ]],
  ['Web console & WebDAV (beta, shared web layer)',[
@@ -192,6 +194,8 @@ const F=[
 const CFG=[
  ['THEME','0–6','0','Colour palette: NAVY / EMBER / MATRIX / PAPER / SYNTH / GOLD / OMEGA.'],
  ['MODE','STANDALONE / WIRELESS','STANDALONE','Transfer mode: USB to the Gotek, or over the air to a dongle.'],
+ ['LIBRARY','GEN / ADF / DSK','GEN','The library shown at power-on; Settings › LIBRARY remembers your choice here.'],
+ ['BIGDISK','OFF / ON','OFF','RAM disk for cable save write-back: 1.76 MB, or 2.9 MB for big .HFE saves. Bigger wireless disks stream from the card.'],
  ['CAROUSEL','OFF / ON / LAST','OFF','Default boot view: game list, cover reel, or restore last view.'],
  ['LOOP','0 / 1','0','Boot cracktro: loop until tapped (1) or auto-dismiss after 6 s (0).'],
  ['CRACKTRO','OFF / 0–6','0','Boot demo style; 0 = random, OFF = no boot demo.'],

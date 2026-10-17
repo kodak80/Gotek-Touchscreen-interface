@@ -265,6 +265,9 @@ _Read from firmware source (13 Sep 2026). ✓ = yes · — = no · ~ = partial. 
 | Receive FLING · save write-back · remote eject | ✓ | ✓ | ✓ |
 | Owner-lock / pairing · status LED | ✓ | ✓ | ✓ |
 | Settable name · WiFi web + SD upload · fleet | ✓ | — | ✓ |
+| Big wireless disks (HFE up to ~6 MB) · real file name on the Gotek | — | — | ✓⁴ |
+
+⁴ XIAO Webby `Webby-1.6.4-xiao-hfe4` and later (kodak80 fork). The disk is mounted under the name the GTi sent (e.g. `Prophecy (Disk 1).hfe`, `Lotus II.st`) instead of `DISK.ADF`; an HFE always mounts as `.hfe` so FlashFloppy picks the right format. The SuperMini stays at 1.76 MB and the panel shows **TOO BIG** for anything larger.
 
 The **ESP32-S3-Zero** runs the SuperMini Webby image (single WS2812 RGB LED on GPIO21). Classic DD-only SuperMini firmware is retired.
 
@@ -357,9 +360,24 @@ right `host =` line for your machine) beside it and it rides onto the mounted di
 `ff.cfg`, GEN includes it; if not, FlashFloppy uses its defaults. Easiest universal route: convert
 your disks to **`.hfe`** (e.g. with the HxC tools) — then no config is needed at all.
 
-**Notes:** GEN is for **standalone / cable** (and the XIAO wireless dongle) — like HD, the 2 MB Super
-Mini dongle can't hold larger generic images. Amiga-only extras (save-writeback, user-disks) are off
-in GEN. Currently in **beta** — feedback very welcome via GitHub Issues/Discussions.
+**GEN is the library at power-on.** Set `LIBRARY=ADF` (or `DSK`) in `CONFIG.TXT` to start in the Amiga
+or `.dsk` library instead — **Settings → LIBRARY** switches it and remembers your choice there.
+
+**Notes:** GEN works over the **cable** and **wirelessly to a XIAO Webby dongle**, including HFE images
+bigger than the GTi's RAM disk (up to about 6 MB): the GTi serves the image from the card on its own USB
+and streams it to the dongle, so `BIGDISK` no longer limits what you can send. The 1.76 MB Super Mini
+can't hold larger generic images and the GTi says **TOO BIG** rather than pretending the disk went in.
+Saves to a wireless HFE come back to the card when you eject, as with ADFs.
+
+### IPF disks (7″ P4 only)
+
+The 7″ P4 (`5.9.42-lab7-P4G7-ipf3` and later) loads **`.ipf`** preservation images (Amiga or Atari ST)
+like any other disk. The first time you load one, the GTi converts it to HFE v3 (a progress bar on the
+cover panel, a second or three) and stores the result **beside it** as `Game.ipf.hfe`; later loads reuse
+that file, and it never shows up as a separate game. Delete it to force a fresh conversion. Copy
+protection survives the conversion, and a stock FlashFloppy plays the result. Saves go to
+`Game.sav.hfe`. The decoder is the SPS CAPS library, which is licensed for **non-commercial use only**
+— see `firmware/ipf_tools/README.md`.
 
 ## Firmware updates over the SD card (JC3248)
 
