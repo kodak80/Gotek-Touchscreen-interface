@@ -91,6 +91,8 @@ bool   espnowClaimCancelled();                     // lab14s: last send was stop
 
 // Transfer — sends via WiFi TCP, uses ESP-NOW only for DONE/ERROR reply
 bool   espnowSendNotify(const String& name, const String& mode, uint32_t size);
+bool   espnowLastSendRefused();                    // hfe1: the dongle said "no" to the last send (too big for it / transfer error)
+void   espnowSetSendFile(const String& sdPath);   // hfe1: next sends stream this card file ("" = from g_disk, the default)
 bool   espnowSendDisk(uint32_t size);
 bool   espnowSendDiskTo(const uint8_t* mac, uint32_t size);   // multicast: send to one dongle by MAC
 // Home-WiFi transport: join the home router (STA), resolve the dongle via mDNS "gotek.local"

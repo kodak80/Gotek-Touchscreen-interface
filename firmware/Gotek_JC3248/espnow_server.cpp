@@ -491,6 +491,41 @@ static bool tcpClaim(const char* ip){          // true = go ahead and send
 }
 static void restoreEspNow();   // defined below (save fetch section)
 
+
+// hfe1: the image can come from a card file instead of the RAM disk. A disk bigger than the RAM disk
+// (BIGDISK) is mounted on the GTi's own USB as an alias of the card file, so it is not in g_disk -
+// it is streamed to the dongle from the file. "" = from g_disk (every other send, as before).
+static String _sendFile = "";
+static bool   _refused = false;   // hfe1: the dongle answered "no" (0x00) to the last send - e.g. too big for it
+bool espnowLastSendRefused(){ return _refused; }
+void espnowSetSendFile(const String& sdPath){ _sendFile = sdPath; }
+static uint32_t sendImageBytes(WiFiClient& c, uint32_t size){
+  uint32_t sent = 0;
+  _refused = false;
+  // A dongle only answers once it has the whole image, so an answer DURING the send is a refusal
+  // (a SuperMini says no straight away to anything over 1.76 MB): stop and let the caller read it.
+  if (_sendFile.length()) {
+    File f = SD_MMC.open(_sendFile.c_str(), FILE_READ);
+    if (!f) return 0;
+    const size_t BUF = 16384; uint8_t* b = (uint8_t*)malloc(BUF);
+    if (!b) { f.close(); return 0; }
+    while (sent < size) {
+      size_t n = min((uint32_t)BUF, size - sent);
+      int rd = f.read(b, n); if (rd <= 0) break;
+      if (c.available()) break;                  // dongle already answered = refused
+      size_t off = 0;
+      while (off < (size_t)rd) { size_t w = c.write(b + off, rd - off); if (!w) break; off += w; }
+      sent += off; if (off < (size_t)rd) break;
+    }
+    free(b); f.close();
+    return sent;
+  }
+  const uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
+  const size_t BUF = 4096;
+  while (sent < size) { if (c.available()) break; size_t n = min((uint32_t)BUF, size - sent); size_t w = c.write(src + sent, n); if (!w) break; sent += w; }
+  return sent;
+}
+
 static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uint32_t connectTimeoutMs, bool claim) {
   String ip = String(ipc);
   Serial.printf("[TCP] Connecting to XIAO at %s:%d\n", ip.c_str(), DONGLE_TCP_PORT);
@@ -564,7 +599,6 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
   Serial.printf("[TCP] Connected to XIAO TCP server\n");
 
   // Protocol: send 4-byte size (big endian), then raw data
-  uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
 
   // Send size header
   uint8_t hdr[4] = {
@@ -573,25 +607,20 @@ static bool sendDiskCore(const uint8_t* mac, const char* ipc, uint32_t size, uin
   };
   client.write(hdr, 4);
 
-  // Send data in 4KB chunks
-  uint32_t sent = 0;
-  const size_t BUF = 4096;
-  while (sent < size) {
-    size_t n = min((uint32_t)BUF, size - sent);
-    size_t written = client.write(src + sent, n);
-    if (written == 0) { Serial.println("[TCP] Write error"); break; }
-    sent += written;
-  }
-  client.clear();
+  // Send the image (hfe1: from g_disk, or streamed off the card - sendImageBytes)
+  uint32_t sent = sendImageBytes(client, size);
+  if (sent < size) Serial.printf("[TCP] Write error at %lu of %lu bytes%s\n", (unsigned long)sent, (unsigned long)size, _sendFile.length() ? " (from the card)" : "");
+  client.flush();   // hfe1: was clear(), which threw away a "no" the dongle sent mid-transfer - the panel then always waited the full 10 s
   Serial.printf("[TCP] Sent %lu bytes\n", (unsigned long)sent);
 
   // Wait for XIAO to confirm (single byte: 0x01=OK, 0x00=ERROR)
   t0 = millis();
-  while (!client.available() && millis()-t0 < 10000) delay(10);
+  while (!client.available() && client.connected() && millis()-t0 < 10000) delay(10);   // hfe1: a closed connection is not going to answer
+  if (!client.available() && sent < size && sent < 65536) _refused = true;   // hfe1: hung up after the first few KB = refused it on the size (the "no" byte lost to the reset)
   bool ok = false;
   if (client.available()) {
     uint8_t resp = client.read();
-    ok = (resp == 0x01);
+    ok = (resp == 0x01); _refused = !ok;   // hfe1
     Serial.printf("[TCP] XIAO response: 0x%02X (%s)\n", resp, ok?"OK":"ERROR");
     if (ok) {
       // v3.2.0 dongles append a 4-byte load_id after the ack (old dongles don't —
@@ -663,15 +692,14 @@ bool espnowSendDiskHome(const String& ssid, const String& pass, String& ioIp, ui
       tcpSendSetName(ip.c_str());   // 1.6.3: real filename+ext for the fling
       WiFiClient client;
       if (client.connect(ip.c_str(), DONGLE_TCP_PORT)) {
-        uint8_t* src = g_disk + ESPNOW_DATA_LBA * ESPNOW_SECTOR_SIZE;
         uint8_t hdr[4] = { (uint8_t)(size>>24),(uint8_t)(size>>16),(uint8_t)(size>>8),(uint8_t)size };
         client.write(hdr, 4);
-        uint32_t sent = 0; const size_t BUF = 4096;
-        while (sent < size) { size_t n = min((uint32_t)BUF, size-sent); size_t w = client.write(src+sent, n); if (!w) break; sent += w; }
-        client.clear();
-        t0 = millis(); while (!client.available() && millis()-t0 < 10000) delay(10);
+        uint32_t sent = sendImageBytes(client, size);   // hfe1: g_disk or the card file
+        client.flush();   // hfe1: was clear(), which threw away a "no" the dongle sent mid-transfer - the panel then always waited the full 10 s
+        t0 = millis(); while (!client.available() && client.connected() && millis()-t0 < 10000) delay(10);   // hfe1: a closed connection is not going to answer
+        if (!client.available() && sent < size && sent < 65536) _refused = true;   // hfe1: hung up after the first few KB = refused it on the size (the "no" byte lost to the reset)
         if (client.available()) {
-          ok = (client.read() == 0x01);
+          ok = (client.read() == 0x01); _refused = !ok;   // hfe1
           if (ok) { uint32_t tid = millis(); uint8_t lid[4]; int got = 0;
             while (got < 4 && millis()-tid < 300) { if (client.available()) lid[got++] = client.read(); else delay(5); }
             g_espnow_load_id = (got == 4) ? ((uint32_t)lid[0]|((uint32_t)lid[1]<<8)|((uint32_t)lid[2]<<16)|((uint32_t)lid[3]<<24)) : 0;
@@ -779,7 +807,7 @@ bool espnowFetchSave(SavePersistCb persist) {
       uint32_t loadId  = (uint32_t)hdr[4] | ((uint32_t)hdr[5]<<8) | ((uint32_t)hdr[6]<<16) | ((uint32_t)hdr[7]<<24);
       uint32_t imgSize = (uint32_t)hdr[8] | ((uint32_t)hdr[9]<<8) | ((uint32_t)hdr[10]<<16) | ((uint32_t)hdr[11]<<24);
       uint16_t mapLen  = (uint16_t)hdr[12] | ((uint16_t)hdr[13]<<8);
-      if (mapLen > 0 && mapLen <= 256) {
+      if (mapLen > 0 && mapLen <= 2048) {   // hfe1: was 256 = 2048 sectors = 1 MB, so saves of any HFE / HD ADF were refused; 2048 = 8 MB covers the XIAO hfe3 6 MB disk (1534-byte map)
         mapBuf = (uint8_t*)malloc(mapLen);
         if (mapBuf && readFull(client, mapBuf, mapLen, 5000)) {
           uint32_t nSec = 0;
