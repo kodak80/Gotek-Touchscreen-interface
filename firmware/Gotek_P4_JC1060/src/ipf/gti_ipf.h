@@ -9,8 +9,10 @@
  *   if (gtiIpfPrepare(SD_MMC, "/GAMES/Foo.ipf", hfe, onProgress))
  *       insertHfe(hfe);   // GTi's existing HFE insert routine
  *
- * The HFE is written to GTI_IPF_CACHE_DIR/<name>.<ipfsize hex>.hfe and
- * reused on later inserts. Delete the folder to force re-conversion.
+ * The HFE is written BESIDE the .ipf as <name>.ipf.hfe (ipf3; was
+ * /GTI/ipfcache/<name>.<size>.hfe) and reused on later inserts. The library
+ * list skips *.ipf.hfe, so it never shows as a second game. Delete the
+ * .ipf.hfe to force re-conversion (e.g. after replacing the .ipf).
  * Needs PSRAM enabled (about 2.5 MB peak for a typical disk).
  */
 #pragma once
@@ -21,9 +23,6 @@
 
 #include <sys/stat.h>
 
-#ifndef GTI_IPF_CACHE_DIR
-#define GTI_IPF_CACHE_DIR "/GTI/ipfcache"
-#endif
 /* VFS mount point of the card, for stat(): SD_MMC's File::size() reports 0
  * for files in sub-folders on this core, so sizes come from the VFS. */
 #ifndef GTI_IPF_VFS_ROOT
@@ -53,16 +52,11 @@ static int gti_ipf_fs_write(void *ctx, uint32_t off, const void *buf, uint32_t l
     return f->write((const uint8_t *)buf, len) == len ? 0 : -1;
 }
 
-/* Cache path for an IPF: /GTI/ipfcache/<basename-without-ext>.<size>.hfe */
+/* Converted-HFE path for an IPF (ipf3): beside it, /GAMES/Foo.ipf -> /GAMES/Foo.ipf.hfe */
 static inline String gtiIpfCachePath(const char *ipfPath, uint32_t ipfSize)
 {
-    const char *base = strrchr(ipfPath, '/');
-    base = base ? base + 1 : ipfPath;
-    String name(base);
-    name.remove(name.length() - 4);        /* drop .ipf */
-    char sz[12];
-    snprintf(sz, sizeof(sz), ".%lx", (unsigned long)ipfSize);
-    return String(GTI_IPF_CACHE_DIR) + "/" + name + sz + ".hfe";
+    (void)ipfSize;
+    return String(ipfPath) + ".hfe";
 }
 
 /* Convert (or reuse cached) IPF -> HFE. On success hfeOut holds the HFE
@@ -116,10 +110,6 @@ static inline bool gtiIpfPrepare(fs::FS &fs, const char *ipfPath, String &hfeOut
         return false;
     }
 
-    if (!fs.exists(GTI_IPF_CACHE_DIR)) {
-        fs.mkdir("/GTI");
-        fs.mkdir(GTI_IPF_CACHE_DIR);
-    }
     String tmp = hfe + ".tmp";
     fs.remove(tmp);
     File out = fs.open(tmp, FILE_WRITE);

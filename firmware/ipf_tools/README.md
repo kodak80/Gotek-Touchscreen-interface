@@ -25,7 +25,7 @@ keep a stale rate.
 ```
 firmware/Gotek_P4_JC1060/src/ipf/   built into the P4G7 firmware (Arduino compiles src/ recursively)
   ipf2hfe.h / ipf2hfe.cpp           converter (C API, callback writer, no Arduino deps)
-  gti_ipf.h                         GTi glue: gtiIpfPrepare(SD_MMC, ipfPath, hfeOut, ...) + /GTI/ipfcache
+  gti_ipf.h                         GTi glue: gtiIpfPrepare(SD_MMC, ipfPath, hfeOut, ...) -> Game.ipf.hfe beside the .ipf
   capsimg/                          SPS decoder library 5.1, flattened (LICENCE.txt inside)
 firmware/ipf_tools/                 desktop only - never part of a firmware build
   tools/ipf2hfe_cli.cpp             desktop converter
@@ -38,7 +38,7 @@ firmware/ipf_tools/                 desktop only - never part of a firmware buil
 ## How the P4G7 firmware uses it
 
 - `doLoadSelected()`: a disk whose file is an `.ipf` (and has no save yet) is converted to
-  `/GTI/ipfcache/<name>.<ipf size>.hfe` on its first load. A progress bar is shown on the cover
+  `<name>.ipf.hfe` beside it on its first load (ipf3; ipf1/ipf2 used `/GTI/ipfcache`). A progress bar is shown on the cover
   panel. Later loads reuse that file. From there on it is an ordinary HFE load (RAM disk or alias,
   cable or wireless).
 - `presentName()` / wireless fling name: the Gotek sees `.hfe` (`DISK.HFE` in the ADF/DSK
@@ -46,9 +46,9 @@ firmware/ipf_tools/                 desktop only - never part of a firmware buil
 - `savPathFor()` / `dongleSavPathFor()`: saves of `Game.ipf` go to `Game.sav.hfe` (or
   `Game.sav.XXXX.hfe`) beside it, as patched copies of the converted HFE.
 - The ADF and DSK libraries list `.ipf` files. GENERIC already listed every file, and now skips
-  `.ipx` analyser sidecars.
+  `.ipx` analyser sidecars and the converted `.ipf.hfe` files.
 - gti.log: `[ipf] ... -> ... : N cyl x 2, ... variable-density tracks, weak, unformatted`, or `(cached)`.
-- Delete `/GTI/ipfcache` to force re-conversion.
+- Delete the `.ipf.hfe` beside an `.ipf` to force re-conversion (e.g. after replacing the `.ipf`).
 
 ## Test results (desktop, FlashFloppy playback model)
 
