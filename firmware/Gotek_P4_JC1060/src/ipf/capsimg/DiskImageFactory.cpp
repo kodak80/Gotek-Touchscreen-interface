@@ -4,8 +4,12 @@
 
 CDiskImageFactory::CDiskImageFactory()
 {
-	// dummy objects to initialize static variables
-	CCapsImage img;
+	// GTi ipf2: no dummy CCapsImage here. This constructor runs at power-on (a global object in
+	// CapsAPI.cpp), BEFORE the Arduino core adds PSRAM to the heap, and CCapsImage's constructor
+	// builds the 2 x 256 KB MFM tables (CDiskEncoding::InitMFM(0x10000)) - more than the P4's
+	// ~325 KB of free internal RAM, so new[] failed, the firmware aborted (reset=4) and the
+	// bootloader rolled back. Every CCapsImage runs the same init in its own constructor
+	// (InitSystem), so the tables are now built on the first conversion, from PSRAM.
 }
 
 CDiskImageFactory::~CDiskImageFactory()
