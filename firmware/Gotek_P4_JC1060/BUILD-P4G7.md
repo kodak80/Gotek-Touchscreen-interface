@@ -33,3 +33,10 @@ page flip on refresh-done) — the method proven on the round P4R port.
 picture upright, touch lands where tapped (gti.log logs the first 16 raw touches: `[touch] raw x,y`),
 `[sd] ... 4-bit` in gti.log, cover reel + list in landscape and portrait, a cable load on a Gotek (HS USB-C port),
 then ESP-NOW: SCAN DONGLES (tells us if the C6 wiring matches the 4.3").
+
+## IPF support (ipf1)
+`.ipf` disks are converted on the GTi to HFE v3 the first time they are loaded (cached in
+`/GTI/ipfcache`), using the SPS CAPS decoder in `src/ipf/capsimg` (non-commercial licence,
+`src/ipf/capsimg/LICENCE.txt`). Nothing extra to install: Arduino builds `src/` automatically.
+PSRAM must stay enabled (about 2.5 MB is used during a conversion). Details, tests and a desktop
+converter: `firmware/ipf_tools/README.md`.
