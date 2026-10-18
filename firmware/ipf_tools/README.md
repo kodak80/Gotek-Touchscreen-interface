@@ -80,4 +80,6 @@ weak areas), with each revolution at 200 ms ± 2 µs.
   when it happens.
 - Wireless: the dongle receives the HFE, so its size limit applies (SuperMini 1.76 MB says TOO
   BIG; the XIAO hfe3 takes it).
-- First-time conversion speed on the P4 hasn't been measured. On a PC it takes 20-40 ms per disk.
+- First-time conversion speed on the 7″ P4: about 6 seconds per disk (measured on hardware with
+  Atari ST and Amiga IPFs). On a PC it takes 20-40 ms per disk. Later loads reuse `Game.ipf.hfe`
+  and cost nothing extra.

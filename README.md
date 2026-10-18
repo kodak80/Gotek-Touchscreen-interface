@@ -373,7 +373,7 @@ Saves to a wireless HFE come back to the card when you eject, as with ADFs.
 
 The 7″ P4 (`5.9.42-lab7-P4G7-ipf3` and later) loads **`.ipf`** preservation images (Amiga or Atari ST)
 like any other disk. The first time you load one, the GTi converts it to HFE v3 (a progress bar on the
-cover panel, a second or three) and stores the result **beside it** as `Game.ipf.hfe`; later loads reuse
+cover panel, about 6 seconds per disk on the 7″ P4) and stores the result **beside it** as `Game.ipf.hfe`; later loads reuse
 that file, and it never shows up as a separate game. Delete it to force a fresh conversion. Copy
 protection survives the conversion, and a stock FlashFloppy plays the result. Saves go to
 `Game.sav.hfe`. The decoder is the SPS CAPS library, which is licensed for **non-commercial use only**

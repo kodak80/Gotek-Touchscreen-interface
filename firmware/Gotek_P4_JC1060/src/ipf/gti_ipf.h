@@ -60,7 +60,7 @@ static inline String gtiIpfCachePath(const char *ipfPath, uint32_t ipfSize)
 }
 
 /* Convert (or reuse cached) IPF -> HFE. On success hfeOut holds the HFE
- * path on the same filesystem. Blocking: ~1-3 s per disk on the P4 the
+ * path on the same filesystem. Blocking: ~6 s per disk on the P4 (measured) the
  * first time; call the UI's tick from the progress callback if needed. */
 static inline bool gtiIpfPrepare(fs::FS &fs, const char *ipfPath, String &hfeOut,
                                  ipf2hfe_progress_fn prog = nullptr,

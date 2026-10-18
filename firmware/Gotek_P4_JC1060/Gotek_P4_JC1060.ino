@@ -5708,7 +5708,7 @@ static void wlSendFailUI(uint32_t fsz){
   gfx_setCursor(COVER_X+12,COVER_Y+58);gfx_print(T(L_USE_CABLE));
   gfx_flush();delay(2200);drawFullUI();gfx_flush();
 }
-// ipf1: progress bar on the cover panel while an .ipf is converted (first load only, ~1-3 s)
+// ipf1: progress bar on the cover panel while an .ipf is converted (first load only, ~6 s per disk measured)
 static void ipfProgressUI(void*,int done,int total){
   if(total<=0)return;
   static uint32_t last=0; if(done<total && millis()-last<120)return; last=millis();
