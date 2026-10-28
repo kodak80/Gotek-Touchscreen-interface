@@ -24,6 +24,7 @@ keep a stale rate.
 
 ```
 firmware/Gotek_P4_JC1060/src/ipf/   built into the P4G7 firmware (Arduino compiles src/ recursively)
+firmware/Gotek_P4/src/ipf/          identical copy for the 4.3" JC4880 build (lab6-P4) - change both together
   ipf2hfe.h / ipf2hfe.cpp           converter (C API, callback writer, no Arduino deps)
   gti_ipf.h                         GTi glue: gtiIpfPrepare(SD_MMC, ipfPath, hfeOut, ...) -> Game.ipf.hfe beside the .ipf
   capsimg/                          SPS decoder library 5.1, flattened (LICENCE.txt inside)

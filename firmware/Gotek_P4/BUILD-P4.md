@@ -87,3 +87,23 @@ use the USB port that flashes (USB-Serial-JTAG), supply >=600 mA.
   drive GPIO21/22 — that was a wrong community guess. The chip powers up on the I2C bus; address is
   0x5D (0x14 fallback). Fixed in 5.8.6-P4.2.
 - Backlight = GPIO23, panel = ST7701 480x800 DSI (matches the benchmark config).
+
+## lab6-P4: the 7" P4G7 changes, ported (hfe1 → ipf3)
+Same code as the 7" JC1060 build (`firmware/Gotek_P4_JC1060`, 5.9.42-lab7-P4G7-ipf3), applied on top of
+5.9.42-lab5-P4. Only the version line differs; the board layer (ST7701 panel, GT911 touch) is unchanged.
+- **hfe1:** wireless HFE of any size the dongle holds; TOO BIG / NOT LOADED shown at once; a disk the
+  dongle did not take is not shown as IN DRIVE.
+- **hfe2:** GENERIC library at power-on; CONFIG.TXT `LIBRARY=GEN|ADF|DSK`.
+- **hfe3:** wireless EJECT retries the TCP connect and the save pull on a weak link.
+- **ipf1 → ipf3:** `.ipf` disks are converted on the GTi to HFE v3 the first time they are loaded and
+  stored beside the `.ipf` as `Game.ipf.hfe`; later loads reuse it and the library list hides
+  `*.ipf.hfe`. The decoder is the SPS CAPS library in `src/ipf/capsimg` (non-commercial licence,
+  `src/ipf/capsimg/LICENCE.txt`). Nothing extra to install: Arduino builds `src/` automatically.
+  PSRAM must stay enabled (about 2.5 MB is used during a conversion). Details, tests and a desktop
+  converter: `firmware/ipf_tools/README.md`.
+
+Chip revision v1.x (JC4880 v1.3): keep **Chip Variant = Before v3.00**. The v3.x build on the web
+flasher (P4V3) is the same source compiled for the newer chips.
+
+First tests on a JC4880: an ADF and an HFE over the cable, an `.ipf` insert (the first one converts:
+a progress bar on the cover panel, about 6 s on the 7"), a wireless send + EJECT, and `LIBRARY=` at boot.
