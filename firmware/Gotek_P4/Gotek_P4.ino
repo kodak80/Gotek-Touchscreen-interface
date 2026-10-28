@@ -51,7 +51,7 @@
 #include "diskio_sdmmc.h"  // lab14g: ff_diskio_register_sdmmc / ff_diskio_get_pdrv_card
 #include "driver/gpio.h"
 
-#define FW_VERSION "5.9.42-lab5-P4"   // lab5-P4 (Mez, 10 Oct: "the Gotek never plays from the cable", LOAD DIAG too): the USB disk now tells a Full-Speed host (every Gotek) 64-byte data packets instead of 512 - the P4's USB is High-Speed and always announced 512, which is illegal at Full-Speed, so the Gotek enumerated the GTi but could not read a sector; a PC (High-Speed) still gets 512. gti.log says which speed the host connected at | lab4-P4 (Mez, 5 Oct): NEO is a switch again - CONFIG.TXT NEO=ON/OFF and Settings > NEO: ON/OFF (default ON). NEO=OFF brings back the classic layout with the colour THEME (NAVY ... OMEGA; THEME= works again), COMPACT and BUTTONS; the top and bottom bars follow the look (NEO 40/58 px, classic 28/54 px as before 16b); switching is live, no reboot | lab3-P4 (kodak80, 4 Oct): MATRIX saver fills the whole width; top-left brand is the OMEGAWARE omega + GTi (was "GOTEK GTi"); SYNTHWAVE cracktro grid symmetric (was 6 lines left, 12 right) and scaled to the screen (columns were capped at 64 = 768 px of the 7"'s 1024; the 4.3" lost 32 px in landscape); gti.log now logs every disk insert / eject ([load] name, KB, mode, USB host yes/no; [eject]) and every USB host connect / disconnect ([usb]) - so "the laptop never saw it" can be read off the log | lab2-P4 (= the 7" lab2+lab3+lab4 radio fixes): every dongle join starts with a 0.3 s channel-6 scan; the dongle's real Wi-Fi name (GotekOMEGA-XXXX) remembered (CONFIG.TXT XIAO_SSID=) or looked up by a quick channel-6 scan before every join, two join tries; EJECT really ejects the dongle (was a no-op on the P4) after pulling the game saves back; saves also pulled before the next disk goes to the same dongle (the save pull could never join a Webby 1.6.8+ dongle); C6 firmware version + every wireless step in gti.log; top-bar chip never says OFFLINE (no heartbeat on the P4) | 5.9.42-lab1-P4 (4 Oct 2026) = 5.9.41-lab16f-P4, renamed only (no code change): the NEO look, first P4 lab release on the web flasher | lab16f-P4: PORTRAIT REEL RUNS UP AND DOWN - covers stacked vertically (next one below), swipe up/down, coast + snap as before; round up/down arrows on the right; tap above/below the centre cover steps one; title / DISK pills / dots in a fixed strip above the bottom buttons. Landscape unchanged | lab16e-P4: portrait reel centred - cover + title + disks + dots sit in the middle of the screen (was at the top with empty space under it); landscape unchanged | lab16d-P4: game panel cover is BIG (full panel width, picture centred), favourite = star badge in the cover's top-right corner (tap it), the .rtfm book button is back in its usual place on the cover's left edge (16b had moved it to a MANUAL pill), HD chip bottom-right; title + "n disks - ADF" under the cover, then the description and the DISK pills | lab16c-P4 (Mez's photos of 16b): NEO text at size 2+ is drawn bold (one pixel wider strokes) so dark text on the gold / cyan / green pills reads like the mock-up; reel covers drop the grey letterbox baked into the tile (picture cut out, frame hugs it, same cut on the micro-thumbs while it slides); long names wrap to two lines under the reel cover instead of being cut; in the game panel a long name moves under the cover, full width | lab16b-P4: NEO is the only look for now (THEME, BUTTONS and COMPACT are off the Settings list; CONFIG THEME= is ignored) and the screens follow the mock-ups: list on the LEFT in a rounded panel, A-Z strip, game panel on the RIGHT (cover, title, disks/format, FAV and MANUAL pills, description, DISK pills), bottom bar PREV / NEXT / INSERT / REEL / CONFIG; top bar 40 px with the firmware version under GOTEK GTi, tap the library name to switch library (or open categories); reel arrows; Settings = two columns of capsules + a row of action pills + BACK / PAGE / TEST TOOLS / NEXT; USER DISKS moved into Settings | lab16a-P4: NEW LOOK "NEO" (Settings > THEME > NEO, or THEME=NEO): navy-to-purple background with faint circuit lines; top bar GOTEK GTi + firmware version, library + game count, a CABLE/DONGLE state chip and a gear that opens Settings; reel: gold-framed glowing centre cover, title under it, DISK pills, page dots, bottom bar INSERT / < ALL > / LIST / ROLL; list: gold-framed selection, IN DRIVE tag, cyan INSERT; Settings: capsule rows with the value in a coloured chip, last tap outlined in gold. Other themes look and work as before | lab15q-P4 (from the 3.5" 15o + 15q): Polish (8-Bitz's text) and Czech on the screen (LANG=PL / CS, CZ accepted); the reel bar's ALL/FAV/MOST word shrinks when too long; STANDALONE banner centred on the translated word. (3.5" 15p, the GTi_Omega Wi-Fi, does not apply: the P4's C6 radio never runs an access point) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
+#define FW_VERSION "5.9.42-lab6-P4-hfe1"   // hfe1-P4 (from the 7in hfe1-P4G7; kodak80, 13 Oct): a dongle that refuses a disk (too big for it - SuperMini 1.76 MB, XIAO hfe3 6 MB) is shown on screen at once as TOO BIG, a dongle that never answers as NOT LOADED (both were silent, after a 10 s wait), and a disk the dongle did not take is no longer shown as IN DRIVE when nothing is attached to the GTi's own USB (with a Gotek/PC on that USB it stays inserted there, as before); WIRELESS HFE OF ANY SIZE - a disk bigger than the RAM disk (BIGDISK) is no longer TOO BIG for a dongle: the GTi's own USB mounts it from the card like STANDALONE and the dongle gets it streamed straight off the card (the dongle's own size is the limit: XIAO Webby hfe3 6 MB); save fetch takes dirty maps up to 2048 bytes = 8 MB (was 1024 = 4 MB; the XIAO hfe3 disk is 6 MB); GENERIC saves on the GTi's own USB in Wireless mode | lab5-P4 (Mez, 10 Oct: "the Gotek never plays from the cable", LOAD DIAG too): the USB disk now tells a Full-Speed host (every Gotek) 64-byte data packets instead of 512 - the P4's USB is High-Speed and always announced 512, which is illegal at Full-Speed, so the Gotek enumerated the GTi but could not read a sector; a PC (High-Speed) still gets 512. gti.log says which speed the host connected at | lab4-P4 (Mez, 5 Oct): NEO is a switch again - CONFIG.TXT NEO=ON/OFF and Settings > NEO: ON/OFF (default ON). NEO=OFF brings back the classic layout with the colour THEME (NAVY ... OMEGA; THEME= works again), COMPACT and BUTTONS; the top and bottom bars follow the look (NEO 40/58 px, classic 28/54 px as before 16b); switching is live, no reboot | lab3-P4 (kodak80, 4 Oct): MATRIX saver fills the whole width; top-left brand is the OMEGAWARE omega + GTi (was "GOTEK GTi"); SYNTHWAVE cracktro grid symmetric (was 6 lines left, 12 right) and scaled to the screen (columns were capped at 64 = 768 px of the 7"'s 1024; the 4.3" lost 32 px in landscape); gti.log now logs every disk insert / eject ([load] name, KB, mode, USB host yes/no; [eject]) and every USB host connect / disconnect ([usb]) - so "the laptop never saw it" can be read off the log | lab2-P4 (= the 7" lab2+lab3+lab4 radio fixes): every dongle join starts with a 0.3 s channel-6 scan; the dongle's real Wi-Fi name (GotekOMEGA-XXXX) remembered (CONFIG.TXT XIAO_SSID=) or looked up by a quick channel-6 scan before every join, two join tries; EJECT really ejects the dongle (was a no-op on the P4) after pulling the game saves back; saves also pulled before the next disk goes to the same dongle (the save pull could never join a Webby 1.6.8+ dongle); C6 firmware version + every wireless step in gti.log; top-bar chip never says OFFLINE (no heartbeat on the P4) | 5.9.42-lab1-P4 (4 Oct 2026) = 5.9.41-lab16f-P4, renamed only (no code change): the NEO look, first P4 lab release on the web flasher | lab16f-P4: PORTRAIT REEL RUNS UP AND DOWN - covers stacked vertically (next one below), swipe up/down, coast + snap as before; round up/down arrows on the right; tap above/below the centre cover steps one; title / DISK pills / dots in a fixed strip above the bottom buttons. Landscape unchanged | lab16e-P4: portrait reel centred - cover + title + disks + dots sit in the middle of the screen (was at the top with empty space under it); landscape unchanged | lab16d-P4: game panel cover is BIG (full panel width, picture centred), favourite = star badge in the cover's top-right corner (tap it), the .rtfm book button is back in its usual place on the cover's left edge (16b had moved it to a MANUAL pill), HD chip bottom-right; title + "n disks - ADF" under the cover, then the description and the DISK pills | lab16c-P4 (Mez's photos of 16b): NEO text at size 2+ is drawn bold (one pixel wider strokes) so dark text on the gold / cyan / green pills reads like the mock-up; reel covers drop the grey letterbox baked into the tile (picture cut out, frame hugs it, same cut on the micro-thumbs while it slides); long names wrap to two lines under the reel cover instead of being cut; in the game panel a long name moves under the cover, full width | lab16b-P4: NEO is the only look for now (THEME, BUTTONS and COMPACT are off the Settings list; CONFIG THEME= is ignored) and the screens follow the mock-ups: list on the LEFT in a rounded panel, A-Z strip, game panel on the RIGHT (cover, title, disks/format, FAV and MANUAL pills, description, DISK pills), bottom bar PREV / NEXT / INSERT / REEL / CONFIG; top bar 40 px with the firmware version under GOTEK GTi, tap the library name to switch library (or open categories); reel arrows; Settings = two columns of capsules + a row of action pills + BACK / PAGE / TEST TOOLS / NEXT; USER DISKS moved into Settings | lab16a-P4: NEW LOOK "NEO" (Settings > THEME > NEO, or THEME=NEO): navy-to-purple background with faint circuit lines; top bar GOTEK GTi + firmware version, library + game count, a CABLE/DONGLE state chip and a gear that opens Settings; reel: gold-framed glowing centre cover, title under it, DISK pills, page dots, bottom bar INSERT / < ALL > / LIST / ROLL; list: gold-framed selection, IN DRIVE tag, cyan INSERT; Settings: capsule rows with the value in a coloured chip, last tap outlined in gold. Other themes look and work as before | lab15q-P4 (from the 3.5" 15o + 15q): Polish (8-Bitz's text) and Czech on the screen (LANG=PL / CS, CZ accepted); the reel bar's ALL/FAV/MOST word shrinks when too long; STANDALONE banner centred on the translated word. (3.5" 15p, the GTi_Omega Wi-Fi, does not apply: the P4's C6 radio never runs an access point) | lab15n (P4 only): bigger disk buttons on the list page (86x34, text size 2; were the 3.5"'s 44x20) + bigger page button | lab15l+m (from the 4.3" S3): the list cover picture drawn as big as the frame allows (tile letterbox + black PAL bands cut off), frame hugs the picture | lab15j (from the 3.5"): tap the game text in the list = the whole .nfo full-screen in the manual reader | P4 port-sync: the 3.5" 5.9.41-lab15i (lab14 walker, SD guard, never-format, compact library, safe saves + SD lock, per-dongle saves, one LIBRARY button, wireless offset 13, take-over check over TCP) + the P4 board layer (ST7701 DSI, GT911, C6 radio + self-update, 800x480 layout) | was 5.9.13-P4
 #include "retro_assets.h"
 #include "omega_logo.h"   // the 1991 OMEGAWARE logo (Dimmy)
 #include "espnow_server.h"
@@ -5643,6 +5643,35 @@ static bool claimAskUI(bool dirty, const char* who){
   return take;
 }
 
+// hfe1: a wireless send that did not load. Since hfe1 the GTi no longer stops images bigger than its own
+// RAM disk (it streams them off the card), so the DONGLE's limit is the one that counts: a SuperMini says
+// no to anything over 1.76 MB, a XIAO Webby hfe3 to anything over ~6 MB. Its "no" is shown here at once.
+static const uint32_t SUPERMINI_MAX_BYTES=1829376;   // SuperMini Webby: (3584-11) sectors x 512
+// hfe1: the dongle did not take the disk. In Wireless mode the GTi's own USB carries the game too, on purpose
+// (v4.8.1 "a wireless GTi can still be USB-attached", lab15i "two Amigas can play it at once") - so if a host
+// (a Gotek or a PC) is attached to that USB, the disk IS in a drive there and is kept, exactly as before.
+// Only when nothing is attached is the GTi's side undone (USB copy detached, nothing marked IN DRIVE) - the
+// local half of doUnload(). The dongle is never ejected: it still holds its previous disk, and the save
+// mapping (g_sv_wl_*) still points at that disk.
+static void wlUndoLocalLoad(){
+  if(tud_mounted()){ gLog("[load] the dongle did not take %s - kept on the GTi's own USB (a host is attached there)\n",g_loaded_path.c_str()); return; }
+  gLog("[load] not loaded - the dongle did not take %s\n",g_loaded_path.c_str());
+  hardDetach();g_loaded=false;g_loaded_name="";g_loaded_path="";g_loaded_orig="";g_loaded_game_idx=-1;g_loaded_disk_idx=-1;
+  g_sv_img_size=0;svDirtyReset();g_alias=false;
+}
+static void wlSendFailUI(uint32_t fsz){
+  if(!espnowLastSendRefused()){ svToast("NOT LOADED - THE DONGLE DID NOT ANSWER"); return; }
+  if(fsz<=SUPERMINI_MAX_BYTES){ svToast("NOT LOADED - THE DONGLE REPORTED AN ERROR"); return; }
+  gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL);
+  gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
+  gfx_setCursor(COVER_X+12,COVER_Y+16);gfx_print(T(L_TOO_BIG));
+  gfx_setTextColor(COL_LIT,COL_PANEL);
+  gfx_setCursor(COVER_X+12,COVER_Y+30);gfx_print(String(fsz/1024)+"KB: the dongle said no");
+  gfx_setCursor(COVER_X+12,COVER_Y+44);gfx_print("SuperMini 1.7 MB / XIAO 6 MB");
+  gfx_setTextColor(COL_DIM,COL_PANEL);
+  gfx_setCursor(COVER_X+12,COVER_Y+58);gfx_print(T(L_USE_CABLE));
+  gfx_flush();delay(2200);drawFullUI();gfx_flush();
+}
 static bool doLoadSelected(const String&adfPath){
   // v4.9 / v5.x: HD (1.76MB) over wireless is now gated by the dongle's advertised
   // capability (pad[1] of the pairing reply). An HD-capable XIAO (2MB ramdisk,
@@ -5696,31 +5725,21 @@ static bool doLoadSelected(const String&adfPath){
   if(stat(vfsLoad.c_str(),&stLoad)!=0||stLoad.st_size==0) {f.close();gfx_setTextColor(TFT_RED,COL_PANEL);gfx_setCursor(COVER_X+12,COVER_Y+40);gfx_print(T(L_SIZE_ERR));gfx_flush();delay(1000);drawFullUI();gfx_flush();return false;}
   uint32_t fsz=(uint32_t)stLoad.st_size;
   uint32_t copied=0;
-  if(g_wireless_mode){
-    // ── WIRELESS: unchanged. The dongle receives the image bytes out of
+  if(g_wireless_mode && fsz<=MAX_FILE_BYTES){   // hfe1: bigger images take the alias path below and are streamed to the dongle
+    // ── WIRELESS, image fits the RAM disk: unchanged. The dongle receives the image bytes out of
     //    g_disk (espnowSendDisk reads from it), so it has to be copied there,
-    //    and the BIGDISK size remains the hard ceiling for anything sent by radio.
-    if(fsz>MAX_FILE_BYTES){
-      f.close();
-      gfx_fillRoundRect(COVER_X,COVER_Y,COVER_W,COVER_H,12,COL_PANEL);
-      gfx_setTextSize(1);gfx_setTextColor(0xE8C4,COL_PANEL);
-      gfx_setCursor(COVER_X+12,COVER_Y+16);gfx_print(T(L_TOO_BIG));
-      gfx_setTextColor(COL_LIT,COL_PANEL);
-      gfx_setCursor(COVER_X+12,COVER_Y+30);gfx_print(String(fsz/1024)+"KB > "+String(MAX_FILE_BYTES/1024)+"KB");
-      gfx_setCursor(COVER_X+12,COVER_Y+44);gfx_print(T(L_HD_NO_WIRELESS));
-      gfx_setTextColor(COL_DIM,COL_PANEL);
-      gfx_setCursor(COVER_X+12,COVER_Y+58);gfx_print(T(L_USE_CABLE));
-      gfx_flush();delay(2200);drawFullUI();gfx_flush();return false;
-    }
+    //    hfe1: an image bigger than the RAM disk no longer stops here ("TOO BIG"): it is
+    //    mounted from the card like STANDALONE and streamed to the dongle from the card.
     g_alias=false;
     {String pn=presentName(adfPath);build_volume(pn.c_str(),fsz);}   // v5.2: GEN keeps the real name+ext so FlashFloppy detects the format; lab14q: LONGNAME
     uint8_t*dst=g_disk+DATA_LBA*512;uint8_t*buf=(uint8_t*)malloc(16384);uint32_t remain=fsz;
     while(remain&&buf){size_t n=remain>16384?16384:remain;int rd=f.read(buf,n);if(rd<=0)break;memcpy(dst+copied,buf,rd);remain-=rd;copied+=rd;}
     if(buf)free(buf);f.close();
     // v4.8.0: fresh disk in the RAM disk = fresh save tracking
-    g_sv_img_size=(g_mode==MODE_GEN)?0:fsz;svDirtyReset();   // v5.2: GEN has no Amiga save-writeback (0 = no dirty tracking)
+    g_sv_img_size=fsz;svDirtyReset();   // hfe1: GENERIC too (HFE, ST, IMG...) - the GTi's own USB copy saves like standalone (lab15c); v5.2 had 0 = no tracking for GEN
   } else {
-    // ── STANDALONE: ALIAS, always, any size (5.9.37). Nothing is copied; the
+    // ── STANDALONE, and (hfe1) WIRELESS with an image bigger than the RAM disk:
+    //    ALIAS, always, any size (5.9.37). Nothing is copied; the
     //    data area IS the file on the card. g_disk holds the FAT12 metadata and
     //    acts as the write overlay for saves (see onRead / onWrite).
     f.close();
@@ -5767,6 +5786,7 @@ static bool doLoadSelected(const String&adfPath){
     { String fn = (g_mode==MODE_GEN) ? filenameOnly(adfPath)
                                      : (basenameNoExt(filenameOnly(adfPath)) + (g_mode==MODE_ADF ? ".adf" : ".dsk"));
       espnowSetFlingName(fn); }
+    espnowSetSendFile(g_alias?loadPath:String(""));   // hfe1: aliased = not in g_disk - the dongle gets it straight off the card
     if(mcN>0&&g_hivemind){                                  // multicast: fan the disk out to every MuCa- dongle in turn (v4.8.1: only when HIVEMIND=ON)
       g_sv_wl_path="";g_sv_wl_loadid=0;g_sv_wl_tag="";g_sv_wl_orig="";   // Hivemind saves: PINNED — no writeback mapping for multicast
       for(int i=0;i<mcN;i++){
@@ -5778,14 +5798,19 @@ static bool doLoadSelected(const String&adfPath){
       String prevIp=g_dongle_home_ip;
       if(espnowSendDiskHome(g_home_ssid,g_home_pass,g_dongle_home_ip,copied)){
         g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;g_sv_wl_orig=adfPath;g_sv_wl_tag=wlTag;   // lab15i
-      } else if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
+      } else { if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
+               else wlSendFailUI(copied);                                 // hfe1: say why it did not load
+               wlUndoLocalLoad(); }                                       // hfe1: ...and not IN DRIVE unless the GTi's own USB has a host
       if(g_dongle_home_ip!=prevIp&&g_dongle_home_ip.length())saveConfigKey("DONGLE_HOME_IP",g_dongle_home_ip);  // persist the resolved IP for next time
     } else if(espnowIsPaired()){                            // single paired dongle — unchanged
       espnowSendNotify(g_loaded_name,g_mode==MODE_ADF?"ADF":g_mode==MODE_DSK?"DSK":"GEN",copied);
       if(espnowSendDisk(copied)){                           // v4.8.0: remember what we flung, keyed by the dongle's load_id
         g_sv_wl_path=loadPath;g_sv_wl_loadid=g_espnow_load_id;g_sv_wl_orig=adfPath;g_sv_wl_tag=wlTag;   // lab15i
-      } else if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
+      } else { if(espnowClaimCancelled()) svToast("NOT SENT - dongle kept for the other screen");   // lab14s
+               else wlSendFailUI(copied);                                 // hfe1: say why it did not load
+               wlUndoLocalLoad(); }                                       // hfe1: ...and not IN DRIVE unless the GTi's own USB has a host
     }
+    espnowSetSendFile("");                                   // hfe1: back to g_disk for anything else
   }
   drawStatusBar();drawListAndCover();gfx_flush();return true;
 }
