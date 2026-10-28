@@ -28,36 +28,32 @@ second slot is what makes the on-device SD-update / FW-UPDATE work). So partitio
 driven by the **app image + OTA**, *not* by how big the flash chip is — any surplus flash is
 simply unused. 3 MB app slots give large headroom (app is ~0.9 MB today).
 
-Drop one of these as `partitions.csv` in this folder (arduino-esp32 uses a sketch-local CSV
-when present). Use the **16MB** table below (safe on both 16MB and 32MB flash). Only use the 32MB table if `flash_id` confirms 32MB **and** you want the extra unused FAT reserve:
+**Use the `partitions.csv` already in this folder** and pick **Tools > Partition Scheme > Custom**
+(the option appears only when the sketch folder has a `partitions.csv`; close and reopen the sketch
+if it is missing). It is the 16 MB layout: two 3 MB app slots, FAT, and the **c6fw** area that holds
+the Wi-Fi co-processor (C6) firmware. With Custom selected the IDE reports "Maximum is 16777216
+bytes" - the real limit is the 3 MB app slot (lab6-P4-ipf3 is ~2.08 MB).
 
-**16 MB flash** (validated 26-Aug layout):
-```
-# Name,   Type, SubType, Offset,   Size,    Flags
-nvs,      data, nvs,     0x9000,   0x5000,
-otadata,  data, ota,     0xe000,   0x2000,
-app0,     app,  ota_0,   0x10000,  0x300000,
-app1,     app,  ota_1,   0x310000, 0x300000,
-ffat,     data, fat,     0x610000, 0x9E0000,
-coredump, data, coredump,0xFF0000, 0x10000,
-```
+> The two tables that used to be printed here (Aug layout) have **no c6fw area**. Do not copy them
+> over `partitions.csv`.
 
-**32 MB flash** (same lean apps; the extra space is an unused FAT reserve):
-```
-# Name,   Type, SubType, Offset,    Size,     Flags
-nvs,      data, nvs,     0x9000,    0x5000,
-otadata,  data, ota,     0xe000,    0x2000,
-app0,     app,  ota_0,   0x10000,   0x300000,
-app1,     app,  ota_1,   0x310000,  0x300000,
-ffat,     data, fat,     0x610000,  0x19E0000,
-coredump, data, coredump,0x1FF0000, 0x10000,
-```
-(Either boots fine on a bigger chip; only the app+OTA region is actually used.)
+## Flash (esptool, any OS, or a web flasher)
+Which file goes where - **an app-only `.bin` at 0x0 wipes the bootloader and the board stays black**
+(fix: flash a full merged image at 0x0):
 
-## Flash (esptool, any OS)
+| File | Offset |
+|---|---|
+| full merged image (`*-c6.merged.bin` from the GTi flasher, bootloader + partitions + app + C6) | `0x0` |
+| `Gotek_P4.ino.bootloader.bin` | `0x2000` (the P4's bootloader is at 0x2000, not 0x1000) |
+| `Gotek_P4.ino.partitions.bin` | `0x8000` |
+| `Gotek_P4.ino.bin` (the app; Sketch > Export Compiled Binary) | `0x10000` |
+
 ```
-esptool --chip esp32p4 -p <PORT> -b 460800 write_flash 0x0 <merged>.bin
+esptool --chip esp32p4 -p <PORT> -b 460800 write_flash 0x0 <full-merged>.bin
+esptool --chip esp32p4 -p <PORT> -b 460800 write_flash 0x10000 Gotek_P4.ino.bin   # app only
 ```
+Without a cable: copy `Gotek_P4.ino.bin` to the SD card root as `GTi-P4-<anything>.bin` and use the
+GTi's firmware update (it only takes `GTi-P4-*.bin`).
 Won't connect? **Hold BOOT, tap RESET, release BOOT**; close the serial monitor first;
 use the USB port that flashes (USB-Serial-JTAG), supply >=600 mA.
 
